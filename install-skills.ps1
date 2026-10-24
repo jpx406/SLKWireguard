@@ -1,4 +1,4 @@
-# Installs five Claude Code skills globally (~/.claude/skills) on Windows.
+# Installs six skill packages (16 skills) into Claude Code globally (~/.claude/skills) on Windows.
 # Run from PowerShell:  powershell -ExecutionPolicy Bypass -File .\install-skills.ps1
 # Requires Node.js 18+ (npx) and Claude Code already installed.
 
@@ -39,6 +39,21 @@ Run playwright-cli install --skills        # drops the playwright-cli skill into
 # 5. Apple Design (dickwu/apple-design-skill) - Apple HIG design reviewer, cross-platform
 Step "Apple Design (dickwu/apple-design-skill)"
 Run npx -y skills add dickwu/apple-design-skill --agent claude-code -g -y
+
+# 6. Replica (Jakeschincariol/replica-skill) - eleven chained skills; not on the skills CLI, so clone + copy
+Step "Replica (Jakeschincariol/replica-skill)"
+$tmp = Join-Path $env:TEMP "replica-skill"
+if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+Run git clone --depth 1 https://github.com/Jakeschincariol/replica-skill.git $tmp
+New-Item -ItemType Directory -Force "$HOME\.claude\skills" | Out-Null
+Get-ChildItem $tmp -Directory -Filter "replica-*" | ForEach-Object {
+  $dest = "$HOME\.claude\skills\$($_.Name)"
+  # Copy-Item into an existing folder nests it (replica-x\replica-x), so replace it on re-runs.
+  if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+  Copy-Item $_.FullName $dest -Recurse -Force
+}
+Remove-Item $tmp -Recurse -Force
+# Its helper tools are stdlib-only Python 3.8+; the same python check above applies.
 
 # Summary
 Step "Installed skills in ~/.claude/skills:"
