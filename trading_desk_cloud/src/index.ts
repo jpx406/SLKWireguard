@@ -1,6 +1,6 @@
 // Trading Desk on Cloudflare: static UI (./public) + JSON API under /api, behind Cloudflare Access.
 import type { Env } from "./env";
-import { authenticate } from "./auth";
+import { authenticate, login, logout } from "./auth";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
@@ -151,6 +151,12 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+    if (req.method === "POST" && url.pathname === "/api/login") {
+      if (req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
+      await ensureSchema(env.DB);
+      return login(req, env);
+    }
+    if (req.method === "POST" && url.pathname === "/api/logout") return logout();
     const who = await authenticate(req, env);
     if (who instanceof Response) return who;
     if (req.method !== "GET" && req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);

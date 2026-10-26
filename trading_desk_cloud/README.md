@@ -6,7 +6,7 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 |---|---|
 | Web app (chart, watchlist, risk, journal, guide) | Cloudflare Worker + static assets |
 | Journal, settings, your `trader/config.json`, GUIDE.md | Cloudflare D1 database |
-| Login | Cloudflare Access (only your email gets in) |
+| Login | The app's own password login (password stored as an encrypted Worker secret) |
 | Copilot and your 15 `trader-*` skills | **Claude Managed Agents**: Claude runs your SKILL.md files and Python tools in an Anthropic cloud sandbox |
 | Quotes and candles | Yahoo Finance (delayed and unofficial; for context only) |
 
@@ -19,17 +19,7 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 * Node.js 20 or newer on your PC: `winget install OpenJS.NodeJS.LTS`.
 * Your skills installed in `%USERPROFILE%\.claude\skills\trader-*` (they already are).
 
-## Step 1: Turn on the login (Cloudflare dashboard, about 5 minutes)
-
-1. Go to dash.cloudflare.com → **Zero Trust**. If asked, pick a team name such as `nesr` and choose the **Free** plan. Your team domain becomes `nesr.cloudflareaccess.com`.
-2. Open **Access → Applications → Add an application → Self-hosted**.
-   * Application name: `Trading Desk`
-   * Public hostname: subdomain `trading-desk`, domain `nesrapp.com`
-   * Add a policy named `Me`. Set **Action** to Allow and **Include** to *Emails*, then enter `juanp97g@gmail.com` (and any other email you want to let in).
-   * Login method: **One-time PIN** is enough.
-3. Save the application, open it again, and copy the **Application Audience (AUD) Tag** from its Overview or Basic information section.
-
-## Step 2: Deploy (PowerShell, about 5 minutes)
+## Deploy (PowerShell, about 5 minutes)
 
 ```powershell
 cd <this folder>\trading_desk_cloud
@@ -42,11 +32,11 @@ The script takes care of everything in this order:
 * logs you in to Cloudflare in your browser
 * creates the D1 database
 * runs the agent setup: it asks for your Anthropic API key, uploads all 15 skills, creates the cloud sandbox and the agent, and asks you to choose the sandbox network mode (see below)
-* asks for the team domain and AUD tag from Step 1
 * deploys the app
 * stores your API key as an encrypted Worker secret
+* asks you to choose the app password (12 or more characters), stored as an encrypted Worker secret
 
-Then open **https://trading-desk.nesrapp.com**, log in with the emailed code, and:
+Then open **https://trading-desk.nesrapp.com**, log in with your password (you stay logged in for 30 days on that device), and:
 
 1. Click ⚙ Settings and paste your `trader\config.json`. Keep `"paper": true`. The skills read this file inside the sandbox at `/workspace/trader/config.json`.
 2. In the **Guide** tab, upload `GUIDE.md`.
@@ -75,9 +65,9 @@ If something fails, a red **Problem:** bar at the top of the app says what went 
 
 | Message | Fix |
 |---|---|
-| `ACCESS_AUD does not match…` | Copy the AUD tag again (Zero Trust → Access → Applications → your app → Overview). Put it in `wrangler.toml`, then run `.\node_modules\.bin\wrangler.cmd deploy` |
-| `ACCESS_TEAM_DOMAIN is "…" but this login came from "…"` | Put the domain shown after "came from" into `ACCESS_TEAM_DOMAIN`, then redeploy |
-| `Cloudflare Access is not configured` | `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` is empty in `wrangler.toml`. Fill both in and redeploy |
+| `No login is configured` | Set the password: `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD` |
+| `Too many wrong passwords` | 5 wrong tries from your network locks login for 15 minutes. Wait it out |
+| Forgot the password | Set a new one with the command above. This also logs out every device |
 | `Agent not configured` | Run `node setup/setup-agent.mjs`, then redeploy |
 | Claude dot is red | The `ANTHROPIC_API_KEY` secret is missing. Run `.\node_modules\.bin\wrangler.cmd secret put ANTHROPIC_API_KEY` |
 
@@ -94,12 +84,13 @@ If something fails, a red **Problem:** bar at the top of the app says what went 
 
 ## Costs
 
-* **Cloudflare:** the free plan covers this (Workers, D1 and Access for up to 50 users).
+* **Cloudflare:** the free plan covers this (Workers, D1 and Cron Triggers).
 * **Anthropic:** pay as you go for Claude Opus 5.5 tokens plus sandbox time. Every reply shows the session's cost so far. Each session also has a link to its full trace in the Claude Console.
 
 ## Security notes
 
-* The `/api` routes verify the Cloudflare Access JWT signature, audience, issuer and expiry on every request, and they refuse to serve if Access isn't configured.
+* Every `/api` request needs a valid session. You get one by entering the password. The session cookie is HMAC-signed, HttpOnly, Secure and SameSite=Strict, and expires after 30 days. The signing key comes from the password, so changing the password ends every session. Login is rate-limited to 5 wrong tries per IP address and 30 overall in any 15 minutes. If no password (and no Cloudflare Access) is configured, the API refuses to serve.
+* Cloudflare Access is still supported instead of the password. Leave `LOGIN_PASSWORD` unset and fill in `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` (`setup/setup-access.ps1` can create the Access app).
 * `workers.dev` and preview URLs are disabled, so the app is only reachable at trading-desk.nesrapp.com.
 * The Anthropic API key lives only as a Worker secret. It is never sent to the browser or placed in the sandbox.
 

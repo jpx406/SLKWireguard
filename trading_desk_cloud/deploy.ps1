@@ -76,16 +76,6 @@ if (-not (Get-TomlValue "AGENT_ID") -or -not (Get-TomlValue "ENVIRONMENT_ID")) {
     if ($LASTEXITCODE -ne 0) { Fail "Agent setup failed" }
 } else { Write-Host "Already set (re-run 'node setup/setup-agent.mjs' after changing a skill)." }
 
-Step "Cloudflare Access (login protection)"
-if (-not (Get-TomlValue "ACCESS_TEAM_DOMAIN")) {
-    $team = Read-Host "Your Zero Trust team domain (e.g. nesr.cloudflareaccess.com)"
-    Set-TomlValue "ACCESS_TEAM_DOMAIN" ($team.Trim() -replace "^https?://", "" -replace "/$", "")
-}
-if (-not (Get-TomlValue "ACCESS_AUD")) {
-    $aud = Read-Host "Application Audience (AUD) Tag of the trading-desk.nesrapp.com Access application"
-    Set-TomlValue "ACCESS_AUD" $aud.Trim()
-}
-
 Step "Deploying the Worker"
 & $wr deploy
 if ($LASTEXITCODE -ne 0) { Fail "Deploy failed (see the message above)." }
@@ -97,5 +87,21 @@ if ($secrets -notmatch "ANTHROPIC_API_KEY") {
     if ($LASTEXITCODE -ne 0) { Fail "Setting the secret failed" }
 } else { Write-Host "Already set. To change it: .\node_modules\.bin\wrangler.cmd secret put ANTHROPIC_API_KEY" }
 
-Write-Host "`nDone. Open https://trading-desk.nesrapp.com (log in with the email you allowed in Access)." -ForegroundColor Green
+Step "App password (your login for the website)"
+$secrets = (& $wr secret list 2>$null) | Out-String
+if ($secrets -notmatch "LOGIN_PASSWORD") {
+    while ($true) {
+        $p1 = Read-Host "Choose a password for the app (12+ characters, input hidden)" -AsSecureString
+        $p2 = Read-Host "Type it again" -AsSecureString
+        $a = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p1))
+        $b = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p2))
+        if ($a -ne $b) { Write-Host "They don't match, try again." -ForegroundColor Yellow; continue }
+        if ($a.Length -lt 12) { Write-Host "Use at least 12 characters." -ForegroundColor Yellow; continue }
+        break
+    }
+    $a | & $wr secret put LOGIN_PASSWORD
+    if ($LASTEXITCODE -ne 0) { Fail "Setting the password failed" }
+} else { Write-Host "Already set. To change it (logs out every device): .\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD" }
+
+Write-Host "`nDone. Open https://trading-desk.nesrapp.com (log in with your app password)." -ForegroundColor Green
 Write-Host "First time: click Settings (gear) and paste your trader\config.json, then upload GUIDE.md in the Guide tab."

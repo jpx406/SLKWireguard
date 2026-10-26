@@ -237,3 +237,8 @@ body:has(.banner:not(.hidden)) .layout { height: calc(100vh - 46px - 38px); }
 .brief details { padding: 0 10px 8px; }
 .brief summary { cursor: pointer; color: var(--dim); font-size: 12px; }
 .brief .md { font-size: 12px; max-height: 420px; overflow: auto; }
+
+/* login */
+dialog.login { width: min(360px, 92vw); }
+dialog.login::backdrop { background: var(--bg); }
+.big-brand { font-size: 18px; margin-bottom: 6px; }

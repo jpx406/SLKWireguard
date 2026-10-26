@@ -171,7 +171,16 @@
     <label>trader/config.json — paste your file; Claude's skills read it inside the sandbox
       <textarea name="trader_config" rows="12" class="mono" spellcheck="false" placeholder='{ "paper": true, "sec_user_agent": "Your Name you@example.com" }'></textarea></label>
     <div id="settingsErr" class="err-text"></div>
-    <div class="row gap end"><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+    <div class="row gap end"><button type="button" id="btnLogout" class="ghost" style="margin-right:auto">Log out</button><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="loginDlg" class="login">
+  <form id="loginForm">
+    <div class="brand big-brand"><span class="logo">▲</span> Trading Desk</div>
+    <label>Password<input id="loginPw" type="password" autocomplete="current-password" required autofocus></label>
+    <div id="loginErr" class="err-text"></div>
+    <button class="primary">Log in</button>
   </form>
 </dialog>
 

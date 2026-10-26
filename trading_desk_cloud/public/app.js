@@ -9,11 +9,30 @@ const api = async (path, opts = {}) => {
   catch { throw new Error("Can't reach the server. Your login may have expired: reload the page."); }
   if (r.type === "opaqueredirect" || r.status === 0) throw new Error("Your Cloudflare login expired: reload the page.");
   const ct = r.headers.get("content-type") || "";
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    if (r.status === 401 && err.login) { showLogin(); throw new Error("Please log in."); }
+    throw new Error(err.detail || `${r.status} ${r.statusText}`);
+  }
   if (!ct.includes("json")) throw new Error(`Unexpected response from ${path} (not JSON). Reload the page; if it persists, the Worker is not handling /api.`);
   return r.json();
 };
+function showLogin() {
+  const d = document.getElementById("loginDlg");
+  if (d.open) return;
+  document.getElementById("banner").classList.add("hidden");
+  d.showModal();
+}
+document.getElementById("loginDlg").addEventListener("cancel", (e) => e.preventDefault()); // can't dismiss with Esc
+document.getElementById("loginForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("loginErr"); err.textContent = "";
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: document.getElementById("loginPw").value }) }).catch(() => null);
+  if (r?.ok) { location.reload(); return; }
+  err.textContent = r ? (await r.json().catch(() => ({}))).detail || "Login failed." : "Can't reach the server.";
+};
 function showBanner(msg) {
+  if (msg === "Please log in.") return;
   const b = document.getElementById("banner"); b.innerHTML = "";
   const t = document.createElement("span"); t.innerHTML = "<b>Problem:</b> "; t.append(document.createTextNode(msg));
   const x = document.createElement("button"); x.className = "ghost small"; x.textContent = "dismiss"; x.onclick = () => b.classList.add("hidden");
@@ -382,6 +401,7 @@ $("#btnSettings").onclick = () => {
   $("#settingsErr").textContent = ""; $("#settingsDlg").showModal();
 };
 $("#btnSettingsCancel").onclick = () => $("#settingsDlg").close();
+$("#btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
 $("#settingsForm").onsubmit = async (e) => {
   e.preventDefault();
   const f = e.target, list = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
