@@ -1,4 +1,4 @@
-# Trading Desk -> Cloudflare (desk.nesrapp.com). Run in PowerShell from this folder:  .\deploy.ps1
+# Trading Desk -> Cloudflare (trading-desk.nesrapp.com). Run in PowerShell from this folder:  .\deploy.ps1
 # Safe to re-run: each step is skipped when it is already done.
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
@@ -63,7 +63,7 @@ if (-not (Get-TomlValue "ACCESS_TEAM_DOMAIN")) {
     Set-TomlValue "ACCESS_TEAM_DOMAIN" ($team.Trim() -replace "^https?://", "" -replace "/$", "")
 }
 if (-not (Get-TomlValue "ACCESS_AUD")) {
-    $aud = Read-Host "Application Audience (AUD) Tag of the desk.nesrapp.com Access application"
+    $aud = Read-Host "Application Audience (AUD) Tag of the trading-desk.nesrapp.com Access application"
     Set-TomlValue "ACCESS_AUD" $aud.Trim()
 }
 
@@ -78,5 +78,5 @@ if ($secrets -notmatch "ANTHROPIC_API_KEY") {
     if ($LASTEXITCODE -ne 0) { throw "Setting the secret failed" }
 } else { Write-Host "Already set. To change it: npx wrangler secret put ANTHROPIC_API_KEY" }
 
-Write-Host "`nDone. Open https://desk.nesrapp.com (log in with the email you allowed in Access)." -ForegroundColor Green
+Write-Host "`nDone. Open https://trading-desk.nesrapp.com (log in with the email you allowed in Access)." -ForegroundColor Green
 Write-Host "First time: click Settings (gear) and paste your trader\config.json, then upload GUIDE.md in the Guide tab."

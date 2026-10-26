@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 # Only reachable at the custom domain, which Cloudflare Access protects.
 workers_dev = false
 preview_urls = false
-routes = [{ pattern = "desk.nesrapp.com", custom_domain = true }]
+routes = [{ pattern = "trading-desk.nesrapp.com", custom_domain = true }]
 
 [assets]
 directory = "./public"

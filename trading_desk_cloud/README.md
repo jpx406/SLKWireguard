@@ -1,4 +1,4 @@
-# Trading Desk Cloud: deploying to https://desk.nesrapp.com
+# Trading Desk Cloud: deploying to https://trading-desk.nesrapp.com
 
 This is the same day-trading app as `../trading_desk`, but it runs entirely on Cloudflare and Anthropic, so your PC does not need to be on.
 
@@ -24,7 +24,7 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 1. Go to dash.cloudflare.com → **Zero Trust**. If asked, pick a team name such as `nesr` and choose the **Free** plan. Your team domain becomes `nesr.cloudflareaccess.com`.
 2. Open **Access → Applications → Add an application → Self-hosted**.
    * Application name: `Trading Desk`
-   * Public hostname: subdomain `desk`, domain `nesrapp.com`
+   * Public hostname: subdomain `trading-desk`, domain `nesrapp.com`
    * Add a policy named `Me`. Set **Action** to Allow and **Include** to *Emails*, then enter `juanp97g@gmail.com` (and any other email you want to let in).
    * Login method: **One-time PIN** is enough.
 3. Save the application, open it again, and copy the **Application Audience (AUD) Tag** from its Overview or Basic information section.
@@ -46,7 +46,7 @@ The script takes care of everything in this order:
 * deploys the app
 * stores your API key as an encrypted Worker secret
 
-Then open **https://desk.nesrapp.com**, log in with the emailed code, and:
+Then open **https://trading-desk.nesrapp.com**, log in with the emailed code, and:
 
 1. Click ⚙ Settings and paste your `trader\config.json`. Keep `"paper": true`. The skills read this file inside the sandbox at `/workspace/trader/config.json`.
 2. In the **Guide** tab, upload `GUIDE.md`.
@@ -70,7 +70,7 @@ Then open **https://desk.nesrapp.com**, log in with the emailed code, and:
 ## Security notes
 
 * The `/api` routes verify the Cloudflare Access JWT signature, audience, issuer and expiry on every request, and they refuse to serve if Access isn't configured.
-* `workers.dev` and preview URLs are disabled, so the app is only reachable at desk.nesrapp.com.
+* `workers.dev` and preview URLs are disabled, so the app is only reachable at trading-desk.nesrapp.com.
 * The Anthropic API key lives only as a Worker secret. It is never sent to the browser or placed in the sandbox.
 
 ## Local development
