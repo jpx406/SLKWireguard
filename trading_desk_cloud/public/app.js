@@ -412,12 +412,22 @@ $("#settingsForm").onsubmit = async (e) => {
   e.preventDefault();
   const f = e.target, list = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
   const raw = f.trader_config.value;
-  if (raw.trim()) { try { JSON.parse(raw); } catch (err) { $("#settingsErr").textContent = `config.json is not valid JSON: ${err.message}`; return; } }
+  if (raw.trim()) {
+    let cfg;
+    try { cfg = JSON.parse(raw); } catch (err) { $("#settingsErr").textContent = `config.json is not valid JSON: ${err.message}`; return; }
+    if (!secUserAgent(cfg) && !confirm('Your config has no "sec_user_agent" (Name + email). The SEC-based skills will refuse to run without it. Save anyway?')) return;
+  }
   try {
     await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
+/** The SEC asks every client to identify itself as "Name email"; the skills read it from the config. */
+function secUserAgent(cfg) {
+  let found = null;
+  (function walk(o) { for (const [k, v] of Object.entries(o || {})) { if (/user.?agent/i.test(k) && typeof v === "string" && v.trim()) found = v; else if (v && typeof v === "object") walk(v); } })(cfg);
+  return found && /@/.test(found) ? found : null;
+}
 async function loadStatus() {
   const st = (state.status = await api("/api/status"));
   const b = $("#modeBadge");
@@ -427,6 +437,8 @@ async function loadStatus() {
   b.title = "trader/config.json — edit in Settings";
   $("#claudeDot").className = `dot ${st.agent_ready ? "ok" : "bad"}`;
   $("#configView").textContent = st.config ? JSON.stringify(st.config, null, 2) : st.config_error || "Not set. Paste your trader/config.json in Settings ⚙.";
+  const ua = secUserAgent(st.config);
+  if (st.config && !ua) showBanner('trader/config.json has no "sec_user_agent", so the SEC-based skills (analyst, copycat, filings) will refuse to run. Open Settings ⚙ and add e.g. "sec_user_agent": "Your Name you@email.com".');
   prefillRiskFromConfig(st.config);
 }
 async function loadSkills() {
