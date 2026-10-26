@@ -242,3 +242,55 @@ body:has(.banner:not(.hidden)) .layout { height: calc(100vh - 46px - 38px); }
 dialog.login { width: min(360px, 92vw); }
 dialog.login::backdrop { background: var(--bg); }
 .big-brand { font-size: 18px; margin-bottom: 6px; }
+
+/* center tabs + market board */
+.center-tabs { gap: 2px; }
+.center-tabs .board-select { max-width: 280px; font-size: 12px; padding: 3px 6px; }
+.chart-body { position: relative; overflow: hidden; }
+.board { overflow: auto; }
+.board-inner { padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 14px; }
+.bd-empty { color: var(--dim); padding: 40px; text-align: center; }
+.bd-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.bd-head h2 { margin: 0; font-size: 18px; }
+.regime { font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: .5px; padding: 2px 8px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--line); }
+.bd-summary { margin: 0; color: var(--text); font-size: 13px; max-width: 1000px; }
+.bd-indices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.bd-card { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.bd-card:hover { border-color: #3a475c; }
+.bd-card-sym { font-weight: 700; }
+.bd-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.bd-sec h3 { margin: 0 0 6px; font-size: 13px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.bd-sec > summary { cursor: pointer; color: var(--dim); font-weight: 600; font-size: 13px; }
+.bd-bars { width: 100%; max-width: 640px; height: auto; }
+.bd-lbl { fill: var(--text); font-size: 11px; font-family: var(--font); }
+.bd-val { fill: var(--dim); font-size: 11px; font-family: var(--mono); }
+.bd-tick { font-size: 9px; font-family: var(--mono); }
+.bd-breadth { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 4px 0; background: var(--panel-2); }
+.up-bg { background: var(--up); } .down-bg { background: var(--down); }
+.bd-table-wrap { overflow-x: auto; }
+.bd-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bd-table th { cursor: pointer; user-select: none; position: static; background: transparent; }
+.bd-table th:hover { color: var(--text); }
+.bd-table td.wrap { white-space: normal; min-width: 140px; }
+.bd-table td.sym b { font-size: 13px; }
+.pick-row { cursor: pointer; }
+.pick-row:hover { background: #151c29; }
+.score { min-width: 70px; }
+.scorebar { display: inline-block; height: 6px; border-radius: 3px; background: var(--accent); margin-right: 6px; vertical-align: middle; max-width: 50px; }
+.pick-detail td { background: #0f141e; }
+.bd-detail { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 16px; padding: 8px 4px; }
+.bd-detail-txt { display: flex; flex-direction: column; gap: 4px; font-size: 12px; white-space: normal; }
+.bd-spark-host { min-height: 120px; color: var(--dim); font-size: 12px; }
+.bd-spark { width: 100%; height: 120px; background: var(--panel-2); border-radius: 6px; }
+.bd-ladder { width: 100%; max-width: 360px; height: 40px; margin-top: 4px; }
+.bd-scores { margin-top: 10px; max-width: 640px; }
+.impact.high { color: var(--down); font-weight: 600; } .impact.medium { color: var(--warn); }
+.bd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 11px; padding: 3px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); font-family: var(--mono); }
+.chip.ok { color: var(--up); border-color: rgba(34,197,94,.4); } .chip.failed { color: var(--down); border-color: rgba(239,68,68,.4); }
+.brief-mini { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.chat-board { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+@media (max-width: 1100px) { .bd-grid, .bd-detail { grid-template-columns: 1fr; } }
+.center.board-mode { grid-template-rows: minmax(0, 1fr) 0; }
+.center.board-mode .bottom { display: none; }
+.bd-sec { margin-bottom: 10px; }

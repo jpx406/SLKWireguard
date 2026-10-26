@@ -42,6 +42,15 @@
   <!-- Chart + bottom panel -->
   <section class="center">
     <div class="panel chart-panel">
+      <div class="tabs center-tabs" data-group="center">
+        <button data-tab="chart" class="on">Chart</button>
+        <button data-tab="board">Market board</button>
+        <span class="spacer"></span>
+        <select id="boardPick" class="board-select hidden" title="Choose a brief"></select>
+        <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now">▶ Full market scan</button>
+      </div>
+      <div class="tab-body board hidden" data-group="center" data-tab="board"><div id="board" class="board-inner"></div></div>
+      <div class="tab-body chart-body" data-group="center" data-tab="chart">
       <div class="chart-toolbar">
         <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus"></form>
         <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
@@ -57,6 +66,7 @@
       </div>
       <div id="chart" class="chart"></div>
       <div id="legend" class="legend mono"></div>
+      </div>
     </div>
 
     <div class="panel bottom">
@@ -184,6 +194,7 @@
   </form>
 </dialog>
 
+<script src="/board.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ import { authenticate, login, logout } from "./auth";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
-import { DEFAULT_AUTOPILOT, SLOTS, ensureBriefSchema, finalizeBriefs, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
+import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (detail: string, status = 400) => json({ detail }, status);
@@ -91,10 +91,13 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
     const { results } = await env.DB.prepare("SELECT * FROM briefs ORDER BY created_at DESC LIMIT 30").all<Record<string, unknown>>();
     const ny = nyNow();
     return json({
-      autopilot: await getSetting<Autopilot>(env.DB, "autopilot", DEFAULT_AUTOPILOT),
+      autopilot: await getAutopilot(env.DB), result_format: RESULT_FORMAT,
       slots: SLOTS.map(({ id, label, et }) => ({ id, label, et })),
       trading_day: isTradingDay(ny), ny_minutes: ny.minutes, agent_ready: agentReady,
-      briefs: results.map((r) => ({ ...r, picks: (() => { try { return JSON.parse(String(r.picks ?? "[]")); } catch { return []; } })() })),
+      briefs: results.map((r) => {
+        const parse = (v: unknown, d: unknown) => { try { return v ? JSON.parse(String(v)) : d; } catch { return d; } };
+        return { ...r, picks: parse(r.picks, []), data: parse(r.data, null) };
+      }),
     });
   }
   if (path === "/briefs/run" && m === "POST") {
@@ -107,7 +110,7 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
   }
   if (path === "/autopilot" && m === "PUT") {
     const b = await body<Partial<Autopilot>>(req);
-    const cur = await getSetting<Autopilot>(env.DB, "autopilot", DEFAULT_AUTOPILOT);
+    const cur = await getAutopilot(env.DB);
     const next: Autopilot = { enabled: typeof b.enabled === "boolean" ? b.enabled : cur.enabled, slots: { ...cur.slots } };
     for (const s of SLOTS) if (typeof b.slots?.[s.id] === "boolean") next.slots[s.id] = b.slots[s.id];
     await setSetting(env.DB, "autopilot", next);

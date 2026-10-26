@@ -212,6 +212,7 @@ async function refreshQuotes(only) {
 
 /* ------------------------------------------------------------------ tabs */
 function showTab(group, tab) {
+  if (group === "center") document.querySelector(".center").classList.toggle("board-mode", tab === "board");
   $$(`.tabs[data-group=${group}] button[data-tab]`).forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   $$(`.tab-body[data-group=${group}]`).forEach((b) => b.classList.toggle("hidden", b.dataset.tab !== tab));
 }
@@ -225,7 +226,8 @@ function deskContext() {
 function fillTemplate(s) {
   const q = state.quotes[state.symbol] || {};
   return s.replaceAll("{symbol}", state.symbol).replaceAll("{interval}", state.interval)
-    .replaceAll("{price}", q.last ? fmt(q.last) : "current price").replaceAll("{watchlist}", state.settings.watchlist.join(", "));
+    .replaceAll("{price}", q.last ? fmt(q.last) : "current price").replaceAll("{watchlist}", state.settings.watchlist.join(", "))
+    .replaceAll("{format}", state.resultFormat || "");
 }
 function renderWorkflows() {
   const box = $("#workflows"); box.innerHTML = "";
@@ -260,7 +262,11 @@ async function sendChat(prompt, label) {
         if (ev.kind === "init") {
           if (state.sessionId !== ev.session_id) { state.sessionId = ev.session_id; state.trace = ev.trace; renderTrace(); remember(); }
           thinking.textContent = "Claude is working";
-        } else if (ev.kind === "text") chatAdd("bot", null, md(ev.text));
+        } else if (ev.kind === "text") {
+          const { text, result } = splitResult(ev.text);
+          const m = chatAdd("bot", null, md(text));
+          if (result) { const v = el("div", "chat-board"); renderMini(v, result); m.append(v); }
+        }
         else if (ev.kind === "tool") { chatAdd("tool", `⚙ ${ev.name}: ${ev.detail}`); consoleWrite(`\n$ [${ev.name}] ${ev.detail}\n`); }
         else if (ev.kind === "tool_result") consoleWrite(`${ev.is_error ? "[error] " : ""}${ev.text}\n`);
         else if (ev.kind === "usage") state.cost = ev.cost;
@@ -462,9 +468,15 @@ async function loadBriefs() {
     row.append(cb, el("span", null, s.label), el("span", "t", `${s.et} NY · ${etToRiyadh(s.et)} Riyadh`), run);
     slots.append(row);
   }
+  state.resultFormat = d.result_format || "";
+  renderWorkflows();
   const list = $("#briefList"); list.innerHTML = "";
   if (!d.briefs.length) list.append(el("div", "dim small", "No briefs yet. They start automatically at the times above on market days, or click \"run now\"."));
   for (const b of d.briefs) list.append(renderBrief(b));
+  updateBoard(d.briefs);
+  // Poll faster while something is running.
+  clearTimeout(state.briefTimer);
+  if (d.briefs.some((b) => b.status === "running" || b.status === "starting")) state.briefTimer = setTimeout(loadBriefs, 20000);
   // Notify about briefs that finished since the last poll.
   const done = new Set(d.briefs.filter((b) => b.status === "done").map((b) => b.id));
   if (state.seenBriefs) for (const b of d.briefs) if (b.status === "done" && !state.seenBriefs.has(b.id)) notify(b);
@@ -476,42 +488,40 @@ function renderBrief(b) {
   h.append(el("b", null, b.label || b.slot), el("span", `pill ${b.status}`, b.status === "running" || b.status === "starting" ? "working…" : b.status),
     el("span", "dim tiny", `${b.day} · ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`));
   if (b.cost) h.append(el("span", "dim tiny", formatCost(b.cost)));
+  const open = el("button", "ghost small", "open board ↗"); open.style.marginLeft = "auto";
+  open.onclick = () => { state.boardId = b.id; updateBoard(state.briefData.briefs, true); showTab("center", "board"); };
+  h.append(open);
   box.append(h);
   if (b.error) box.append(el("div", "msg err small", b.error));
-  if (Array.isArray(b.picks) && b.picks.length) {
-    const picks = el("div", "picks");
-    for (const p of b.picks) picks.append(renderPick(p));
-    box.append(picks);
-  }
-  if (b.content) {
-    const det = el("details"), sum = el("summary", null, "full analysis"), body = el("div", "md");
-    body.innerHTML = md(b.content.replace(/```json[\s\S]*?```\s*$/, "")); det.append(sum, body);
-    if (!b.picks?.length) det.open = true;
-    box.append(det);
-  }
+  const mini = el("div", "brief-mini"); renderMini(mini, b.data || { picks: b.picks }); box.append(mini);
   return box;
 }
-function renderPick(p) {
-  const card = el("div", "pick"), top = el("div", "pick-top");
-  const bias = String(p.bias || "").toLowerCase();
-  top.append(el("span", "pick-sym", String(p.symbol || "?").toUpperCase()), el("span", `small ${bias === "short" ? "down" : "up"}`, bias || ""), el("span", "dim small", p.confidence ? `· ${p.confidence}` : ""));
-  const acts = el("span", "acts"), chartB = el("button", "ghost small", "chart"), planB = el("button", "primary small", "plan");
-  chartB.onclick = () => setSymbol(String(p.symbol));
-  planB.onclick = () => {
-    setSymbol(String(p.symbol)); showTab("side", "risk");
-    if (p.entry) $("#rEntry").value = p.entry; if (p.stop) $("#rStop").value = p.stop;
-    $("#rSide").value = bias === "short" ? "short" : "long";
-    setTimeout(() => $("#btnDrawPlan").click(), 1500); // after the chart loads
-  };
-  acts.append(chartB, planB); top.append(acts); card.append(top);
-  if (p.setup) card.append(el("div", "pick-why", p.setup));
-  const lv = el("div", "pick-lv");
-  const tg = Array.isArray(p.targets) ? p.targets.map((t) => fmt(t)).join(" / ") : "—";
-  lv.innerHTML = `entry <b>${fmt(p.entry)}</b> · stop <b>${fmt(p.stop)}</b> · targets <b>${tg}</b>${p.size_shares ? ` · size <b>${fmt(p.size_shares, 0)}</b>` : ""}`;
-  card.append(lv);
-  if (p.reason) card.append(el("div", "dim small", p.reason));
-  return card;
+/** Center "Market board": the chosen brief, else the latest finished full scan, else the latest brief. */
+function updateBoard(briefs, force) {
+  const sel = $("#boardPick");
+  const options = briefs.filter((b) => b.status !== "error" || b.content);
+  sel.innerHTML = "";
+  for (const b of options) {
+    const o = el("option", null, `${b.label} · ${b.day} ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${b.status === "done" ? "" : ` (${b.status})`}`);
+    o.value = b.id; sel.append(o);
+  }
+  sel.classList.toggle("hidden", !options.length);
+  const pick = options.find((b) => b.id === state.boardId)
+    || options.find((b) => b.slot === "fullscan" && b.status === "done") || options.find((b) => b.status === "done") || options[0];
+  if (pick) sel.value = pick.id;
+  const sig = pick ? `${pick.id}:${pick.status}` : "none";
+  if (!force && sig === state.boardSig) return; // don't wipe open rows on every poll
+  state.boardSig = sig; renderBoard($("#board"), pick);
 }
+$("#boardPick").onchange = (e) => { state.boardId = e.target.value; updateBoard(state.briefData.briefs, true); };
+$("#btnFullScan").onclick = async () => {
+  const btn = $("#btnFullScan"); btn.disabled = true;
+  try {
+    const { id } = await api("/api/briefs/run", { method: "POST", body: JSON.stringify({ slot: "fullscan" }) });
+    state.boardId = id; showTab("center", "board"); await loadBriefs();
+  } catch (e) { showBanner(e.message); }
+  btn.disabled = false;
+};
 function notify(b) {
   const top = (b.picks || []).slice(0, 3).map((p) => p.symbol).join(", ");
   try { if (Notification.permission === "granted") new Notification(`Trading Desk: ${b.label}`, { body: top ? `Top picks: ${top}` : "Brief ready" }); } catch { /* unsupported */ }

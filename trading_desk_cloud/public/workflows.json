@@ -2,22 +2,22 @@
   {
     "id": "premarket",
     "label": "Pre-market brief",
-    "prompt": "Use my installed trader-* skills to build today's pre-market brief: market regime, index futures and key levels for SPY/QQQ, economic calendar and earnings that matter today, and the top gappers worth watching. Remind me of my daily loss limit from trader/config.json. Times in Riyadh time."
+    "prompt": "Use my installed trader-* skills to build today's pre-market brief: market regime, index futures and key levels for SPY/QQQ, economic calendar and earnings that matter today, and the top gappers worth watching. Remind me of my daily loss limit from trader/config.json. Times in Riyadh time. {format}"
   },
   {
     "id": "scan",
     "label": "Scan for setups",
-    "prompt": "Use my trader-* skills to scan my watchlist ({watchlist}) for day-trade setups right now. Rank the best 3 with entry trigger, stop, targets and why. Do not place any orders."
+    "prompt": "Use my trader-* skills to scan my watchlist ({watchlist}) for day-trade setups right now. Rank the best 3 with entry trigger, stop, targets and why. Do not place any orders. {format}"
   },
   {
     "id": "plan",
     "label": "Trade plan: {symbol}",
-    "prompt": "Use my trader-* skills to build a complete trade plan for {symbol} on the {interval} chart (last price {price}): bias, catalyst/news and filings check, key levels, entry trigger, stop, targets in R, position size within my trader/config.json risk limits, and what would invalidate the idea. Do not place any orders."
+    "prompt": "Use my trader-* skills to build a complete trade plan for {symbol} on the {interval} chart (last price {price}): bias, catalyst/news and filings check, key levels, entry trigger, stop, targets in R, position size within my trader/config.json risk limits, and what would invalidate the idea. Do not place any orders. {format}"
   },
   {
     "id": "size",
     "label": "Size & risk-check: {symbol}",
-    "prompt": "Use my trader-* skills to size a {symbol} trade at {price} and run every pre-trade risk check (budget, max risk per trade, daily loss limit, open exposure). Tell me clearly whether the trade is allowed. Do not place any orders."
+    "prompt": "Use my trader-* skills to size a {symbol} trade at {price} and run every pre-trade risk check (budget, max risk per trade, daily loss limit, open exposure). Tell me clearly whether the trade is allowed. Do not place any orders. {format}"
   },
   {
     "id": "news",
@@ -27,6 +27,6 @@
   {
     "id": "review",
     "label": "End-of-day review",
-    "prompt": "Use my trader-* skills to run my end-of-day review: today's trades and P&L, rule breaks, what worked, what to change tomorrow, and update my journal if a skill does that."
+    "prompt": "Use my trader-* skills to run my end-of-day review: today's trades and P&L, rule breaks, what worked, what to change tomorrow, and update my journal if a skill does that. {format}"
   }
 ]

@@ -5,15 +5,45 @@ import type { Env } from "./env";
 import { client, createSession } from "./agent";
 import { getSetting, getSettings } from "./db";
 
-export type SlotId = "premarket" | "preopen" | "open" | "midday" | "power" | "review";
+export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review";
 type Slot = { id: SlotId; label: string; et: string; defaultOn: boolean; prompt: string };
 
-const PICKS_FORMAT = `
-End your answer with one fenced \`\`\`json block (nothing after it) in exactly this shape, best idea first, at most 6 picks (empty list if nothing qualifies):
-{"picks":[{"symbol":"NVDA","bias":"long","setup":"gap-and-go above premarket high","entry":123.4,"stop":121.9,"targets":[125.0,126.5],"size_shares":40,"confidence":"high|medium|low","reason":"one line"}]}`;
+// Structured result every brief ends with; the UI turns it into tables and charts.
+export const RESULT_FORMAT = `
+End your answer with ONE fenced \`\`\`json block (nothing after it) with this exact shape. Use real numbers from your tools (null when unknown, never invented):
+{
+ "market": {
+  "regime": "risk-on | risk-off | mixed",
+  "summary": "2-3 sentences on what drives the market today",
+  "indices": [{"symbol":"SPY","last":580.1,"change_pct":0.4,"bias":"bullish|bearish|neutral","support":[577.5],"resistance":[583.0]}],
+  "sectors": [{"name":"Technology","etf":"XLK","change_pct":1.2}],
+  "breadth": {"advancers":0,"decliners":0,"note":""},
+  "events": [{"time_et":"08:30","event":"CPI","impact":"high|medium|low"}]
+ },
+ "picks": [{
+  "rank":1, "symbol":"NVDA", "name":"NVIDIA", "sector":"Technology", "bias":"long|short",
+  "setup":"gap-and-go above premarket high", "score":0-100, "confidence":"high|medium|low",
+  "last":131.2, "premarket_change_pct":4.1, "rvol":3.2, "catalyst":"earnings beat",
+  "entry":131.25, "stop":129.9, "targets":[133.0,134.8], "rr":2.6, "size_shares":55,
+  "exit_plan":"scale 1/2 at T1, stop to breakeven, trail rest under 9 EMA; flat by 15:55",
+  "invalidation":"loses VWAP on volume", "skills":["trader-scan","trader-risk"], "reason":"one line"
+ }],
+ "avoid": [{"symbol":"XYZ","reason":"low float halt risk"}],
+ "skills_run": [{"skill":"trader-scan","status":"ok|failed|skipped","note":""}]
+}
+Rank picks best first (max 10), one entry per symbol, sizes within /workspace/trader/config.json.`;
 
 export const SLOTS: Slot[] = [
-  { id: "premarket", label: "Pre-market scan", et: "08:00", defaultOn: true, prompt:
+  { id: "fullscan", label: "Full market scan (all skills)", et: "08:15", defaultOn: true, prompt:
+    `Run my COMPLETE pipeline now, using EVERY one of my trader-* skills in a sensible order, over the WHOLE US market (not only my watchlist):
+1. Market regime: index futures/ETFs (SPY, QQQ, IWM, DIA), VIX, 10y yield, dollar, oil; sector ETF performance (XLK, XLF, XLE, XLV, XLY, XLP, XLI, XLB, XLU, XLRE, XLC); breadth.
+2. Calendar: economic releases and Fed speakers today, notable earnings before/after the bell.
+3. Universe: pre-market gainers and losers, most active by volume, unusual relative volume, new highs/lows, sector leaders and laggards. Use your skills first and the web (finviz, stockanalysis, nasdaq, Yahoo Finance) to fill gaps.
+4. For each candidate: catalyst and news, SEC filings and halts, float/liquidity, key levels (premarket high/low, previous day high/low/close, VWAP), and a setup with entry, stop, targets and exit plan.
+5. Risk: size every plan with my risk skill and the limits in /workspace/trader/config.json; drop anything that breaks a rule (and list it under "avoid").
+6. Merge everything into ONE de-duplicated list ranked by quality (score 0-100), mixing longs and shorts and different sectors so it represents the whole market, not just a few names.
+Report which skills you ran and whether each one worked. Then a short written briefing, then the JSON.` },
+  { id: "premarket", label: "Pre-market scan", et: "08:00", defaultOn: false, prompt:
     `Run my full PRE-MARKET routine now with my trader-* skills: market regime (index futures, VIX, yields, dollar), economic calendar and earnings today, top pre-market gappers and unusual volume with their catalysts (news, filings, halts), and key levels for SPY and QQQ. Then give a ranked list of the best day-trade candidates for today with a complete plan for each (entry trigger, stop, targets in R, size within the limits in /workspace/trader/config.json). Skip names that break my rules and say why.` },
   { id: "preopen", label: "Final pre-open plan", et: "09:10", defaultOn: true, prompt:
     `It is 20 minutes before the US open. Use my trader-* skills to refresh the pre-market picture: update pre-market highs and lows, volume and news for today's best candidates, drop any that faded, add new movers, and give the final ranked game plan for the open with exact triggers, stops, targets and sizes per /workspace/trader/config.json.` },
@@ -47,10 +77,21 @@ export function nyNow(d = new Date()) {
 const toMin = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
 export const isTradingDay = (ny = nyNow()) => !["Sat", "Sun"].includes(ny.weekday) && !HOLIDAYS.has(ny.date);
 
+let briefSchemaReady = false;
 export async function ensureBriefSchema(db: D1Database) {
+  if (briefSchemaReady) return;
   await db.prepare(`CREATE TABLE IF NOT EXISTS briefs (
     id TEXT PRIMARY KEY, day TEXT NOT NULL, slot TEXT NOT NULL, label TEXT, session_id TEXT, status TEXT NOT NULL,
     content TEXT, picks TEXT, cost TEXT, error TEXT, created_at TEXT DEFAULT (datetime('now')), finished_at TEXT)`).run();
+  // Added later: the full structured result (market, picks, avoid, skills_run).
+  try { await db.prepare("ALTER TABLE briefs ADD COLUMN data TEXT").run(); } catch { /* already there */ }
+  briefSchemaReady = true;
+}
+
+/** Saved autopilot settings merged with defaults, so new routines appear with their default state. */
+export async function getAutopilot(db: D1Database): Promise<Autopilot> {
+  const saved = await getSetting<Autopilot>(db, "autopilot", DEFAULT_AUTOPILOT);
+  return { enabled: saved.enabled ?? true, slots: { ...DEFAULT_AUTOPILOT.slots, ...(saved.slots ?? {}) } };
 }
 
 /** Start a brief now (from the cron or the "Run now" button). */
@@ -58,12 +99,14 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow()) {
   const slot = SLOTS.find((s) => s.id === slotId);
   if (!slot) throw new Error("Unknown brief");
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  await ensureBriefSchema(env.DB);
   await env.DB.prepare("INSERT INTO briefs (id, day, slot, label, status) VALUES (?, ?, ?, ?, 'starting')").bind(id, ny.date, slot.id, slot.label).run();
   try {
     const s = await getSettings(env.DB);
     const watchlist = s.watchlist.join(", ");
-    const sid = await createSession(env, s.session_budget_usd);
-    const text = `[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${PICKS_FORMAT}`;
+    // The full scan runs every skill, so it gets twice the normal per-session budget.
+    const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd);
+    const text = `[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${RESULT_FORMAT}`;
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text }] }] });
     await env.DB.prepare("UPDATE briefs SET session_id = ?, status = 'running' WHERE id = ?").bind(sid, id).run();
   } catch (e) {
@@ -72,13 +115,14 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow()) {
   return id;
 }
 
-function extractPicks(text: string): unknown[] | null {
-  const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/g)];
-  const last = blocks.at(-1);
+/** The last fenced json block of the answer: {market, picks, avoid, skills_run} (or a bare {picks}). */
+export function extractResult(text: string): { picks: unknown[]; [k: string]: unknown } | null {
+  const last = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].at(-1);
   if (!last) return null;
   try {
     const obj = JSON.parse(last[1]);
-    return Array.isArray(obj?.picks) ? obj.picks.slice(0, 10) : null;
+    if (!obj || typeof obj !== "object") return null;
+    return { ...obj, picks: Array.isArray(obj.picks) ? obj.picks.slice(0, 15) : [] };
   } catch { return null; }
 }
 
@@ -105,8 +149,8 @@ export async function finalizeBriefs(env: Env) {
       const cost = s.usage?.list_cost ? `${s.usage.list_cost.amount} ${s.usage.list_cost.currency}` : null;
       const content = texts.join("\n\n");
       const finish = (status: "done" | "error", error: string | null) =>
-        env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
-          .bind(status, content, JSON.stringify(extractPicks(content) ?? []), cost, error, b.id).run();
+        env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, data = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
+          .bind(status, content, JSON.stringify(extractResult(content)?.picks ?? []), JSON.stringify(extractResult(content)), cost, error, b.id).run();
 
       if (idleReason === "requires_action") {
         const pending = [...asks].filter((x) => !answered.has(x));
@@ -142,7 +186,7 @@ export async function runSchedule(env: Env, now = new Date()) {
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
   const ny = nyNow(now);
-  const ap = await getSetting<Autopilot>(env.DB, "autopilot", DEFAULT_AUTOPILOT);
+  const ap = await getAutopilot(env.DB);
   if (!ap.enabled || !isTradingDay(ny)) return;
   for (const slot of SLOTS) {
     if (!ap.slots?.[slot.id]) continue;

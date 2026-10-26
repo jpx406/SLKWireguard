@@ -47,13 +47,22 @@ The **Briefs** tab is the first tab. On US market days, the Worker runs these sc
 
 | Brief | New York | Riyadh (until Nov 1 / after) | Default |
 |---|---|---|---|
-| Pre-market scan: regime, calendar, gappers and catalysts, ranked plans | 08:00 | 15:00 / 16:00 | on |
+| **Full market scan (all skills)**: runs every trader-* skill in sequence over the whole market (regime → calendar → movers/volume/sector leaders → news, filings and levels → risk sizing), then merges everything into one ranked, de-duplicated list | 08:15 | 15:15 / 16:15 | on |
+| Pre-market scan: regime, calendar, gappers and catalysts, ranked plans | 08:00 | 15:00 / 16:00 | off |
 | Final pre-open plan | 09:10 | 16:10 / 17:10 | on |
 | Opening range update | 09:50 | 16:50 / 17:50 | on |
 | Midday check | 12:30 | 19:30 / 20:30 | off |
 | Power hour | 15:00 | 22:00 / 23:00 | off |
 | End-of-day review | 16:15 | 23:15 / 00:15 | off |
 
+* **Market board** (center tab, or **▶ Full market scan** to run it now) shows each brief visually:
+  * index cards with support and resistance
+  * a sector performance chart, market breadth, and today's events with their impact
+  * a sortable recommendations table with score, setup, catalyst, pre-market % change, relative volume, entry, stop, targets, R:R and size
+  * a detail panel for each row with an intraday chart showing the entry, stop and target lines, a trade ladder, the exit plan and what invalidates the trade
+  * a score chart, the "avoid" list, and which skills ran (✓ / ✗)
+* The full scan gets twice the per-session budget because it runs every skill.
+* Copilot answers from the workflow buttons also come back with a picks table.
 * Each brief ends with ranked **picks**. Click **chart** to load a pick, or **plan** to fill the Risk tab and draw its entry, stop and targets on the chart.
 * **run now** starts any brief immediately. **🔔 notify me** turns on a browser notification when a brief is ready, if the page is open.
 * The scans run on Cloudflare's schedule even when your browser is closed. Weekends and NYSE holidays are skipped.
