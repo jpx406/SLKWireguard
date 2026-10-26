@@ -12,6 +12,7 @@
 <script src="/vendor/purify.min.js"></script>
 </head>
 <body>
+<div id="banner" class="banner hidden"></div>
 <header class="topbar">
   <div class="brand"><span class="logo">▲</span> Trading Desk</div>
   <div id="modeBadge" class="badge muted" title="From trader/config.json">CONFIG?</div>
@@ -95,13 +96,25 @@
   <!-- Right panel -->
   <aside class="panel side">
     <div class="tabs" data-group="side">
-      <button data-tab="copilot" class="on">Copilot</button>
+      <button data-tab="briefs" class="on">Briefs</button>
+      <button data-tab="copilot">Copilot</button>
       <button data-tab="skills">Skills</button>
       <button data-tab="risk">Risk</button>
       <button data-tab="guide">Guide</button>
     </div>
 
-    <div class="tab-body copilot" data-group="side" data-tab="copilot">
+    <div class="tab-body pad briefs" data-group="side" data-tab="briefs">
+      <div class="ap-head">
+        <label class="switch"><input type="checkbox" id="apEnabled"> <b>Autopilot</b></label>
+        <span id="apNote" class="dim small"></span>
+        <span class="spacer"></span>
+        <button id="btnNotify" class="ghost small" title="Get a browser notification when a brief is ready">🔔 notify me</button>
+      </div>
+      <div id="apSlots" class="ap-slots"></div>
+      <div id="briefList" class="brief-list"><div class="dim small">Loading briefs…</div></div>
+    </div>
+
+    <div class="tab-body hidden copilot" data-group="side" data-tab="copilot">
       <div id="workflows" class="workflows"></div>
       <div id="chat" class="chat">
         <div class="msg sys">Ask anything. Claude runs your trader skills in a secure cloud sandbox.

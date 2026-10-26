@@ -51,6 +51,36 @@ Then open **https://trading-desk.nesrapp.com**, log in with the emailed code, an
 1. Click ⚙ Settings and paste your `trader\config.json`. Keep `"paper": true`. The skills read this file inside the sandbox at `/workspace/trader/config.json`.
 2. In the **Guide** tab, upload `GUIDE.md`.
 
+## Autopilot (automatic scans and recommendations)
+
+The **Briefs** tab is the first tab. On US market days, the Worker runs these scans for you with your trader-* skills:
+
+| Brief | New York | Riyadh (until Nov 1 / after) | Default |
+|---|---|---|---|
+| Pre-market scan: regime, calendar, gappers and catalysts, ranked plans | 08:00 | 15:00 / 16:00 | on |
+| Final pre-open plan | 09:10 | 16:10 / 17:10 | on |
+| Opening range update | 09:50 | 16:50 / 17:50 | on |
+| Midday check | 12:30 | 19:30 / 20:30 | off |
+| Power hour | 15:00 | 22:00 / 23:00 | off |
+| End-of-day review | 16:15 | 23:15 / 00:15 | off |
+
+* Each brief ends with ranked **picks**. Click **chart** to load a pick, or **plan** to fill the Risk tab and draw its entry, stop and targets on the chart.
+* **run now** starts any brief immediately. **🔔 notify me** turns on a browser notification when a brief is ready, if the page is open.
+* The scans run on Cloudflare's schedule even when your browser is closed. Weekends and NYSE holidays are skipped.
+* Every brief is a Claude session capped at your per-session budget. Three briefs a day costs roughly $1–3 per brief in Anthropic usage. Turn off the ones you don't need.
+
+## Troubleshooting
+
+If something fails, a red **Problem:** bar at the top of the app says what went wrong. You can also open `https://trading-desk.nesrapp.com/api/status` in a new tab.
+
+| Message | Fix |
+|---|---|
+| `ACCESS_AUD does not match…` | Copy the AUD tag again (Zero Trust → Access → Applications → your app → Overview). Put it in `wrangler.toml`, then run `.\node_modules\.bin\wrangler.cmd deploy` |
+| `ACCESS_TEAM_DOMAIN is "…" but this login came from "…"` | Put the domain shown after "came from" into `ACCESS_TEAM_DOMAIN`, then redeploy |
+| `Cloudflare Access is not configured` | `ACCESS_TEAM_DOMAIN` or `ACCESS_AUD` is empty in `wrangler.toml`. Fill both in and redeploy |
+| `Agent not configured` | Run `node setup/setup-agent.mjs`, then redeploy |
+| Claude dot is red | The `ANTHROPIC_API_KEY` secret is missing. Run `.\node_modules\.bin\wrangler.cmd secret put ANTHROPIC_API_KEY` |
+
 ## Updating
 
 * **You changed a skill:** run `node setup/setup-agent.mjs`. It uploads a new version of each skill, and new Copilot sessions use it.

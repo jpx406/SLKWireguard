@@ -29,3 +29,7 @@ ACCESS_AUD = ""           # the application's "Application Audience (AUD) Tag"
 ANTHROPIC_WORKSPACE = "default"
 
 # Secret (never in this file):  npx wrangler secret put ANTHROPIC_API_KEY
+
+# Autopilot briefs: every 15 min on weekdays (UTC); the Worker maps this to New York time.
+[triggers]
+crons = ["*/15 * * * 1-5"]

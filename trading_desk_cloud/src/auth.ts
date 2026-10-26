@@ -29,23 +29,33 @@ export async function authenticate(req: Request, env: Env): Promise<Identity | R
   if (!team || !env.ACCESS_AUD) return deny(503, "Cloudflare Access is not configured (ACCESS_TEAM_DOMAIN / ACCESS_AUD).");
   const token = req.headers.get("cf-access-jwt-assertion");
   if (!token) return deny(401, "Missing Cloudflare Access token.");
+  let header, payload, h, p, s;
   try {
-    const [h, p, s] = token.split(".");
-    const header = decodeJson(h), payload = decodeJson(p);
-    if (header.alg !== "RS256") return deny(401, "Bad token algorithm.");
+    [h, p, s] = token.split(".");
+    header = decodeJson(h); payload = decodeJson(p);
+  } catch {
+    return deny(401, "Malformed Cloudflare Access token. Reload the page.");
+  }
+  if (header.alg !== "RS256") return deny(401, "Bad token algorithm.");
+  // Specific reasons, so a wrong setting is easy to spot (none of these reveal secrets).
+  if (payload.iss !== `https://${team}`)
+    return deny(401, `ACCESS_TEAM_DOMAIN is "${team}" but this login came from "${String(payload.iss).replace("https://", "")}". Fix ACCESS_TEAM_DOMAIN in wrangler.toml and redeploy.`);
+  const aud: string[] = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (!aud.includes(env.ACCESS_AUD))
+    return deny(401, "ACCESS_AUD does not match this Access application's Audience (AUD) Tag. Copy the tag again from Zero Trust > Access > Applications, fix wrangler.toml and redeploy.");
+  const now = Date.now() / 1000;
+  if (!(payload.exp > now) || (payload.nbf && payload.nbf > now + 60)) return deny(401, "Your Cloudflare login expired. Reload the page.");
+  try {
     let key = (await accessKeys(team)).find((k) => k.kid === header.kid);
     if (!key) key = (await accessKeys(team, true)).find((k) => k.kid === header.kid); // key rotation
     if (!key) return deny(401, "Unknown signing key.");
     const cryptoKey = await crypto.subtle.importKey("jwk", key, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", cryptoKey, b64urlDecode(s), new TextEncoder().encode(`${h}.${p}`));
-    const aud: string[] = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    const now = Date.now() / 1000;
-    if (!ok || !aud.includes(env.ACCESS_AUD) || payload.iss !== `https://${team}` || !(payload.exp > now) || (payload.nbf && payload.nbf > now + 60))
-      return deny(401, "Invalid Cloudflare Access token.");
-    return { email: String(payload.email || payload.sub || "") };
-  } catch {
-    return deny(401, "Invalid Cloudflare Access token.");
+    if (!ok) return deny(401, "Invalid Cloudflare Access token signature.");
+  } catch (e) {
+    return deny(503, `Could not verify the login with ${team}: ${(e as Error).message}`);
   }
+  return { email: String(payload.email || payload.sub || "") };
 }
 
 const deny = (status: number, detail: string) => Response.json({ detail }, { status });

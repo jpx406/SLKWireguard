@@ -4,6 +4,7 @@ import { authenticate } from "./auth";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
+import { DEFAULT_AUTOPILOT, SLOTS, ensureBriefSchema, finalizeBriefs, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (detail: string, status = 400) => json({ detail }, status);
@@ -23,6 +24,7 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/^\/api/, "");
   const m = req.method;
   await ensureSchema(env.DB);
+  await ensureBriefSchema(env.DB);
 
   if (path === "/status" && m === "GET") {
     const s = await getSettings(env.DB);
@@ -83,6 +85,35 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
     return new Response(runTurn(env, sid, prompt), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
   }
 
+  if (path === "/briefs" && m === "GET") {
+    const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
+    if (agentReady) await finalizeBriefs(env);
+    const { results } = await env.DB.prepare("SELECT * FROM briefs ORDER BY created_at DESC LIMIT 30").all<Record<string, unknown>>();
+    const ny = nyNow();
+    return json({
+      autopilot: await getSetting<Autopilot>(env.DB, "autopilot", DEFAULT_AUTOPILOT),
+      slots: SLOTS.map(({ id, label, et }) => ({ id, label, et })),
+      trading_day: isTradingDay(ny), ny_minutes: ny.minutes, agent_ready: agentReady,
+      briefs: results.map((r) => ({ ...r, picks: (() => { try { return JSON.parse(String(r.picks ?? "[]")); } catch { return []; } })() })),
+    });
+  }
+  if (path === "/briefs/run" && m === "POST") {
+    if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);
+    const slot = String((await body<{ slot: string }>(req)).slot) as SlotId;
+    if (!SLOTS.some((s) => s.id === slot)) return bad("Unknown brief");
+    const running = await env.DB.prepare("SELECT 1 FROM briefs WHERE status IN ('starting','running') AND slot = ? LIMIT 1").bind(slot).first();
+    if (running) return bad("That brief is already running.", 409);
+    return json({ id: await startBrief(env, slot) });
+  }
+  if (path === "/autopilot" && m === "PUT") {
+    const b = await body<Partial<Autopilot>>(req);
+    const cur = await getSetting<Autopilot>(env.DB, "autopilot", DEFAULT_AUTOPILOT);
+    const next: Autopilot = { enabled: typeof b.enabled === "boolean" ? b.enabled : cur.enabled, slots: { ...cur.slots } };
+    for (const s of SLOTS) if (typeof b.slots?.[s.id] === "boolean") next.slots[s.id] = b.slots[s.id];
+    await setSetting(env.DB, "autopilot", next);
+    return json(next);
+  }
+
   const cm = path.match(/^\/candles\/([^/]+)$/);
   if (cm && m === "GET") {
     const sym = decodeURIComponent(cm[1]).toUpperCase(), iv = url.searchParams.get("interval") || "5m";
@@ -130,6 +161,9 @@ export default {
       const err = e as { status?: number; message?: string };
       return bad(err.message || "Server error", err.status && err.status >= 400 && err.status < 600 ? 502 : 500);
     }
+  },
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runSchedule(env));
   },
 } satisfies ExportedHandler<Env>;
 

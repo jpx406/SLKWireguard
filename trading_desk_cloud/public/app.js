@@ -4,10 +4,21 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const api = async (path, opts = {}) => {
-  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  let r;
+  try { r = await fetch(path, { headers: { "Content-Type": "application/json" }, redirect: "manual", ...opts }); }
+  catch { throw new Error("Can't reach the server. Your login may have expired: reload the page."); }
+  if (r.type === "opaqueredirect" || r.status === 0) throw new Error("Your Cloudflare login expired: reload the page.");
+  const ct = r.headers.get("content-type") || "";
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `${r.status} ${r.statusText}`);
+  if (!ct.includes("json")) throw new Error(`Unexpected response from ${path} (not JSON). Reload the page; if it persists, the Worker is not handling /api.`);
   return r.json();
 };
+function showBanner(msg) {
+  const b = document.getElementById("banner"); b.innerHTML = "";
+  const t = document.createElement("span"); t.innerHTML = "<b>Problem:</b> "; t.append(document.createTextNode(msg));
+  const x = document.createElement("button"); x.className = "ghost small"; x.textContent = "dismiss"; x.onclick = () => b.classList.add("hidden");
+  b.append(t, x); b.classList.remove("hidden");
+}
 const fmt = (n, d = 2) => (n == null || isNaN(n) ? "—" : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
 const md = (text) => DOMPurify.sanitize(marked.parse(text || ""));
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -406,6 +417,92 @@ $("#guideFile").onchange = async (e) => {
   e.target.value = ""; loadGuide();
 };
 
+/* ------------------------------------------------------------------ autopilot briefs */
+const nyMinFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const ryMinFmt = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Riyadh", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const mins = (f) => { const [h, m] = f.format(new Date()).split(":").map(Number); return h * 60 + m; };
+function etToRiyadh(et) {
+  const diff = (mins(ryMinFmt) - mins(nyMinFmt) + 1440) % 1440;
+  const t = (+et.slice(0, 2) * 60 + +et.slice(3, 5) + diff) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+}
+state.seenBriefs = null;
+async function loadBriefs() {
+  let d;
+  try { d = await api("/api/briefs"); } catch (e) { $("#briefList").innerHTML = ""; $("#briefList").append(el("div", "msg err", e.message)); return; }
+  state.briefData = d;
+  $("#apEnabled").checked = d.autopilot.enabled;
+  $("#apNote").textContent = !d.agent_ready ? "agent not configured" : !d.trading_day ? "market closed today" : d.autopilot.enabled ? "runs automatically on market days" : "off";
+  const slots = $("#apSlots"); slots.innerHTML = "";
+  for (const s of d.slots) {
+    const row = el("div", "ap-slot"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!d.autopilot.slots[s.id];
+    cb.onchange = () => api("/api/autopilot", { method: "PUT", body: JSON.stringify({ slots: { [s.id]: cb.checked } }) }).catch((e) => showBanner(e.message));
+    const run = el("button", "ghost small", "run now");
+    run.onclick = async () => { run.disabled = true; try { await api("/api/briefs/run", { method: "POST", body: JSON.stringify({ slot: s.id }) }); await loadBriefs(); } catch (e) { showBanner(e.message); } run.disabled = false; };
+    row.append(cb, el("span", null, s.label), el("span", "t", `${s.et} NY · ${etToRiyadh(s.et)} Riyadh`), run);
+    slots.append(row);
+  }
+  const list = $("#briefList"); list.innerHTML = "";
+  if (!d.briefs.length) list.append(el("div", "dim small", "No briefs yet. They start automatically at the times above on market days, or click \"run now\"."));
+  for (const b of d.briefs) list.append(renderBrief(b));
+  // Notify about briefs that finished since the last poll.
+  const done = new Set(d.briefs.filter((b) => b.status === "done").map((b) => b.id));
+  if (state.seenBriefs) for (const b of d.briefs) if (b.status === "done" && !state.seenBriefs.has(b.id)) notify(b);
+  state.seenBriefs = done;
+}
+function renderBrief(b) {
+  const box = el("div", "brief"), h = el("div", "brief-h");
+  const when = new Date(b.created_at.replace(" ", "T") + "Z");
+  h.append(el("b", null, b.label || b.slot), el("span", `pill ${b.status}`, b.status === "running" || b.status === "starting" ? "working…" : b.status),
+    el("span", "dim tiny", `${b.day} · ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`));
+  if (b.cost) h.append(el("span", "dim tiny", formatCost(b.cost)));
+  box.append(h);
+  if (b.error) box.append(el("div", "msg err small", b.error));
+  if (Array.isArray(b.picks) && b.picks.length) {
+    const picks = el("div", "picks");
+    for (const p of b.picks) picks.append(renderPick(p));
+    box.append(picks);
+  }
+  if (b.content) {
+    const det = el("details"), sum = el("summary", null, "full analysis"), body = el("div", "md");
+    body.innerHTML = md(b.content.replace(/```json[\s\S]*?```\s*$/, "")); det.append(sum, body);
+    if (!b.picks?.length) det.open = true;
+    box.append(det);
+  }
+  return box;
+}
+function renderPick(p) {
+  const card = el("div", "pick"), top = el("div", "pick-top");
+  const bias = String(p.bias || "").toLowerCase();
+  top.append(el("span", "pick-sym", String(p.symbol || "?").toUpperCase()), el("span", `small ${bias === "short" ? "down" : "up"}`, bias || ""), el("span", "dim small", p.confidence ? `· ${p.confidence}` : ""));
+  const acts = el("span", "acts"), chartB = el("button", "ghost small", "chart"), planB = el("button", "primary small", "plan");
+  chartB.onclick = () => setSymbol(String(p.symbol));
+  planB.onclick = () => {
+    setSymbol(String(p.symbol)); showTab("side", "risk");
+    if (p.entry) $("#rEntry").value = p.entry; if (p.stop) $("#rStop").value = p.stop;
+    $("#rSide").value = bias === "short" ? "short" : "long";
+    setTimeout(() => $("#btnDrawPlan").click(), 1500); // after the chart loads
+  };
+  acts.append(chartB, planB); top.append(acts); card.append(top);
+  if (p.setup) card.append(el("div", "pick-why", p.setup));
+  const lv = el("div", "pick-lv");
+  const tg = Array.isArray(p.targets) ? p.targets.map((t) => fmt(t)).join(" / ") : "—";
+  lv.innerHTML = `entry <b>${fmt(p.entry)}</b> · stop <b>${fmt(p.stop)}</b> · targets <b>${tg}</b>${p.size_shares ? ` · size <b>${fmt(p.size_shares, 0)}</b>` : ""}`;
+  card.append(lv);
+  if (p.reason) card.append(el("div", "dim small", p.reason));
+  return card;
+}
+function notify(b) {
+  const top = (b.picks || []).slice(0, 3).map((p) => p.symbol).join(", ");
+  try { if (Notification.permission === "granted") new Notification(`Trading Desk: ${b.label}`, { body: top ? `Top picks: ${top}` : "Brief ready" }); } catch { /* unsupported */ }
+  document.title = `● ${b.label} ready — Trading Desk`;
+  setTimeout(() => (document.title = "Trading Desk"), 15000);
+}
+$("#apEnabled").onchange = (e) => api("/api/autopilot", { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) }).then(loadBriefs).catch((err) => showBanner(err.message));
+$("#btnNotify").onclick = async () => {
+  try { const p = await Notification.requestPermission(); $("#btnNotify").textContent = p === "granted" ? "🔔 on" : "🔕 blocked"; } catch { $("#btnNotify").textContent = "not supported"; }
+};
+
 /* ------------------------------------------------------------------ wiring */
 $("#symForm").onsubmit = (e) => { e.preventDefault(); setSymbol($("#symInput").value); };
 $("#addSymForm").onsubmit = (e) => {
@@ -423,15 +520,22 @@ document.addEventListener("keydown", (e) => {
 (async function init() {
   marked.setOptions({ gfm: true, breaks: true });
   tickClock(); setInterval(tickClock, 1000);
-  state.settings = await api("/api/settings");
+  try { state.settings = await api("/api/settings"); }
+  catch (e) {
+    showBanner(`${e.message}  (Open /api/status in a new tab for details.)`);
+    state.settings = { watchlist: ["SPY", "QQQ"], session_budget_usd: 5, trader_config: "" };
+  }
   state.symbol = state.settings.watchlist[0] || "SPY"; $("#symInput").value = state.symbol;
   $("#tradeForm").date.value = new Date().toISOString().slice(0, 10);
-  state.workflows = await api("/workflows.json");
+  state.workflows = await api("/workflows.json").catch(() => []);
   restoreSession();
   renderWatchlist(); renderWorkflows(); loadChart();
-  await Promise.allSettled([loadStatus(), loadSkills(), loadGuide(), loadJournal(), refreshQuotes()]);
+  const results = await Promise.allSettled([loadStatus(), loadSkills(), loadGuide(), loadJournal(), refreshQuotes(), loadBriefs()]);
+  const failed = results.find((r) => r.status === "rejected");
+  if (failed) showBanner(failed.reason?.message || String(failed.reason));
   renderWorkflows();
   setInterval(refreshQuotes, 15000);
   setInterval(() => { if (intraday() && marketState().s !== "closed") loadChart(true); }, 20000);
-  
+  setInterval(loadBriefs, 60000);
+  try { if (Notification.permission === "granted") $("#btnNotify").textContent = "🔔 on"; } catch { /* unsupported */ }
 })();
