@@ -14,11 +14,15 @@ type ChartResult = {
   indicators: { quote: { open: (number | null)[]; high: (number | null)[]; low: (number | null)[]; close: (number | null)[]; volume: (number | null)[] }[] };
 };
 
+// Local tests point this at a mock server (MARKET_DATA_BASE in .dev.vars); production always uses Yahoo.
+let base = "https://query1.finance.yahoo.com";
+export function setMarketBase(url?: string) { if (url) base = url.replace(/\/$/, ""); }
+
 async function yahooChart(symbol: string, interval: string, range: string, prepost: boolean, ttl: number): Promise<ChartResult> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=${prepost}`;
+  const url = `${base}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}&includePrePost=${prepost}`;
   const cache = caches.default;
   const key = new Request(url);
-  let res = await cache.match(key);
+  let res = base.startsWith("https://query1.") ? await cache.match(key) : undefined;
   if (!res) {
     res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (TradingDesk)", Accept: "application/json" } });
     if (!res.ok) throw new Error(`Yahoo ${res.status}`);

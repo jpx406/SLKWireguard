@@ -23,6 +23,7 @@
   </div>
   <div class="top-right">
     <span id="claudeDot" class="dot" title="Claude agent"></span><span class="dim small">Claude</span>
+    <button id="btnMe" class="ghost small user-chip" title="Your account">👤 <span id="meName">…</span></button>
     <span id="skillsCount" class="dim small"></span>
     <button id="btnSettings" class="icon-btn" title="Settings">⚙</button>
   </div>
@@ -45,16 +46,19 @@
       <div class="tabs center-tabs" data-group="center">
         <button data-tab="chart" class="on">Chart</button>
         <button data-tab="board">Market board</button>
+        <button data-tab="paper">Paper trading</button>
         <span class="spacer"></span>
         <select id="boardPick" class="board-select hidden" title="Choose a brief"></select>
         <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan">⚙ Scan filters</button>
         <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now">▶ Full market scan</button>
       </div>
       <div class="tab-body board hidden" data-group="center" data-tab="board"><div id="board" class="board-inner"></div></div>
+      <div class="tab-body board hidden" data-group="center" data-tab="paper"><div id="paper" class="board-inner"><div class="dim">Loading paper account…</div></div></div>
       <div class="tab-body chart-body" data-group="center" data-tab="chart">
       <div class="chart-toolbar">
         <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus"></form>
         <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
+        <button id="btnTradeSym" class="primary small" title="Paper-trade this symbol">Paper trade</button>
         <div class="seg" id="intervals">
           <button data-i="1m">1m</button><button data-i="5m" class="on">5m</button><button data-i="15m">15m</button>
           <button data-i="60m">1h</button><button data-i="1d">D</button>
@@ -162,6 +166,7 @@
         <button id="btnDrawPlan" class="primary small">Draw on chart</button>
         <button id="btnClearPlan" class="ghost small">clear lines</button>
         <button id="btnAskSize" class="ghost small">ask Claude to verify</button>
+        <button id="btnPaperPlan" class="primary small">paper-trade this plan</button>
       </div>
       <h4>trader/config.json <span class="dim tiny">(edit in Settings ⚙)</span></h4>
       <pre id="configView" class="config mono dim">not loaded</pre>
@@ -237,10 +242,86 @@
   </form>
 </dialog>
 
+<dialog id="ticketDlg" class="ticket-dlg">
+  <form id="ticketForm">
+    <h3>Paper order <span class="badge paper">SIMULATED</span></h3>
+    <div class="f-grid">
+      <label>Symbol<input name="symbol" required maxlength="15" class="mono" style="text-transform:uppercase"></label>
+      <label>Side<select name="side"><option value="long">Buy (long)</option><option value="short">Sell short</option></select></label>
+      <label>Order type<select name="type"><option value="market">Market (now)</option><option value="limit">Limit (buy at or below / short at or above)</option><option value="stop">Stop trigger (breakout entry)</option></select></label>
+      <label class="px">Entry price<input name="price" type="number" step="0.01" min="0"></label>
+      <label>Size by<select name="sizeBy"><option value="qty">Shares</option><option value="usd">Dollars</option><option value="risk">Risk % of equity</option></select></label>
+      <label><span id="sizeLbl">Shares</span><input name="size" type="number" step="any" min="0" required></label>
+      <label>Stop-loss<input name="stop" type="number" step="0.01" min="0" placeholder="none"></label>
+      <label>Take-profit (sell price)<input name="target" type="number" step="0.01" min="0" placeholder="none"></label>
+      <label>Note<input name="note" maxlength="300" placeholder="setup / reason"></label>
+    </div>
+    <div id="ticketPreview" class="risk-out"></div>
+    <div id="ticketErr" class="err-text"></div>
+    <div class="row gap end"><button type="button" id="btnTicketCancel" class="ghost">Cancel</button><button class="primary" id="btnTicketSubmit">Place paper order</button></div>
+  </form>
+</dialog>
+
+<dialog id="paperSetDlg" class="filters-dlg">
+  <form id="paperSetForm">
+    <h3>Paper account settings</h3>
+    <fieldset><legend>Auto-trading from scan recommendations</legend>
+      <div class="f-grid">
+        <label class="check"><input name="auto_trade" type="checkbox"> Auto-place orders when a scan finishes</label>
+        <label>Min score (0-100)<input name="auto_min_score" type="number" min="0" max="100"></label>
+        <label>Max open positions + orders<input name="auto_max_positions" type="number" min="1" max="20"></label>
+        <label>Entry order valid for (minutes)<input name="auto_valid_min" type="number" min="5" max="390"></label>
+        <label>Position sizing<select name="sizing"><option value="risk">Risk % of equity (entry→stop)</option><option value="rec">Shares from the recommendation</option><option value="fixed">Fixed $ per trade</option></select></label>
+        <label>Risk per trade (% of equity)<input name="risk_pct" type="number" step="0.05" min="0.05" max="10"></label>
+        <label>Fixed $ per trade<input name="fixed_usd" type="number" step="100" min="10"></label>
+        <label>Max position (% of equity)<input name="max_position_pct" type="number" step="1" min="1" max="100"></label>
+        <label>Take-profit at<select name="target"><option value="t1">Target 1</option><option value="t2">Target 2</option></select></label>
+      </div>
+    </fieldset>
+    <fieldset><legend>All trades</legend>
+      <div class="f-grid">
+        <label>Commission per fill ($)<input name="commission" type="number" step="0.01" min="0" max="100"></label>
+        <label class="check"><input name="auto_flat" type="checkbox"> Close all positions at 15:55 New York</label>
+      </div>
+    </fieldset>
+    <fieldset><legend>Reset account</legend>
+      <div class="row gap"><label>Starting cash ($)<input name="starting_cash" type="number" step="100" min="100"></label>
+      <button type="button" id="btnPaperReset" class="ghost">Reset with this amount…</button><span class="dim small">deletes all paper orders, positions and history</span></div>
+    </fieldset>
+    <div id="paperSetErr" class="err-text"></div>
+    <div class="row gap end"><button type="button" id="btnPaperSetCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="meDlg" class="filters-dlg">
+  <form id="meForm">
+    <h3>Account: <span id="meTitle"></span></h3>
+    <fieldset id="pwBox"><legend>Change my password</legend>
+      <div class="f-grid">
+        <label>Current password<input name="current" type="password" autocomplete="current-password"></label>
+        <label>New password (10+ characters)<input name="next" type="password" autocomplete="new-password"></label>
+        <label>&nbsp;<button type="button" id="btnPwChange" class="ghost">Change password</button></label>
+      </div>
+    </fieldset>
+    <fieldset id="usersBox" class="hidden"><legend>Users (admin)</legend>
+      <table class="bd-table" id="usersTable"><thead><tr><th>User</th><th>Role</th><th>Claude access</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="f-grid" style="margin-top:8px">
+        <label>New username<input id="nuName" placeholder="e.g. maria" autocapitalize="none" spellcheck="false"></label>
+        <label>Password (10+ characters)<input id="nuPw" type="password" autocomplete="new-password"></label>
+        <label class="check"><input id="nuAi" type="checkbox"> Can use Claude (scans, Copilot) — costs money</label>
+      </div>
+      <button type="button" id="btnAddUser" class="primary small">Add user</button>
+    </fieldset>
+    <div id="meErr" class="err-text"></div>
+    <div class="row gap end"><button type="button" id="btnMeLogout" class="ghost" style="margin-right:auto">Log out</button><button type="button" id="btnMeClose" class="primary">Close</button></div>
+  </form>
+</dialog>
+
 <dialog id="loginDlg" class="login">
   <form id="loginForm">
     <div class="brand big-brand"><span class="logo">▲</span> Trading Desk</div>
-    <label>Password<input id="loginPw" type="password" autocomplete="current-password" required autofocus></label>
+    <label>Username<input id="loginUser" autocomplete="username" placeholder="admin" autocapitalize="none" spellcheck="false"></label>
+    <label>Password<input id="loginPw" type="password" autocomplete="current-password" required></label>
     <div id="loginErr" class="err-text"></div>
     <button class="primary">Log in</button>
   </form>
@@ -248,5 +329,6 @@
 
 <script src="/board.js"></script>
 <script src="/app.js"></script>
+<script src="/paper.js"></script>
 </body>
 </html>

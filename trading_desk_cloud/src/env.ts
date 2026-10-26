@@ -9,5 +9,6 @@ export interface Env {
   ACCESS_AUD: string; // Application Audience (AUD) tag from the Access application
   ANTHROPIC_BASE_URL?: string; // optional, e.g. a Cloudflare AI Gateway URL
   ANTHROPIC_WORKSPACE?: string; // workspace id for Console trace links; "default" if unset
+  MARKET_DATA_BASE?: string; // tests only: mock market-data server
   DEV_NO_AUTH?: string; // "1" only in .dev.vars for local `wrangler dev`
 }

@@ -4,6 +4,7 @@
 import type { Env } from "./env";
 import { client, createSession } from "./agent";
 import { getSetting, getSettings } from "./db";
+import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
@@ -92,6 +93,7 @@ export async function ensureBriefSchema(db: D1Database) {
   // Added later: the full structured result (market, picks, avoid, skills_run).
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN data TEXT").run(); } catch { /* already there */ }
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN params TEXT").run(); } catch { /* already there */ }
+  try { await db.prepare("ALTER TABLE briefs ADD COLUMN auto_done INTEGER").run(); } catch { /* already there */ }
   briefSchemaReady = true;
 }
 
@@ -194,8 +196,11 @@ export async function finalizeBriefs(env: Env) {
 /** Cron entry point. */
 export async function runSchedule(env: Env, now = new Date()) {
   await ensureBriefSchema(env.DB);
+  // Paper trading: fill/close against the latest 1-minute bars, then auto-trade any newly finished brief.
+  try { await runEngine(env.DB); } catch (e) { console.error("paper engine", e); }
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
+  try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }
   const ny = nyNow(now);
   const ap = await getAutopilot(env.DB);
   if (!ap.enabled || !isTradingDay(ny)) return;

@@ -1,8 +1,9 @@
 // Trading Desk on Cloudflare: static UI (./public) + JSON API under /api, behind Cloudflare Access.
 import type { Env } from "./env";
-import { authenticate, login, logout } from "./auth";
+import { authenticate, login, logout, listUsers, createUser, updateUser, deleteUser, changeOwnPassword, type Identity } from "./auth";
+import { autoTradeNewBriefs, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
-import { candles, quotes, INTERVALS, SYMBOL_RE } from "./market";
+import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -21,11 +22,82 @@ function parseConfig(raw: string) {
   catch (e) { return { config: null, error: String((e as Error).message) }; }
 }
 
-async function api(req: Request, env: Env, url: URL): Promise<Response> {
+// Claude-powered actions cost money: only the admin and users the admin allows may run them.
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/];
+// Shared settings: admin only.
+const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
+
+async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Response> {
   const path = url.pathname.replace(/^\/api/, "");
   const m = req.method;
   await ensureSchema(env.DB);
   await ensureBriefSchema(env.DB);
+  if (who.role !== "admin" && (path.startsWith("/users") || (m !== "GET" && ADMIN_WRITES.some((r) => r.test(path)))))
+    return bad("Only the admin can change this.", 403);
+  if (!who.ai && AI_ROUTES.some((r) => r.test(path))) return bad("Your account is not allowed to run Claude scans or chat. Ask the admin.", 403);
+
+  if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD });
+  if (path === "/me/password" && m === "POST") {
+    const b = await body<{ current?: string; next?: string }>(req);
+    return changeOwnPassword(env, who, String(b.current ?? ""), String(b.next ?? ""));
+  }
+
+  // ---- users (admin)
+  if (path === "/users" && m === "GET") return json(await listUsers(env.DB));
+  if (path === "/users" && m === "POST") {
+    const b = await body<{ username?: string; password?: string; ai?: boolean; role?: string }>(req);
+    const err = await createUser(env.DB, String(b.username ?? "").trim().toLowerCase(), String(b.password ?? ""), b.ai === true, b.role === "admin" ? "admin" : "user");
+    return err ? bad(err) : json(await listUsers(env.DB));
+  }
+  const um = path.match(/^\/users\/([a-z0-9_.-]{3,32})$/);
+  if (um && m === "PUT") {
+    const b = await body<{ password?: string; ai?: boolean; role?: string }>(req);
+    const err = await updateUser(env.DB, um[1], {
+      ...(typeof b.password === "string" && b.password ? { password: b.password } : {}),
+      ...(typeof b.ai === "boolean" ? { ai: b.ai } : {}),
+      ...(b.role === "admin" || b.role === "user" ? { role: b.role } : {}),
+    });
+    return err ? bad(err) : json(await listUsers(env.DB));
+  }
+  if (um && m === "DELETE") { await deleteUser(env.DB, um[1]); return json(await listUsers(env.DB)); }
+
+  // ---- paper trading (per user)
+  if (path === "/paper" && m === "GET") {
+    await runEngine(env.DB, who.user);
+    return json(await summary(env.DB, who.user));
+  }
+  if (path === "/paper/orders" && m === "POST") {
+    const b = await body<Record<string, unknown>>(req);
+    const r = await placeOrder(env.DB, who.user, {
+      symbol: String(b.symbol ?? ""), side: b.side === "short" ? "short" : "long",
+      type: b.type === "limit" || b.type === "stop" ? b.type : "market",
+      price: b.price as number | null, qty: b.qty as number | null, amount_usd: b.amount_usd as number | null,
+      stop: b.stop as number | null, target: b.target as number | null, note: b.note == null ? null : String(b.note), source: "manual",
+    });
+    return r.error ? bad(r.error) : json(r);
+  }
+  const om = path.match(/^\/paper\/orders\/([a-z0-9]{6,32})$/);
+  if (om && m === "DELETE") return (await cancelOrder(env.DB, who.user, om[1])) ? json({ ok: true }) : bad("Order not found or no longer working.", 404);
+  const pm = path.match(/^\/paper\/positions\/([a-z0-9]{6,32})(\/close)?$/);
+  if (pm && pm[2] && m === "POST") { const r = await closePosition(env.DB, who.user, pm[1]); return r.error ? bad(r.error) : json(r); }
+  if (pm && !pm[2] && m === "PUT") {
+    const b = await body<{ stop?: unknown; target?: unknown }>(req);
+    const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+    const err = await updatePosition(env.DB, who.user, pm[1], n(b.stop), n(b.target));
+    return err ? bad(err) : json({ ok: true });
+  }
+  if (path === "/paper/settings" && m === "PUT") {
+    const a = await getAccount(env.DB, who.user);
+    const next = sanitizePaperSettings((await body<{ settings: unknown }>(req)).settings, a.s);
+    await env.DB.prepare("UPDATE paper_accounts SET settings = ? WHERE user = ?").bind(JSON.stringify(next), who.user).run();
+    return json(next);
+  }
+  if (path === "/paper/reset" && m === "POST") {
+    const cash = Number((await body<{ starting_cash?: unknown }>(req)).starting_cash);
+    if (!(cash >= 100 && cash <= 100_000_000)) return bad("Starting cash must be between $100 and $100,000,000.");
+    await resetAccount(env.DB, who.user, Math.round(cash * 100) / 100);
+    return json(await summary(env.DB, who.user));
+  }
 
   if (path === "/status" && m === "GET") {
     const s = await getSettings(env.DB);
@@ -143,19 +215,19 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if (path === "/journal" && m === "GET") {
-    const { results } = await env.DB.prepare("SELECT * FROM journal ORDER BY date DESC, created_at DESC LIMIT 2000").all<Trade>();
+    const { results } = await env.DB.prepare("SELECT * FROM journal WHERE user = ? ORDER BY date DESC, created_at DESC LIMIT 2000").bind(who.user).all<Trade>();
     return json(results.map(tradeStats));
   }
   if (path === "/journal" && m === "POST") {
     const t = { id: crypto.randomUUID().replace(/-/g, "").slice(0, 12), ...normalizeTrade((await body<{ trade: Record<string, unknown> }>(req)).trade ?? {}) };
     if (!t.symbol) return bad("Symbol required");
-    await env.DB.prepare("INSERT INTO journal (id,date,symbol,side,qty,entry,stop,exit,fees,setup,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(t.id, t.date, t.symbol, t.side, t.qty, t.entry, t.stop, t.exit, t.fees, t.setup, t.notes).run();
+    await env.DB.prepare("INSERT INTO journal (id,date,symbol,side,qty,entry,stop,exit,fees,setup,notes,user) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(t.id, t.date, t.symbol, t.side, t.qty, t.entry, t.stop, t.exit, t.fees, t.setup, t.notes, who.user).run();
     return json(tradeStats(t));
   }
   const jm = path.match(/^\/journal\/([A-Za-z0-9]{1,32})$/);
   if (jm && m === "DELETE") {
-    await env.DB.prepare("DELETE FROM journal WHERE id = ?").bind(jm[1]).run();
+    await env.DB.prepare("DELETE FROM journal WHERE id = ? AND user = ?").bind(jm[1], who.user).run();
     return json({ ok: true });
   }
 
@@ -164,6 +236,7 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    setMarketBase(env.MARKET_DATA_BASE);
     const url = new URL(req.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
     if (req.method === "POST" && url.pathname === "/api/login") {
@@ -176,7 +249,7 @@ export default {
     if (who instanceof Response) return who;
     if (req.method !== "GET" && req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
     try {
-      return await api(req, env, url);
+      return await api(req, env, url, who);
     } catch (e) {
       if (e instanceof HttpError) return bad(e.message, e.status);
       const err = e as { status?: number; message?: string };
@@ -184,6 +257,7 @@ export default {
     }
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    setMarketBase(env.MARKET_DATA_BASE);
     ctx.waitUntil(runSchedule(env));
   },
 } satisfies ExportedHandler<Env>;

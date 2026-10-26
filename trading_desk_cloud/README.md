@@ -6,7 +6,8 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 |---|---|
 | Web app (chart, watchlist, risk, journal, guide) | Cloudflare Worker + static assets |
 | Journal, settings, your `trader/config.json`, GUIDE.md | Cloudflare D1 database |
-| Login | The app's own password login (password stored as an encrypted Worker secret) |
+| Login | The app's own login: admin password as an encrypted Worker secret, extra users with hashed passwords in D1 |
+| Paper trading | Simulated accounts per user; order engine runs every minute (Cron Trigger) |
 | Copilot and your 15 `trader-*` skills | **Claude Managed Agents**: Claude runs your SKILL.md files and Python tools in an Anthropic cloud sandbox |
 | Quotes and candles | Yahoo Finance (delayed and unofficial; for context only) |
 
@@ -74,6 +75,47 @@ The **Briefs** tab is the first tab. On US market days, the Worker runs these sc
 * **run now** starts any brief immediately. **🔔 notify me** turns on a browser notification when a brief is ready, if the page is open.
 * The scans run on Cloudflare's schedule even when your browser is closed. Weekends and NYSE holidays are skipped.
 * Every brief is a Claude session capped at your per-session budget. Three briefs a day costs roughly $1–3 per brief in Anthropic usage. Turn off the ones you don't need.
+
+## Paper trading (simulated, no real money)
+
+Open the **Paper trading** tab in the center area. Every user has their own simulated account, starting with **$10,000**. You can change the amount under ⚙ Settings & auto-trade → Reset.
+
+**Placing orders:**
+* Click **Buy ▶ / Short ▶** on any recommendation (Market board or Briefs), **📝 Paper buy** in a pick's details, **Paper trade** in the chart toolbar, or **paper-trade this plan** in the Risk tab.
+* The order ticket is pre-filled from the recommendation: entry, stop-loss, take-profit (T1) and size.
+* **Order types:** Market (fills now), Limit (buy at or below the price, short at or above), or Stop trigger (a breakout entry that buys when the price rises through the level).
+* **Sizing:** by shares, by dollars, or by risk % of equity. The ticket shows the cost, the maximum loss at the stop, the gain at the target, and R:R.
+
+**How orders fill:**
+* A server engine runs **every minute**, even with your browser closed. It checks working orders and open positions against 1-minute price bars.
+* A limit order fills at its price or better. A stop trigger fills at its price or worse.
+* A position closes automatically when its stop-loss or take-profit is touched. If one bar touches both, it counts as the stop (the conservative assumption).
+* Unfilled day orders expire at 16:00 New York time. Optionally, every open position is closed at 15:55.
+
+**Managing positions:**
+* **Sell now / Cover now** closes at market at any moment.
+* **edit** changes the stop or target. **cancel** removes a working order.
+
+**Records:**
+* Account cards: equity, cash, invested, today's P&L, total P&L, win rate.
+* An equity-by-day chart and a daily gain/loss chart.
+* Tables for open positions, working and recent orders, a **daily summary** (trades, wins, losses, win %, P&L, best, worst, equity) and the full trade history.
+
+**Auto-trade (optional, in Settings):**
+* When a scan finishes, orders are placed automatically for recommendations above a minimum score.
+* Settings include the maximum number of open trades, how long entry orders stay valid, sizing (risk % of equity, the recommended shares, or a fixed $ amount), the maximum % of equity per position, T1 or T2 as the take-profit, and commission.
+* Entries above the market become breakout stop orders, and the rest become limits.
+* Each scan is auto-traded only once.
+
+Fills are simulated on delayed Yahoo Finance data, so real fills, slippage and liquidity will differ.
+
+## Users
+
+* **Admin:** log in with username **admin** and the `LOGIN_PASSWORD` secret. To change it, run `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`. This logs everyone out.
+* **Adding users:** 👤 (top right) → Users → add a username and password (10+ characters). Passwords are stored as salted PBKDF2 hashes, never in plain text.
+* **Claude access:** tick **Claude access** only for users who may run scans and Copilot, since those cost money on your Anthropic key. Users without it can still see the briefs and the market board, chart, paper trade and keep a journal.
+* **What each user has of their own:** a paper account and a journal. The watchlist, config, filters and autopilot are shared and only the admin can change them.
+* **Passwords:** users can change their own password under 👤. The admin can reset a password (which logs that user out) or delete a user.
 
 ## Troubleshooting
 

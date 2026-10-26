@@ -7,7 +7,10 @@ export function ensureSchema(db: D1Database) {
     db.prepare(`CREATE TABLE IF NOT EXISTS journal (
       id TEXT PRIMARY KEY, date TEXT, symbol TEXT, side TEXT, qty REAL, entry REAL, stop REAL,
       exit REAL, fees REAL, setup TEXT, notes TEXT, created_at TEXT DEFAULT (datetime('now')))`),
-  ]).catch((e) => { ready = null; throw e; });
+  ]).then(async () => {
+    // Added later: journal rows belong to a user (older rows are the admin's).
+    try { await db.prepare("ALTER TABLE journal ADD COLUMN user TEXT NOT NULL DEFAULT 'admin'").run(); } catch { /* exists */ }
+  }).catch((e) => { ready = null; throw e; });
   return ready;
 }
 

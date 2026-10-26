@@ -27,7 +27,7 @@ document.getElementById("loginDlg").addEventListener("cancel", (e) => e.preventD
 document.getElementById("loginForm").onsubmit = async (e) => {
   e.preventDefault();
   const err = document.getElementById("loginErr"); err.textContent = "";
-  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: document.getElementById("loginPw").value }) }).catch(() => null);
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: document.getElementById("loginUser").value, password: document.getElementById("loginPw").value }) }).catch(() => null);
   if (r?.ok) { location.reload(); return; }
   err.textContent = r ? (await r.json().catch(() => ({}))).detail || "Login failed." : "Can't reach the server.";
 };
@@ -212,7 +212,7 @@ async function refreshQuotes(only) {
 
 /* ------------------------------------------------------------------ tabs */
 function showTab(group, tab) {
-  if (group === "center") document.querySelector(".center").classList.toggle("board-mode", tab === "board");
+  if (group === "center") document.querySelector(".center").classList.toggle("board-mode", tab === "board" || tab === "paper");
   $$(`.tabs[data-group=${group}] button[data-tab]`).forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   $$(`.tab-body[data-group=${group}]`).forEach((b) => b.classList.toggle("hidden", b.dataset.tab !== tab));
 }

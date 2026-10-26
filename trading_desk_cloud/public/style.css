@@ -309,3 +309,13 @@ legend { color: var(--dim); font-size: 12px; padding: 0 4px; }
 .filter-chips .chip { font-family: var(--font); color: var(--dim); }
 @media (max-width: 700px) { .f-grid { grid-template-columns: 1fr 1fr; } }
 .f-grid label.check input { width: auto; }
+
+/* paper trading + accounts */
+dialog.ticket-dlg { width: min(720px, 95vw); }
+.ticket-dlg h3 .badge { vertical-align: middle; margin-left: 6px; }
+.trade-btn { padding: 2px 8px; font-size: 11px; white-space: nowrap; }
+.user-chip { font-size: 12px; }
+.not-admin #btnSettings, .not-admin #btnFilters, .not-admin #apEnabled, .not-admin .ap-slot input { display: none; }
+.no-ai .ap-slot button, .no-ai #workflows button { pointer-events: none; opacity: .45; }
+#usersTable select { padding: 2px 4px; font-size: 12px; }
+#usersTable td button { margin-right: 4px; }

@@ -31,7 +31,7 @@ function barChart(rows, { unit = "%", signed = true, max } = {}) {
     svg("rect", { x: v >= 0 || !signed ? zero : zero - w, y, width: w, height: rowH - 8, rx: 3, fill: color, opacity: 0.85 }, g);
     // Value labels go on the right of the zero line for negatives too, so they never cover the names.
     const t = svg("text", { x: v >= 0 || !signed ? zero + w + 6 : zero + 6, y: y + 12, "text-anchor": "start", class: "bd-val" }, g);
-    t.textContent = `${signed && v > 0 ? "+" : ""}${fmt(v, unit === "%" ? 2 : 0)}${unit}`;
+    t.textContent = unit === "$" ? `${v > 0 ? "+" : v < 0 ? "-" : ""}$${fmt(Math.abs(v), 2)}` : `${signed && v > 0 ? "+" : ""}${fmt(v, unit === "%" ? 2 : 0)}${unit}`;
   });
   return g;
 }
@@ -101,6 +101,7 @@ function picksTable(picks, { compact = false } = {}) {
     const th = el("th", null, label); th.onclick = () => { asc = sortKey === key ? !asc : key === "rank"; sortKey = key; draw(); };
     hr.append(th);
   }
+  hr.append(el("th", null, ""));
   thead.append(hr); table.append(thead, tbody); wrap.append(table);
   const cell = (p, key) => {
     const v = p[key];
@@ -123,7 +124,10 @@ function picksTable(picks, { compact = false } = {}) {
     });
     for (const p of sorted) {
       const tr = el("tr", "pick-row"); cols.forEach(([, k]) => tr.append(cell(p, k)));
-      const detail = el("tr", "pick-detail hidden"), td = el("td"); td.colSpan = cols.length; detail.append(td);
+      const tdBtn = el("td"), tb = el("button", "ghost small trade-btn", /short/i.test(p.bias || "") ? "Short ▶" : "Buy ▶");
+      tb.title = "Paper-trade this recommendation"; tb.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
+      tdBtn.append(tb); tr.append(tdBtn);
+      const detail = el("tr", "pick-detail hidden"), td = el("td"); td.colSpan = cols.length + 1; detail.append(td);
       tr.onclick = () => {
         const open = detail.classList.toggle("hidden") === false;
         if (open && !td.childElementCount) td.append(pickDetail(p));
@@ -145,7 +149,9 @@ function pickDetail(p) {
   c.onclick = (e) => { e.stopPropagation(); setSymbol(String(p.symbol)); showTab("center", "chart"); };
   pl.onclick = (e) => { e.stopPropagation(); planPick(p); };
   ask.onclick = (e) => { e.stopPropagation(); showTab("side", "copilot"); sendChat(`Re-check this idea with my trader-* skills using live data and tell me if it is still valid: ${JSON.stringify(p)}`, `Re-check ${p.symbol}`); };
-  acts.append(c, pl, ask); right.append(acts);
+  const pt = el("button", "primary small", /short/i.test(p.bias || "") ? "📝 Paper short" : "📝 Paper buy");
+  pt.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
+  acts.append(pt, c, pl, ask); right.append(acts);
   box.append(left, right);
   return box;
 }
