@@ -4,7 +4,8 @@ import { authenticate, login, logout } from "./auth";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
-import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
+import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
+import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (detail: string, status = 400) => json({ detail }, status);
@@ -96,17 +97,28 @@ async function api(req: Request, env: Env, url: URL): Promise<Response> {
       trading_day: isTradingDay(ny), ny_minutes: ny.minutes, agent_ready: agentReady,
       briefs: results.map((r) => {
         const parse = (v: unknown, d: unknown) => { try { return v ? JSON.parse(String(v)) : d; } catch { return d; } };
-        return { ...r, picks: parse(r.picks, []), data: parse(r.data, null) };
+        const params = parse(r.params, null);
+        return { ...r, picks: parse(r.picks, []), data: parse(r.data, null), params, filters: params ? describeFilters(sanitizeFilters(params)) : null };
       }),
     });
   }
   if (path === "/briefs/run" && m === "POST") {
     if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);
-    const slot = String((await body<{ slot: string }>(req)).slot) as SlotId;
+    const rb = await body<{ slot: string; filters?: unknown }>(req);
+    const slot = String(rb.slot) as SlotId;
     if (!SLOTS.some((s) => s.id === slot)) return bad("Unknown brief");
     const running = await env.DB.prepare("SELECT 1 FROM briefs WHERE status IN ('starting','running') AND slot = ? LIMIT 1").bind(slot).first();
     if (running) return bad("That brief is already running.", 409);
-    return json({ id: await startBrief(env, slot) });
+    return json({ id: await startBrief(env, slot, undefined, rb.filters ? sanitizeFilters(rb.filters) : undefined) });
+  }
+  if (path === "/scan-filters" && m === "GET") {
+    const f = await getScanFilters(env.DB);
+    return json({ filters: f, defaults: DEFAULT_FILTERS, sectors: SECTORS, exchanges: EXCHANGES, summary: describeFilters(f) });
+  }
+  if (path === "/scan-filters" && m === "PUT") {
+    const f = sanitizeFilters((await body<{ filters: unknown }>(req)).filters);
+    await setSetting(env.DB, "scan_filters", f);
+    return json({ filters: f, summary: describeFilters(f) });
   }
   if (path === "/autopilot" && m === "PUT") {
     const b = await body<Partial<Autopilot>>(req);

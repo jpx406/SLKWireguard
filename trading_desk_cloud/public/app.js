@@ -514,6 +514,55 @@ function updateBoard(briefs, force) {
   state.boardSig = sig; renderBoard($("#board"), pick);
 }
 $("#boardPick").onchange = (e) => { state.boardId = e.target.value; updateBoard(state.briefData.briefs, true); };
+/* ---- scan filters dialog */
+const PRESETS = {
+  balanced: {},
+  largecap: { min_market_cap: 10e9, min_price: 20, min_avg_volume: 2e6, min_rel_volume: 1.5, min_atr_pct: 1.5 },
+  midcap: { min_market_cap: 2e9, max_market_cap: 10e9, min_price: 10, min_avg_volume: 1e6, min_rel_volume: 1.5, min_gap_pct: 2 },
+  smallcap: { min_market_cap: 50e6, max_market_cap: 2e9, min_price: 2, max_price: 20, min_avg_volume: 500000, min_rel_volume: 3, min_gap_pct: 5, max_float: 50e6, min_premarket_volume: 500000 },
+};
+const F_NUM = ["min_market_cap", "max_market_cap", "min_price", "max_price", "min_avg_volume", "min_rel_volume", "min_premarket_volume", "min_gap_pct", "min_atr_pct", "min_float", "max_float", "max_short_float_pct"];
+function fillFilters(f) {
+  const form = $("#filtersForm");
+  for (const k of F_NUM) {
+    const inp = form[k], v = f[k] == null ? "" : String(f[k]);
+    if (inp.tagName === "SELECT" && v && ![...inp.options].some((o) => o.value === v)) inp.append(new Option(v, v)); // keep custom values
+    inp.value = v;
+  }
+  form.direction.value = f.direction; form.earnings.value = f.earnings; form.max_picks.value = f.max_picks;
+  form.include_etfs.checked = !!f.include_etfs; form.notes.value = f.notes || "";
+  const checks = (box, all, on) => { box.innerHTML = ""; for (const x of all) { const l = el("label"), c = el("input"); c.type = "checkbox"; c.value = x; c.checked = on.includes(x); l.append(c, document.createTextNode(x)); box.append(l); } };
+  checks($("#fSectors"), state.filterMeta.sectors, f.sectors); checks($("#fExchanges"), state.filterMeta.exchanges, f.exchanges);
+}
+function readFilters() {
+  const form = $("#filtersForm"), f = {};
+  for (const k of F_NUM) f[k] = form[k].value === "" ? null : Number(form[k].value);
+  f.direction = form.direction.value; f.earnings = form.earnings.value; f.max_picks = Number(form.max_picks.value) || 10;
+  f.include_etfs = form.include_etfs.checked; f.notes = form.notes.value;
+  f.sectors = $$("#fSectors input:checked").map((c) => c.value); f.exchanges = $$("#fExchanges input:checked").map((c) => c.value);
+  return f;
+}
+$("#btnFilters").onclick = async () => {
+  try {
+    const d = await api("/api/scan-filters");
+    state.filterMeta = d; fillFilters(d.filters); $("#filtersErr").textContent = ""; $("#filtersDlg").showModal();
+  } catch (e) { showBanner(e.message); }
+};
+$$("#filtersDlg [data-preset]").forEach((b) => (b.onclick = () => fillFilters({ ...state.filterMeta.defaults, ...PRESETS[b.dataset.preset] })));
+$("#btnFiltersReset").onclick = () => fillFilters(state.filterMeta.defaults);
+$("#btnFiltersCancel").onclick = () => $("#filtersDlg").close();
+$("#filtersForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = readFilters();
+  if (f.min_price != null && f.max_price != null && f.min_price > f.max_price) { $("#filtersErr").textContent = "Price min is above price max."; return; }
+  if (f.min_market_cap != null && f.max_market_cap != null && f.min_market_cap > f.max_market_cap) { $("#filtersErr").textContent = "Market cap min is above max."; return; }
+  if (!f.exchanges.length) { $("#filtersErr").textContent = "Pick at least one exchange."; return; }
+  try {
+    await api("/api/scan-filters", { method: "PUT", body: JSON.stringify({ filters: f }) });
+    $("#filtersDlg").close();
+    if (e.submitter?.value === "run") $("#btnFullScan").click();
+  } catch (err) { $("#filtersErr").textContent = err.message; }
+};
 $("#btnFullScan").onclick = async () => {
   const btn = $("#btnFullScan"); btn.disabled = true;
   try {

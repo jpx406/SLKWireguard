@@ -163,6 +163,12 @@ function renderBoard(host, b) {
   host.append(head);
   if (b.error) host.append(el("div", "msg err small", b.error));
   if (m.summary) host.append(el("p", "bd-summary", m.summary));
+  const used = b.filters || d.filters;
+  if (Array.isArray(used) && used.length) {
+    const chips = el("div", "filter-chips"); chips.append(el("span", "dim small", "Filters:"));
+    for (const t of used) chips.append(el("span", "chip", t));
+    host.append(chips);
+  }
 
   if (Array.isArray(m.indices) && m.indices.length) {
     const strip = el("div", "bd-indices");

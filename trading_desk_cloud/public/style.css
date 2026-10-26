@@ -294,3 +294,18 @@ dialog.login::backdrop { background: var(--bg); }
 .center.board-mode { grid-template-rows: minmax(0, 1fr) 0; }
 .center.board-mode .bottom { display: none; }
 .bd-sec { margin-bottom: 10px; }
+
+/* scan filters */
+dialog.filters-dlg { width: min(760px, 95vw); }
+.presets { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.f-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.f-grid label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); padding-top: 16px; }
+.f-grid input, .f-grid select { width: 100%; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px 10px; }
+legend { color: var(--dim); font-size: 12px; padding: 0 4px; }
+.f-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; }
+.f-checks label { display: flex; flex-direction: row; gap: 5px; align-items: center; color: var(--text); }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.filter-chips .chip { font-family: var(--font); color: var(--dim); }
+@media (max-width: 700px) { .f-grid { grid-template-columns: 1fr 1fr; } }
+.f-grid label.check input { width: auto; }

@@ -47,6 +47,7 @@
         <button data-tab="board">Market board</button>
         <span class="spacer"></span>
         <select id="boardPick" class="board-select hidden" title="Choose a brief"></select>
+        <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan">⚙ Scan filters</button>
         <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now">▶ Full market scan</button>
       </div>
       <div class="tab-body board hidden" data-group="center" data-tab="board"><div id="board" class="board-inner"></div></div>
@@ -182,6 +183,57 @@
       <textarea name="trader_config" rows="12" class="mono" spellcheck="false" placeholder='{ "paper": true, "sec_user_agent": "Your Name you@example.com" }'></textarea></label>
     <div id="settingsErr" class="err-text"></div>
     <div class="row gap end"><button type="button" id="btnLogout" class="ghost" style="margin-right:auto">Log out</button><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="filtersDlg" class="filters-dlg">
+  <form id="filtersForm">
+    <h3>Full market scan — filters</h3>
+    <div class="presets"><span class="dim small">Presets:</span>
+      <button type="button" class="ghost small" data-preset="balanced">Balanced</button>
+      <button type="button" class="ghost small" data-preset="largecap">Large-cap momentum</button>
+      <button type="button" class="ghost small" data-preset="midcap">Mid-cap movers</button>
+      <button type="button" class="ghost small" data-preset="smallcap">Small-cap gappers</button>
+    </div>
+    <div class="f-grid">
+      <label>Market cap min<select name="min_market_cap">
+        <option value="">Any</option><option value="50000000">$50M (micro)</option><option value="300000000">$300M (small)</option>
+        <option value="2000000000">$2B (mid)</option><option value="10000000000">$10B (large)</option><option value="200000000000">$200B (mega)</option></select></label>
+      <label>Market cap max<select name="max_market_cap">
+        <option value="">Any</option><option value="300000000">$300M</option><option value="2000000000">$2B</option>
+        <option value="10000000000">$10B</option><option value="200000000000">$200B</option></select></label>
+      <label>Price min ($)<input name="min_price" type="number" step="any" min="0" placeholder="any"></label>
+      <label>Price max ($)<input name="max_price" type="number" step="any" min="0" placeholder="any"></label>
+      <label>Avg daily volume min<select name="min_avg_volume">
+        <option value="">Any</option><option value="100000">100K</option><option value="500000">500K</option><option value="1000000">1M</option>
+        <option value="2000000">2M</option><option value="5000000">5M</option><option value="10000000">10M</option></select></label>
+      <label>Relative volume min (x)<input name="min_rel_volume" type="number" step="0.1" min="0" placeholder="any"></label>
+      <label>Pre-market volume min<select name="min_premarket_volume">
+        <option value="">Any</option><option value="50000">50K</option><option value="100000">100K</option><option value="500000">500K</option>
+        <option value="1000000">1M</option></select></label>
+      <label>Gap / pre-market move min (%)<input name="min_gap_pct" type="number" step="0.5" min="0" placeholder="any"></label>
+      <label>Volatility: ATR(14) min (% of price)<input name="min_atr_pct" type="number" step="0.5" min="0" placeholder="any"></label>
+      <label>Short interest max (% of float)<input name="max_short_float_pct" type="number" step="1" min="0" placeholder="any"></label>
+      <label>Float min<select name="min_float">
+        <option value="">Any</option><option value="10000000">10M</option><option value="50000000">50M</option><option value="100000000">100M</option></select></label>
+      <label>Float max<select name="max_float">
+        <option value="">Any</option><option value="10000000">10M (low float)</option><option value="20000000">20M</option><option value="50000000">50M</option>
+        <option value="100000000">100M</option><option value="500000000">500M</option></select></label>
+      <label>Direction<select name="direction"><option value="both">Longs and shorts</option><option value="long">Longs only</option><option value="short">Shorts only</option></select></label>
+      <label>Earnings today<select name="earnings"><option value="any">Include</option><option value="exclude">Exclude</option><option value="only">Only earnings plays</option></select></label>
+      <label>Max picks<input name="max_picks" type="number" min="1" max="25" step="1"></label>
+      <label class="check"><input name="include_etfs" type="checkbox"> Allow ETFs</label>
+    </div>
+    <fieldset><legend>Sectors <span class="dim tiny">(none checked = all)</span></legend><div id="fSectors" class="f-checks"></div></fieldset>
+    <fieldset><legend>Exchanges</legend><div id="fExchanges" class="f-checks"></div></fieldset>
+    <label>Extra instructions for the scan<textarea name="notes" rows="2" placeholder="e.g. prefer A+ setups only; no biotech under $1B; focus on AI and semis"></textarea></label>
+    <div id="filtersErr" class="err-text"></div>
+    <div class="row gap end">
+      <button type="button" id="btnFiltersReset" class="ghost" style="margin-right:auto">Reset</button>
+      <button type="button" id="btnFiltersCancel" class="ghost">Cancel</button>
+      <button type="submit" value="save" class="ghost">Save</button>
+      <button type="submit" value="run" class="primary">Save &amp; run scan</button>
+    </div>
   </form>
 </dialog>
 

@@ -61,6 +61,13 @@ The **Briefs** tab is the first tab. On US market days, the Worker runs these sc
   * a sortable recommendations table with score, setup, catalyst, pre-market % change, relative volume, entry, stop, targets, R:R and size
   * a detail panel for each row with an intraday chart showing the entry, stop and target lines, a trade ladder, the exit plan and what invalidates the trade
   * a score chart, the "avoid" list, and which skills ran (✓ / ✗)
+* **⚙ Scan filters** (next to the scan button) sets the screening rules for the full scan:
+  * market cap min/max, price min/max
+  * average daily volume, relative volume, pre-market volume
+  * gap / pre-market move %, volatility (ATR % of price), short interest, float min/max
+  * sectors, exchanges, ETFs on/off, earnings today (include/exclude/only), longs/shorts, max picks, and free-text extra instructions
+
+  Presets: Balanced, Large-cap momentum, Mid-cap movers, Small-cap gappers. Claude gets the filters as hard rules. When the scan finishes, the server checks every pick again and moves any that break a filter to **Avoid** with the reason, so the recommendations always respect your settings. The active filters show as chips at the top of the board. The scheduled 08:15 scan uses the saved filters.
 * The full scan gets twice the per-session budget because it runs every skill.
 * Copilot answers from the workflow buttons also come back with a picks table.
 * Each brief ends with ranked **picks**. Click **chart** to load a pick, or **plan** to fill the Risk tab and draw its entry, stop and targets on the chart.

@@ -4,6 +4,11 @@
 import type { Env } from "./env";
 import { client, createSession } from "./agent";
 import { getSetting, getSettings } from "./db";
+import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
+
+export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
+  return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
+}
 
 export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review";
 type Slot = { id: SlotId; label: string; et: string; defaultOn: boolean; prompt: string };
@@ -24,6 +29,7 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
   "rank":1, "symbol":"NVDA", "name":"NVIDIA", "sector":"Technology", "bias":"long|short",
   "setup":"gap-and-go above premarket high", "score":0-100, "confidence":"high|medium|low",
   "last":131.2, "premarket_change_pct":4.1, "rvol":3.2, "catalyst":"earnings beat",
+  "market_cap":3.2e12, "avg_volume":2.5e8, "float_shares":2.4e10, "atr_pct":3.1, "exchange":"NASDAQ", "is_etf":false, "earnings_today":false,
   "entry":131.25, "stop":129.9, "targets":[133.0,134.8], "rr":2.6, "size_shares":55,
   "exit_plan":"scale 1/2 at T1, stop to breakeven, trail rest under 9 EMA; flat by 15:55",
   "invalidation":"loses VWAP on volume", "skills":["trader-scan","trader-risk"], "reason":"one line"
@@ -85,6 +91,7 @@ export async function ensureBriefSchema(db: D1Database) {
     content TEXT, picks TEXT, cost TEXT, error TEXT, created_at TEXT DEFAULT (datetime('now')), finished_at TEXT)`).run();
   // Added later: the full structured result (market, picks, avoid, skills_run).
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN data TEXT").run(); } catch { /* already there */ }
+  try { await db.prepare("ALTER TABLE briefs ADD COLUMN params TEXT").run(); } catch { /* already there */ }
   briefSchemaReady = true;
 }
 
@@ -95,7 +102,7 @@ export async function getAutopilot(db: D1Database): Promise<Autopilot> {
 }
 
 /** Start a brief now (from the cron or the "Run now" button). */
-export async function startBrief(env: Env, slotId: SlotId, ny = nyNow()) {
+export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filtersOverride?: ScanFilters) {
   const slot = SLOTS.find((s) => s.id === slotId);
   if (!slot) throw new Error("Unknown brief");
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
@@ -106,7 +113,9 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow()) {
     const watchlist = s.watchlist.join(", ");
     // The full scan runs every skill, so it gets twice the normal per-session budget.
     const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd);
-    const text = `[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${RESULT_FORMAT}`;
+    const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
+    if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
+    const text = `[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text }] }] });
     await env.DB.prepare("UPDATE briefs SET session_id = ?, status = 'running' WHERE id = ?").bind(sid, id).run();
   } catch (e) {
@@ -128,7 +137,7 @@ export function extractResult(text: string): { picks: unknown[]; [k: string]: un
 
 /** Collect results of running briefs; deny any tool call left waiting for approval. */
 export async function finalizeBriefs(env: Env) {
-  const { results } = await env.DB.prepare("SELECT id, session_id, created_at FROM briefs WHERE status = 'running'").all<{ id: string; session_id: string; created_at: string }>();
+  const { results } = await env.DB.prepare("SELECT id, session_id, created_at, params FROM briefs WHERE status = 'running'").all<{ id: string; session_id: string; created_at: string; params: string | null }>();
   const anthropic = client(env);
   for (const b of results) {
     try {
@@ -148,9 +157,11 @@ export async function finalizeBriefs(env: Env) {
       }
       const cost = s.usage?.list_cost ? `${s.usage.list_cost.amount} ${s.usage.list_cost.currency}` : null;
       const content = texts.join("\n\n");
+      const filters = b.params ? sanitizeFilters(JSON.parse(b.params)) : null;
+      const result = filters ? enforceFilters(extractResult(content), filters) : extractResult(content);
       const finish = (status: "done" | "error", error: string | null) =>
         env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, data = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
-          .bind(status, content, JSON.stringify(extractResult(content)?.picks ?? []), JSON.stringify(extractResult(content)), cost, error, b.id).run();
+          .bind(status, content, JSON.stringify(result?.picks ?? []), JSON.stringify(result), cost, error, b.id).run();
 
       if (idleReason === "requires_action") {
         const pending = [...asks].filter((x) => !answered.has(x));
