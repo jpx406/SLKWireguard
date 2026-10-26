@@ -90,28 +90,44 @@ export async function finalizeBriefs(env: Env) {
     try {
       const s = await anthropic.beta.sessions.retrieve(b.session_id);
       const ageMin = (Date.now() - Date.parse(b.created_at.replace(" ", "T") + "Z")) / 60000;
-      const texts: string[] = [];
+      const texts: string[] = [], errors: string[] = [];
       const asks = new Set<string>(), answered = new Set<string>();
-      for await (const ev of anthropic.beta.sessions.events.list(b.session_id)) {
+      let sawPrompt = false, idleReason: string | null = null;
+      for await (const ev of anthropic.beta.sessions.events.list(b.session_id, { order: "asc" })) {
+        if (ev.type === "user.message") { sawPrompt = true; idleReason = null; }
         if (ev.type === "agent.message") for (const c of ev.content) { if (c.type === "text") texts.push(c.text); }
         if ((ev.type === "agent.tool_use" || ev.type === "agent.mcp_tool_use") && ev.evaluated_permission === "ask") asks.add(ev.id);
         if (ev.type === "user.tool_confirmation") answered.add(ev.tool_use_id);
-      }
-      const pending = [...asks].filter((x) => !answered.has(x));
-      if (pending.length) {
-        await anthropic.beta.sessions.events.send(b.session_id, {
-          events: pending.map((tool_use_id) => ({ type: "user.tool_confirmation" as const, tool_use_id, result: "deny" as const })),
-        });
-        continue; // it resumes; collect on a later tick
+        if (ev.type === "session.error") errors.push(`${ev.error.type}${"message" in ev.error && ev.error.message ? `: ${ev.error.message}` : ""}`);
+        // Only an idle that comes AFTER our prompt means the turn finished; a new session is idle before it starts.
+        if (ev.type === "session.status_idle" && sawPrompt) idleReason = ev.stop_reason.type;
       }
       const cost = s.usage?.list_cost ? `${s.usage.list_cost.amount} ${s.usage.list_cost.currency}` : null;
-      if (s.status === "idle" || s.status === "terminated") {
-        const content = texts.join("\n\n");
-        await env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
-          .bind(content ? "done" : "error", content, JSON.stringify(extractPicks(content) ?? []), cost, content ? null : "No answer (session ended or hit its budget).", b.id).run();
+      const content = texts.join("\n\n");
+      const finish = (status: "done" | "error", error: string | null) =>
+        env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
+          .bind(status, content, JSON.stringify(extractPicks(content) ?? []), cost, error, b.id).run();
+
+      if (idleReason === "requires_action") {
+        const pending = [...asks].filter((x) => !answered.has(x));
+        if (pending.length) await anthropic.beta.sessions.events.send(b.session_id, {
+          events: pending.map((tool_use_id) => ({ type: "user.tool_confirmation" as const, tool_use_id, result: "deny" as const })),
+        });
+        continue; // it resumes; collect on a later check
+      }
+      if (idleReason) {
+        const why: Record<string, string> = {
+          budget_reached: "Stopped at the session budget. Raise it in Settings.",
+          refusal: "Claude declined this request.",
+          retries_exhausted: "Failed after retries.",
+        };
+        const err = idleReason === "end_turn" ? null : why[idleReason] ?? idleReason;
+        if (content) await finish("done", err);
+        else await finish("error", [err, ...errors].filter(Boolean).join(" · ") || "Claude finished without writing an answer.");
+      } else if (s.status === "terminated") {
+        await finish(content ? "done" : "error", content ? null : errors.join(" · ") || "The session ended before answering.");
       } else if (ageMin > 45) {
-        await env.DB.prepare("UPDATE briefs SET status = 'error', content = ?, cost = ?, error = 'Timed out after 45 minutes', finished_at = datetime('now') WHERE id = ?")
-          .bind(texts.join("\n\n"), cost, b.id).run();
+        await finish("error", ["Timed out after 45 minutes", ...errors].join(" · "));
       }
     } catch (e) {
       const err = e as { status?: number; message?: string };

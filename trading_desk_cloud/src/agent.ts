@@ -63,8 +63,9 @@ export function runTurn(env: Env, sessionId: string, prompt: string): ReadableSt
         await anthropic.beta.sessions.events.send(sessionId, {
           events: [{ type: "user.message", content: [{ type: "text", text: prompt }] }],
         });
-        let cost: string | null = null;
+        let cost: string | null = null, started = false;
         loop: for await (const ev of stream) {
+          if (ev.type === "session.status_running" || ev.type.startsWith("agent.")) started = true;
           switch (ev.type) {
             case "agent.message":
               for (const b of ev.content) if (b.type === "text" && b.text) emit({ kind: "text", text: b.text });
@@ -104,6 +105,7 @@ export function runTurn(env: Env, sessionId: string, prompt: string): ReadableSt
               emit({ kind: "error", text: `${ev.error.type}: ${"message" in ev.error ? ev.error.message : ""}` });
               break;
             case "session.status_idle": {
+              if (!started) break; // the session's idle state from before our message was picked up
               const reason = ev.stop_reason.type;
               if (reason === "requires_action") break; // we already answered; keep streaming
               if (reason === "budget_reached") emit({ kind: "error", text: "Session budget reached. Start a new session or raise the budget in Settings." });
