@@ -27,8 +27,11 @@ export async function authenticate(req: Request, env: Env): Promise<Identity | R
   if (env.DEV_NO_AUTH === "1") return { email: "dev@localhost" };
   const team = (env.ACCESS_TEAM_DOMAIN || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
   if (!team || !env.ACCESS_AUD) return deny(503, "Cloudflare Access is not configured (ACCESS_TEAM_DOMAIN / ACCESS_AUD).");
-  const token = req.headers.get("cf-access-jwt-assertion");
-  if (!token) return deny(401, "Missing Cloudflare Access token.");
+  // Access sends the login as a header; the CF_Authorization cookie carries the same signed token.
+  const cookie = (req.headers.get("cookie") || "").split(/;\s*/).find((c) => c.startsWith("CF_Authorization="))?.slice(17);
+  const token = req.headers.get("cf-access-jwt-assertion") || cookie;
+  if (!token)
+    return deny(401, `No Cloudflare Access login reached the app for ${new URL(req.url).hostname}. Cloudflare Access is not protecting this hostname: check that the Access application's public hostname is exactly this one (no path) and that its policy action is Allow (not Bypass), then open the site in a private window. You should see a Cloudflare login page first.`);
   let header, payload, h, p, s;
   try {
     [h, p, s] = token.split(".");
