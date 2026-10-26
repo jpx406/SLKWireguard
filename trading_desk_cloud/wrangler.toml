@@ -1,0 +1,31 @@
+name = "trading-desk"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Only reachable at the custom domain, which Cloudflare Access protects.
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "desk.nesrapp.com", custom_domain = true }]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trading-desk"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+# Filled in by setup/setup-agent.mjs (agent + environment ids are not secrets).
+AGENT_ID = ""
+ENVIRONMENT_ID = ""
+# From Cloudflare Zero Trust -> Access -> Applications -> your app.
+ACCESS_TEAM_DOMAIN = ""   # e.g. "nesr.cloudflareaccess.com"
+ACCESS_AUD = ""           # the application's "Application Audience (AUD) Tag"
+ANTHROPIC_WORKSPACE = "default"
+
+# Secret (never in this file):  npx wrangler secret put ANTHROPIC_API_KEY

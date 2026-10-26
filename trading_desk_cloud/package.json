@@ -1,0 +1,20 @@
+{
+  "name": "trading-desk-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.setup.json",
+    "setup-agent": "node setup/setup-agent.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261026.1",
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.152.0"
+  }
+}

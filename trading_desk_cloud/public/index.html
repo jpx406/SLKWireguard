@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">▲</span> Trading Desk</div>
+  <div id="modeBadge" class="badge muted" title="From trader/config.json">CONFIG?</div>
+  <div class="clocks">
+    <div class="clock"><span class="lbl">Riyadh</span><span id="clkRiyadh" class="mono">--:--:--</span></div>
+    <div class="clock"><span class="lbl">New York</span><span id="clkNY" class="mono">--:--:--</span></div>
+    <div class="clock"><span id="mktState" class="state">—</span><span id="mktCountdown" class="mono dim"></span></div>
+  </div>
+  <div class="top-right">
+    <span id="claudeDot" class="dot" title="Claude agent"></span><span class="dim small">Claude</span>
+    <span id="skillsCount" class="dim small"></span>
+    <button id="btnSettings" class="icon-btn" title="Settings">⚙</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- Watchlist -->
+  <aside class="panel watch">
+    <div class="panel-head">
+      <span>Watchlist</span>
+      <form id="addSymForm" class="inline"><input id="addSym" placeholder="+ add" maxlength="15"></form>
+    </div>
+    <div id="watchlist" class="watch-list"></div>
+    <div class="dim tiny pad">Quotes via Yahoo Finance, ~15s refresh. Not for execution.</div>
+  </aside>
+
+  <!-- Chart + bottom panel -->
+  <section class="center">
+    <div class="panel chart-panel">
+      <div class="chart-toolbar">
+        <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus"></form>
+        <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
+        <div class="seg" id="intervals">
+          <button data-i="1m">1m</button><button data-i="5m" class="on">5m</button><button data-i="15m">15m</button>
+          <button data-i="60m">1h</button><button data-i="1d">D</button>
+        </div>
+        <div class="seg" id="indicators">
+          <button data-ind="vwap" class="on">VWAP</button><button data-ind="ema9" class="on">EMA9</button>
+          <button data-ind="ema20" class="on">EMA20</button><button data-ind="levels" class="on">PDH/PDL</button>
+        </div>
+        <span id="chartMsg" class="dim small"></span>
+      </div>
+      <div id="chart" class="chart"></div>
+      <div id="legend" class="legend mono"></div>
+    </div>
+
+    <div class="panel bottom">
+      <div class="tabs" data-group="bottom">
+        <button data-tab="console" class="on">Console</button>
+        <button data-tab="journal">Journal</button>
+        <span class="spacer"></span>
+        <button id="btnClearConsole" class="ghost small">clear</button>
+      </div>
+      <div class="tab-body" data-group="bottom" data-tab="console">
+        <pre id="console" class="console mono">Commands Claude runs (skill tools, searches) and their raw output appear here.</pre>
+      </div>
+      <div class="tab-body hidden" data-group="bottom" data-tab="journal">
+        <div class="journal">
+          <form id="tradeForm" class="trade-form">
+            <input name="date" type="date">
+            <input name="symbol" placeholder="Sym" maxlength="15" required>
+            <select name="side"><option value="long">Long</option><option value="short">Short</option></select>
+            <input name="qty" type="number" step="any" placeholder="Qty" required>
+            <input name="entry" type="number" step="any" placeholder="Entry" required>
+            <input name="stop" type="number" step="any" placeholder="Stop">
+            <input name="exit" type="number" step="any" placeholder="Exit">
+            <input name="fees" type="number" step="any" placeholder="Fees">
+            <input name="setup" placeholder="Setup">
+            <input name="notes" placeholder="Notes" class="grow">
+            <button class="primary">Log</button>
+          </form>
+          <div id="journalStats" class="stats"></div>
+          <div class="table-wrap"><table id="journalTable"><thead><tr>
+            <th>Date</th><th>Sym</th><th>Side</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Exit</th><th>P&amp;L</th><th>R</th><th>Setup</th><th>Notes</th><th></th>
+          </tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Right panel -->
+  <aside class="panel side">
+    <div class="tabs" data-group="side">
+      <button data-tab="copilot" class="on">Copilot</button>
+      <button data-tab="skills">Skills</button>
+      <button data-tab="risk">Risk</button>
+      <button data-tab="guide">Guide</button>
+    </div>
+
+    <div class="tab-body copilot" data-group="side" data-tab="copilot">
+      <div id="workflows" class="workflows"></div>
+      <div id="chat" class="chat">
+        <div class="msg sys">Ask anything. Claude runs your trader skills in a secure cloud sandbox.
+          It cannot place orders; you place tickets yourself in your broker or in Claude Code.</div>
+      </div>
+      <form id="chatForm" class="chat-form">
+        <textarea id="chatInput" rows="3" placeholder="e.g. Is NVDA setting up for an opening-range breakout?  (Ctrl+Enter to send)"></textarea>
+        <div class="chat-actions">
+          <label class="small"><input type="checkbox" id="ctxToggle" checked> include chart context</label>
+          <span class="spacer"></span>
+          <button type="button" id="btnNewChat" class="ghost small" title="Start a fresh Claude session">new session</button>
+          <button id="btnSend" class="primary">Send</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="tab-body hidden" data-group="side" data-tab="skills">
+      <input id="skillFilter" class="filter" placeholder="Filter skills…">
+      <div id="skills" class="skills"></div>
+    </div>
+
+    <div class="tab-body hidden pad" data-group="side" data-tab="risk">
+      <div class="risk-grid">
+        <label>Account size<input id="rAcct" type="number" step="any" value="25000"></label>
+        <label>Risk / trade %<input id="rPct" type="number" step="any" value="0.5"></label>
+        <label>Side<select id="rSide"><option value="long">Long</option><option value="short">Short</option></select></label>
+        <label>Entry<input id="rEntry" type="number" step="any"></label>
+        <label>Stop<input id="rStop" type="number" step="any"></label>
+        <label>Max position %<input id="rMaxPos" type="number" step="any" value="25"></label>
+      </div>
+      <div id="riskOut" class="risk-out"></div>
+      <div class="row gap">
+        <button id="btnUseLast" class="ghost small">entry = last</button>
+        <button id="btnDrawPlan" class="primary small">Draw on chart</button>
+        <button id="btnClearPlan" class="ghost small">clear lines</button>
+        <button id="btnAskSize" class="ghost small">ask Claude to verify</button>
+      </div>
+      <h4>trader/config.json <span class="dim tiny">(edit in Settings ⚙)</span></h4>
+      <pre id="configView" class="config mono dim">not loaded</pre>
+    </div>
+
+    <div class="tab-body hidden pad guide" data-group="side" data-tab="guide">
+      <div class="row gap"><label class="ghost small file-btn">Upload GUIDE.md<input id="guideFile" type="file" accept=".md,.markdown,.txt" hidden></label></div>
+      <div id="guide" class="md">Loading GUIDE.md…</div>
+    </div>
+  </aside>
+</main>
+
+<dialog id="settingsDlg">
+  <form id="settingsForm">
+    <h3>Settings</h3>
+    <label>Watchlist (comma separated)<input name="watchlist"></label>
+    <label>Max spend per Copilot session (USD)<input name="session_budget_usd" type="number" step="0.5" min="0.5" max="100"></label>
+    <label>trader/config.json — paste your file; Claude's skills read it inside the sandbox
+      <textarea name="trader_config" rows="12" class="mono" spellcheck="false" placeholder='{ "paper": true, "sec_user_agent": "Your Name you@example.com" }'></textarea></label>
+    <div id="settingsErr" class="err-text"></div>
+    <div class="row gap end"><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>
