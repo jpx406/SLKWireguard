@@ -75,6 +75,7 @@ function openTicket(pre = {}) {
   f.side.value = pre.side || "long"; f.type.value = pre.type || "market";
   f.price.value = pre.price ?? ""; f.stop.value = pre.stop ?? ""; f.target.value = pre.target ?? ""; f.note.value = pre.note || "";
   f.sizeBy.value = pre.qty ? "qty" : "risk"; f.size.value = pre.qty ?? (state.paper?.settings?.risk_pct ?? 1);
+  f.exit_mode.value = pre.exit_mode || (state.paper?.settings?.auto_flat === false ? "hold" : "eod");
   syncTicket(); refreshTicketPrice(); $("#ticketDlg").showModal();
 }
 async function refreshTicketPrice() {
@@ -93,7 +94,7 @@ function ticketValues() {
     else if (f.sizeBy.value === "usd") qty = Math.floor((size || 0) / entry);
     else if (stop) qty = Math.floor((eq * (size || 0) / 100) / Math.abs(entry - stop));
   }
-  return { symbol: f.symbol.value.trim().toUpperCase(), side, type, entry, price: type === "market" ? null : entry, stop, target, qty, note: f.note.value };
+  return { symbol: f.symbol.value.trim().toUpperCase(), side, type, entry, price: type === "market" ? null : entry, stop, target, qty, note: f.note.value, exit_mode: f.exit_mode.value };
 }
 function syncTicket() {
   const f = $("#ticketForm"), v = ticketValues();
@@ -110,6 +111,8 @@ function syncTicket() {
     if (v.target) kv("Gain at target", money((v.target - v.entry) * v.qty * sg), "up");
     if (v.stop && v.target) kv("Reward : risk", `${fmt(Math.abs(v.target - v.entry) / Math.abs(v.entry - v.stop), 2)} R`);
     if (cost > cash) out.append(el("span", "warn", "Not enough paper cash for this size."));
+    if (v.exit_mode === "hold" && !v.stop && !v.target) out.append(el("span", "warn", "Hold mode with no stop-loss or take-profit: the position stays open until you close it."));
+    else if (v.exit_mode === "hold") out.append(el("span", "note", "Held overnight until the stop or target is hit (it can gap past them at the next open)."));
   } else out.append(el("span", "warn", f.sizeBy.value === "risk" && !v.stop ? "Risk sizing needs a stop-loss." : "Enter a price and size."));
   $("#btnTicketSubmit").textContent = `Place paper ${v.side === "long" ? "buy" : "short"}${v.qty ? ` · ${v.qty} ${v.symbol}` : ""}`;
 }
@@ -121,7 +124,7 @@ $("#ticketForm").onsubmit = async (e) => {
   const v = ticketValues();
   if (!v.qty || v.qty < 1) { $("#ticketErr").textContent = "Size works out to less than 1 share."; return; }
   try {
-    await api("/api/paper/orders", { method: "POST", body: JSON.stringify({ symbol: v.symbol, side: v.side, type: v.type, price: v.price, qty: v.qty, stop: v.stop, target: v.target, note: v.note }) });
+    await api("/api/paper/orders", { method: "POST", body: JSON.stringify({ symbol: v.symbol, side: v.side, type: v.type, price: v.price, qty: v.qty, stop: v.stop, target: v.target, note: v.note, exit_mode: v.exit_mode }) });
     $("#ticketDlg").close(); showTab("center", "paper"); loadPaper();
   } catch (err) { $("#ticketErr").textContent = err.message; }
 };
@@ -166,7 +169,7 @@ function renderPaper(d) {
   const nb = el("button", "primary small", "+ New order"), sb = el("button", "ghost small", "⚙ Settings & auto-trade");
   nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
   acts.append(nb, sb); head.append(acts); host.append(head);
-  if (d.settings.auto_trade) host.append(el("div", "small up", `Auto-trade ON: orders are placed from each finished scan (score ≥ ${d.settings.auto_min_score}, up to ${d.settings.auto_max_positions} at a time, ${d.settings.sizing === "risk" ? `${d.settings.risk_pct}% risk per trade` : d.settings.sizing === "fixed" ? `${money(d.settings.fixed_usd)} per trade` : "recommended size"}).`));
+  if (d.settings.auto_trade) host.append(el("div", "small up", `Auto-trade ON: orders are placed from each finished scan (score ≥ ${d.settings.auto_min_score}, up to ${d.settings.auto_max_positions} at a time, ${d.settings.sizing === "risk" ? `${d.settings.risk_pct}% risk per trade` : d.settings.sizing === "fixed" ? `${money(d.settings.fixed_usd)} per trade` : "recommended size"}, ${d.settings.auto_flat ? "closed at end of day" : "held until stop or target"}).`));
 
   const todayPnl = a.today_realized + a.unrealized;
   const cards = el("div", "bd-indices");
@@ -187,11 +190,18 @@ function renderPaper(d) {
 
   // Open positions
   const ps = section(`Open positions (${d.positions.length})`);
-  ps.append(d.positions.length ? table(["Symbol", "Side", "Qty", "Entry", "Last", "P&L $", "P&L %", "Stop", "Target", "Source", "Opened", ""], d.positions.map((p) => {
+  ps.append(d.positions.length ? table(["Symbol", "Side", "Qty", "Entry", "Last", "P&L $", "P&L %", "Stop", "Target", "Exit", "Source", "Opened", ""], d.positions.map((p) => {
     const tr = el("tr"); const sym = td(p.symbol, "sym"); sym.style.cursor = "pointer"; sym.onclick = () => { setSymbol(p.symbol); showTab("center", "chart"); };
     tr.append(sym, td(p.side === "long" ? "long" : "short", p.side === "long" ? "up" : "down"), td(p.qty, "num"), td(fmt(p.entry), "num"), td(fmt(p.last), "num"),
       td(money(p.unrealized), `num ${pnlCls(p.unrealized)}`), td(p.unrealized_pct == null ? "—" : `${fmt(p.unrealized_pct)}%`, `num ${pnlCls(p.unrealized_pct)}`),
-      td(fmt(p.stop), "num down"), td(fmt(p.target), "num up"), td(p.source), td(ago(p.opened_at), "dim small"));
+      td(fmt(p.stop), "num down"), td(fmt(p.target), "num up"));
+    // Exit mode toggle: end of day <-> hold until stop/target.
+    const mode = p.exit_mode || (d.settings.auto_flat ? "eod" : "hold"), exTd = el("td"), ex = el("button", `ghost small exit-${mode}`, mode === "eod" ? "End of day" : "Hold to stop/target");
+    ex.title = "Click to switch"; ex.onclick = async () => {
+      try { await api(`/api/paper/positions/${p.id}`, { method: "PUT", body: JSON.stringify({ exit_mode: mode === "eod" ? "hold" : "eod" }) }); loadPaper(); } catch (e) { showBanner(e.message); }
+    };
+    exTd.append(ex);
+    tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
     const act = el("td"), close = el("button", "primary small", p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
     close.onclick = async () => {
       if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market?`)) return;
@@ -267,7 +277,7 @@ function equityChart(points) {
 function openPaperSettings() {
   const f = $("#paperSetForm"), s = state.paper.settings;
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "sizing", "risk_pct", "fixed_usd", "max_position_pct", "target", "commission"]) f[k].value = s[k];
-  f.auto_trade.checked = s.auto_trade; f.auto_flat.checked = s.auto_flat; f.starting_cash.value = state.paper.account.starting_cash;
+  f.auto_trade.checked = s.auto_trade; f.auto_flat.value = s.auto_flat ? "eod" : "hold"; f.starting_cash.value = state.paper.account.starting_cash;
   $("#paperSetErr").textContent = ""; $("#paperSetDlg").showModal();
 }
 $("#btnPaperSetCancel").onclick = () => $("#paperSetDlg").close();
@@ -275,7 +285,7 @@ $("#paperSetForm").onsubmit = async (e) => {
   e.preventDefault();
   const f = e.target, s = {};
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "risk_pct", "fixed_usd", "max_position_pct", "commission"]) s[k] = Number(f[k].value);
-  s.sizing = f.sizing.value; s.target = f.target.value; s.auto_trade = f.auto_trade.checked; s.auto_flat = f.auto_flat.checked;
+  s.sizing = f.sizing.value; s.target = f.target.value; s.auto_trade = f.auto_trade.checked; s.auto_flat = f.auto_flat.value === "eod";
   try { await api("/api/paper/settings", { method: "PUT", body: JSON.stringify({ settings: s }) }); $("#paperSetDlg").close(); loadPaper(); }
   catch (err) { $("#paperSetErr").textContent = err.message; }
 };

@@ -113,7 +113,13 @@ Open the **Paper trading** tab in the center area. Every user has their own simu
 * A server engine runs **every minute**, even with your browser closed. It checks working orders and open positions against 1-minute price bars.
 * A limit order fills at its price or better. A stop trigger fills at its price or worse.
 * A position closes automatically when its stop-loss or take-profit is touched. If one bar touches both, it counts as the stop (the conservative assumption).
-* Unfilled day orders expire at 16:00 New York time. Optionally, every open position is closed at 15:55.
+* Unfilled entry orders expire at 16:00 New York time.
+
+**Exit mode (per trade):**
+* **Close at end of day:** the position closes at 15:55 New York if the stop or target hasn't hit first.
+* **Hold until stop-loss or take-profit:** the position stays open overnight and across days until one is hit, or until you close it. Overnight gaps fill at the next bar's open, the way a real gap would.
+
+Choose the mode on the order ticket, switch it any time with the **Exit** button on an open position, and set the default for new trades and auto-trades in ⚙ Settings & auto-trade.
 
 **Managing positions:**
 * **Sell now / Cover now** closes at market at any moment.

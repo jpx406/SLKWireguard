@@ -5,6 +5,8 @@ import { nyNow, isTradingDay } from "./briefs";
 
 export type Side = "long" | "short";
 export type OrderType = "market" | "limit" | "stop";
+/** eod = close at 15:55 New York; hold = keep (overnight too) until the stop-loss or take-profit is hit, or you close it. */
+export type ExitMode = "eod" | "hold";
 
 export type PaperSettings = {
   auto_trade: boolean;          // place orders automatically from finished scan recommendations
@@ -17,7 +19,7 @@ export type PaperSettings = {
   max_position_pct: number;     // cap any position at this % of equity
   target: "t1" | "t2";          // which recommendation target becomes the take-profit
   commission: number;           // $ per fill
-  auto_flat: boolean;           // close everything at 15:55 New York time
+  auto_flat: boolean;           // default exit for new trades: true = close at 15:55 New York, false = hold until stop/target
 };
 export const DEFAULT_PAPER: PaperSettings = {
   auto_trade: false, auto_min_score: 70, auto_max_positions: 5, auto_valid_min: 120,
@@ -29,11 +31,13 @@ type Order = {
   id: string; user: string; symbol: string; side: Side; type: OrderType; price: number | null; qty: number;
   stop: number | null; target: number | null; status: string; source: string; brief_id: string | null; note: string | null;
   day: string; created_at: number; last_checked: number; filled_at: number | null; fill_price: number | null; reason: string | null;
+  exit_mode: ExitMode | null;
 };
 type Position = {
   id: string; user: string; symbol: string; side: Side; qty: number; entry: number; stop: number | null; target: number | null;
   status: string; source: string; note: string | null; opened_at: number; last_checked: number; closed_at: number | null;
   exit: number | null; exit_reason: string | null; pnl: number | null; fees: number; day_opened: string; day_closed: string | null; order_id: string | null;
+  exit_mode: ExitMode | null;
 };
 type Bar = { time: number; open: number; high: number; low: number; close: number };
 
@@ -61,6 +65,8 @@ export async function ensurePaper(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS paper_positions_status ON paper_positions (status, user)"),
   ]);
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN auto_done INTEGER").run(); } catch { /* exists or briefs not yet created */ }
+  // Added later: per-trade exit mode (older rows follow the account default).
+  for (const t of ["paper_orders", "paper_positions"]) { try { await db.prepare(`ALTER TABLE ${t} ADD COLUMN exit_mode TEXT`).run(); } catch { /* exists */ } }
   ready = true;
 }
 
@@ -105,6 +111,7 @@ export const lastPrice = latestPrice;
 export type OrderInput = {
   symbol: string; side: Side; type: OrderType; price?: number | null; qty?: number | null; amount_usd?: number | null;
   stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto"; brief_id?: string | null;
+  exit_mode?: ExitMode | null;
 };
 
 export async function placeOrder(db: D1Database, user: string, inp: OrderInput): Promise<{ order?: Order; position?: Position; error?: string }> {
@@ -130,15 +137,16 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   const need = qty * ref + acct.s.commission;
   if (need > acct.cash + 1e-6) return { error: `Not enough paper cash: need $${r2(need)}, have $${r2(acct.cash)}.` };
 
+  const exitMode: ExitMode = inp.exit_mode === "eod" || inp.exit_mode === "hold" ? inp.exit_mode : acct.s.auto_flat ? "eod" : "hold";
   const t = nowS(), ny = nyNow();
   const order: Order = {
     id: uid(), user, symbol, side, type, price: type === "market" ? null : price, qty, stop, target, status: "open",
     source: inp.source ?? "manual", brief_id: inp.brief_id ?? null, note: (inp.note ?? "").slice(0, 300) || null, day: ny.date,
-    created_at: t, last_checked: Math.floor(t / 60) * 60 + 60, filled_at: null, fill_price: null, reason: null,
+    created_at: t, last_checked: Math.floor(t / 60) * 60 + 60, filled_at: null, fill_price: null, reason: null, exit_mode: exitMode,
   };
-  await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
-    order.source, order.brief_id, order.note, order.day, t, order.last_checked).run();
+  await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked,exit_mode)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
+    order.source, order.brief_id, order.note, order.day, t, order.last_checked, exitMode).run();
   if (type === "market") {
     const position = await fill(db, order, last, t);
     return position ? { order: { ...order, status: "filled", fill_price: last }, position } : { error: "Fill rejected (cash changed)." };
@@ -161,10 +169,11 @@ async function fill(db: D1Database, o: Order, price: number, at: number): Promis
     id: uid(), user: o.user, symbol: o.symbol, side: o.side, qty: o.qty, entry: price, stop: o.stop, target: o.target, status: "open",
     source: o.source, note: o.note, opened_at: at, last_checked: Math.floor(at / 60) * 60 + 60, closed_at: null, exit: null, exit_reason: null,
     pnl: null, fees: acct.s.commission, day_opened: nyNow(new Date(at * 1000)).date, day_closed: null, order_id: o.id,
+    exit_mode: o.exit_mode ?? (acct.s.auto_flat ? "eod" : "hold"),
   };
-  await db.prepare(`INSERT INTO paper_positions (id,user,symbol,side,qty,entry,stop,target,status,source,note,opened_at,last_checked,fees,day_opened,order_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id, p.user, p.symbol, p.side, p.qty, p.entry, p.stop, p.target, "open", p.source, p.note,
-    p.opened_at, p.last_checked, p.fees, p.day_opened, p.order_id).run();
+  await db.prepare(`INSERT INTO paper_positions (id,user,symbol,side,qty,entry,stop,target,status,source,note,opened_at,last_checked,fees,day_opened,order_id,exit_mode)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id, p.user, p.symbol, p.side, p.qty, p.entry, p.stop, p.target, "open", p.source, p.note,
+    p.opened_at, p.last_checked, p.fees, p.day_opened, p.order_id, p.exit_mode).run();
   return p;
 }
 
@@ -193,9 +202,13 @@ export async function closePosition(db: D1Database, user: string, id: string) {
   return (await closePos(db, p, price, "manual")) ? { ok: true, price } : { error: "Already closed." };
 }
 
-export async function updatePosition(db: D1Database, user: string, id: string, stop: number | null, target: number | null) {
+/** Change stop / target / exit mode; a field left undefined keeps its current value (null clears it). */
+export async function updatePosition(db: D1Database, user: string, id: string, stopIn: number | null | undefined, targetIn: number | null | undefined, exitMode?: ExitMode) {
   const p = await db.prepare("SELECT * FROM paper_positions WHERE id = ? AND user = ? AND status = 'open'").bind(id, user).first<Position>();
   if (!p) return "Position not found.";
+  if (exitMode) await db.prepare("UPDATE paper_positions SET exit_mode = ? WHERE id = ?").bind(exitMode, id).run();
+  if (stopIn === undefined && targetIn === undefined) return null;
+  const stop = stopIn === undefined ? p.stop : stopIn, target = targetIn === undefined ? p.target : targetIn;
   const last = await lastPrice(p.symbol);
   if (stop !== null && (p.side === "long" ? stop >= last : stop <= last)) return `Stop must be ${p.side === "long" ? "below" : "above"} the current price (${r2(last)}).`;
   if (target !== null && (p.side === "long" ? target <= last : target >= last)) return `Target must be ${p.side === "long" ? "above" : "below"} the current price (${r2(last)}).`;
@@ -278,7 +291,9 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
       }
     }
     if (done) continue;
-    if (s.auto_flat && isTradingDay(ny) && ny.minutes >= 15 * 60 + 55 && p.day_opened <= ny.date) {
+    // End-of-day trades close at 15:55 New York (or at the next run if one was opened on an earlier day).
+    const mode = p.exit_mode ?? (s.auto_flat ? "eod" : "hold");
+    if (mode === "eod" && ((isTradingDay(ny) && ny.minutes >= 15 * 60 + 55) || p.day_opened < ny.date)) {
       const last = bars.get(p.symbol)?.at(-1)?.close;
       if (last) { await closePos(db, p, last, "end of day"); continue; }
     }

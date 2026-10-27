@@ -89,6 +89,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       type: b.type === "limit" || b.type === "stop" ? b.type : "market",
       price: b.price as number | null, qty: b.qty as number | null, amount_usd: b.amount_usd as number | null,
       stop: b.stop as number | null, target: b.target as number | null, note: b.note == null ? null : String(b.note), source: "manual",
+      exit_mode: b.exit_mode === "eod" || b.exit_mode === "hold" ? b.exit_mode : null,
     });
     return r.error ? bad(r.error) : json(r);
   }
@@ -97,9 +98,10 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   const pm = path.match(/^\/paper\/positions\/([a-z0-9]{6,32})(\/close)?$/);
   if (pm && pm[2] && m === "POST") { const r = await closePosition(env.DB, who.user, pm[1]); return r.error ? bad(r.error) : json(r); }
   if (pm && !pm[2] && m === "PUT") {
-    const b = await body<{ stop?: unknown; target?: unknown }>(req);
+    const b = await body<{ stop?: unknown; target?: unknown; exit_mode?: unknown }>(req);
     const n = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
-    const err = await updatePosition(env.DB, who.user, pm[1], n(b.stop), n(b.target));
+    const err = await updatePosition(env.DB, who.user, pm[1], "stop" in b ? n(b.stop) : undefined, "target" in b ? n(b.target) : undefined,
+      b.exit_mode === "eod" || b.exit_mode === "hold" ? b.exit_mode : undefined);
     return err ? bad(err) : json({ ok: true });
   }
   if (path === "/paper/settings" && m === "PUT") {

@@ -321,3 +321,5 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 #usersTable td button { margin-right: 4px; }
 .tabs button { white-space: nowrap; }
 .bd-skill-notes { margin: 8px 0 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.exit-hold { color: var(--warn); border-color: rgba(245,158,11,.5); }
+.risk-out .note { grid-column: 1 / -1; color: var(--dim); }
