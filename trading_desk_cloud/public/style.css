@@ -320,3 +320,4 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 #usersTable select { padding: 2px 4px; font-size: 12px; }
 #usersTable td button { margin-right: 4px; }
 .tabs button { white-space: nowrap; }
+.bd-skill-notes { margin: 8px 0 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }

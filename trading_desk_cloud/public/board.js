@@ -227,7 +227,15 @@ function renderBoard(host, b) {
   if (Array.isArray(d.skills_run) && d.skills_run.length) {
     const s = section("Skills pipeline"), chips = el("div", "bd-chips");
     for (const k of d.skills_run) { const c = el("span", `chip ${k.status || ""}`, `${k.status === "ok" ? "✓" : k.status === "failed" ? "✗" : "–"} ${k.skill}`); if (k.note) c.title = k.note; chips.append(c); }
-    s.append(chips); host.append(s);
+    s.append(chips);
+    // Spell out why a skill failed or was skipped (tooltips don't work on phones).
+    const notes = d.skills_run.filter((k) => k.status !== "ok" && k.note);
+    if (notes.length) {
+      const ul = el("ul", "bd-skill-notes");
+      for (const k of notes) { const li = el("li", k.status === "failed" ? "down" : "dim"); li.append(el("b", null, `${k.skill}: `), document.createTextNode(k.note)); ul.append(li); }
+      s.append(ul);
+    }
+    host.append(s);
   }
   if (b.content) {
     const det = el("details", "bd-sec"), sum = el("summary", null, "Full written analysis"), body = el("div", "md");
