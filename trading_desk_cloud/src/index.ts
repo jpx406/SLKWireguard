@@ -231,7 +231,10 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const sym = decodeURIComponent(cm[1]).toUpperCase(), iv = url.searchParams.get("interval") || "5m";
     if (!SYMBOL_RE.test(sym)) return bad("Bad symbol");
     if (!(iv in INTERVALS)) return bad("Bad interval");
-    try { return json(await candles(sym, iv)); } catch (e) { return bad(`Data error: ${(e as Error).message}`, 502); }
+    const daysQ = url.searchParams.get("days");
+    const days = daysQ === null ? undefined : Number(daysQ);
+    if (days !== undefined && !(days >= 1 && days <= 3650)) return bad("days must be 1-3650");
+    try { return json(await candles(sym, iv, days)); } catch (e) { return bad(`Data error: ${(e as Error).message}`, 502); }
   }
   if (path === "/quotes" && m === "GET") {
     const syms = (url.searchParams.get("symbols") || "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 40);

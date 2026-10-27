@@ -86,9 +86,9 @@ const ALPACA_TF: Record<string, { tf: string; days: number; ttl: number }> = {
 };
 type ABar = { t: string; o: number; h: number; l: number; c: number; v: number };
 
-async function alpacaBars(sym: string, iv: string, feed: "iex" | "sip") {
+async function alpacaBars(sym: string, iv: string, feed: "iex" | "sip", days?: number) {
   const t = ALPACA_TF[iv];
-  const start = new Date(Date.now() - t.days * 86400_000).toISOString();
+  const start = new Date(Date.now() - (days ?? t.days) * 86400_000).toISOString();
   const out: { time: number; open: number; high: number; low: number; close: number; volume: number }[] = [];
   let token: string | undefined;
   for (let page = 0; page < 4; page++) {
@@ -159,16 +159,23 @@ export async function testAlpaca(feed: "iex" | "sip") {
   }
 }
 
-export async function candles(symbol: string, iv: string) {
+/** Longest lookback (calendar days) each bar size supports at the data providers. */
+export const MAX_DAYS: Record<string, number> = { "1m": 7, "5m": 59, "15m": 59, "60m": 729, "1d": 3650 };
+const yahooRange = (days: number) =>
+  days <= 1 ? "1d" : days <= 5 ? "5d" : days <= 30 ? "1mo" : days <= 90 ? "3mo" : days <= 180 ? "6mo" : days <= 365 ? "1y" : days <= 730 ? "2y" : days <= 1825 ? "5y" : "10y";
+
+/** Bars for a symbol; `days` (calendar days back) overrides the default lookback for the bar size. */
+export async function candles(symbol: string, iv: string, days?: number) {
+  const d = days === undefined ? undefined : Math.max(1, Math.min(MAX_DAYS[iv] ?? 30, Math.round(days)));
   const asym = alpacaSymbol(symbol);
-  const a = await viaAlpaca(asym, (feed) => alpacaBars(asym!, iv, feed));
+  const a = await viaAlpaca(asym, (feed) => alpacaBars(asym!, iv, feed, d));
   if (a && a.length) return a;
-  return yahooCandles(symbol, iv);
+  return yahooCandles(symbol, iv, d);
 }
 
-async function yahooCandles(symbol: string, iv: string) {
+async function yahooCandles(symbol: string, iv: string, days?: number) {
   const cfg = INTERVALS[iv];
-  const r = await yahooChart(symbol, cfg.yf, cfg.range, cfg.prepost, iv === "1d" ? 300 : 15);
+  const r = await yahooChart(symbol, cfg.yf, days === undefined ? cfg.range : yahooRange(days), cfg.prepost, iv === "1d" ? 300 : 15);
   const q = r.indicators.quote[0], ts = r.timestamp ?? [];
   const out = [];
   for (let i = 0; i < ts.length; i++) {

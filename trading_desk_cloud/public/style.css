@@ -93,7 +93,7 @@ button.small { padding: 3px 8px; font-size: 12px; }
 .seg button { border: none; border-radius: 0; background: transparent; padding: 4px 9px; font-size: 12px; color: var(--dim); }
 .seg button.on { background: #1d2738; color: var(--text); }
 .chart { flex: 1; min-height: 0; }
-.legend { position: absolute; top: 50px; left: 12px; font-size: 11px; pointer-events: none; z-index: 3; color: var(--dim); }
+.legend { position: absolute; top: 6px; left: 10px; font-size: 11px; pointer-events: none; z-index: 3; color: var(--dim); }
 .legend b { color: var(--text); font-weight: 500; }
 
 /* tabs */
@@ -323,3 +323,20 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 .bd-skill-notes { margin: 8px 0 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
 .exit-hold { color: var(--warn); border-color: rgba(245,158,11,.5); }
 .risk-out .note { grid-column: 1 / -1; color: var(--dim); }
+
+/* chart ranges + trade-plan overlay */
+#chart { position: relative; }
+.seg button:disabled { opacity: .3; cursor: not-allowed; }
+.plan-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
+.plan-zone-label { font: 600 11px var(--font); }
+.plan-info { position: absolute; left: 10px; bottom: 34px; z-index: 4; max-width: min(560px, 80%); background: rgba(11,14,20,.88); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; backdrop-filter: blur(3px); }
+.plan-info .plan-lv { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.plan-info .plan-status { font-weight: 600; }
+.plan-info .plan-actions { display: flex; gap: 6px; margin-top: 2px; }
+.trade-chart { position: relative; }
+.trade-chart-box { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+.trade-chart-msg { padding: 6px 2px; }
+.bd-detail-wrap { display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 10px; white-space: normal; }
+.pick-row.selected { background: #172033; box-shadow: inset 2px 0 0 var(--accent); }
+@media (max-width: 1100px) { #chart .legend { position: absolute; top: 4px; padding: 0; } }

@@ -138,6 +138,17 @@ Choose the mode on the order ticket, switch it any time with the **Exit** button
 
 Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo), so real fills, slippage and liquidity will differ.
 
+## Chart ranges and trade-plan view
+
+- The chart opens on **1D** (today's session, 5m bars). The range buttons **1D, 5D, 1M, 3M, 1Y** load more history. Each range only offers the bar sizes that make sense for it: 1m/5m/15m for 1D, 15m/1h for 5D, daily for 1Y. Dotted lines mark session breaks. VWAP resets each session.
+- **Select a recommendation** (click a row on the Market board or in a brief) to open its trade chart:
+  - a green reward zone and a red risk zone
+  - the entry, stop and T1/T2 lines labelled in R
+  - markers for when the plan was issued, when it was entered, and when each target or the stop was hit
+  - a status box such as "T1 hit, still open: +1.75R now"
+  - from that box: **Paper buy** or **open on main chart**
+- If you hold the symbol in paper trading, your own fills are marked on the main chart.
+
 ## Users
 
 * **Admin:** log in with username **admin** and the `LOGIN_PASSWORD` secret. To change it, run `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`. This logs everyone out.

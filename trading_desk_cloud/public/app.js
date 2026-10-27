@@ -45,7 +45,7 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const state = {
   settings: null, status: null, symbol: "SPY", interval: "5m", candles: [], quotes: {},
   ind: { vwap: true, ema9: true, ema20: true, levels: true }, sessionId: null, busy: false,
-  workflows: [], skills: [], levelLines: [], planLines: [],
+  workflows: [], skills: [], levelLines: [], range: "1D", mainPlan: null,
 };
 
 /* ------------------------------------------------------------------ time & sessions */
@@ -100,10 +100,65 @@ const lineOpts = (c) => ({ color: c, lineWidth: 1.5, priceLineVisible: false, la
 const vwapS = chart.addLineSeries(lineOpts(css("--vwap")));
 const ema9S = chart.addLineSeries(lineOpts(css("--ema9")));
 const ema20S = chart.addLineSeries(lineOpts(css("--ema20")));
+$("#chart").append($("#legend")); // keep the O/H/L/C legend inside the chart pane, clear of the toolbar
+// Trade-plan overlay (risk/reward zones, levels, replay markers); see plan.js.
+const mainLayer = createPlanLayer(chart, candleS, $("#chart"), {
+  shift: (t) => t - new Date(t * 1000).getTimezoneOffset() * 60,
+  actions: (a, p) => {
+    const t = el("button", "primary small", p.side === "long" ? "📝 Paper buy" : "📝 Paper short");
+    t.onclick = () => openTicketFromPick({ ...p.raw, symbol: p.symbol, bias: p.side, entry: p.entry, stop: p.stop, targets: p.targets });
+    const x = el("button", "ghost small", "✕ clear plan"); x.onclick = () => { state.mainPlan = null; mainLayer.clear(); };
+    a.append(t, x);
+  },
+});
+/** Open a recommendation on the main chart with its entry/exit visualization. */
+function showPlanOnMain(p, time) {
+  state.mainPlan = makePlan(p, time);
+  // Pick a range that includes when the plan was made.
+  const age = time ? (Date.now() / 1000 - time) / 86400 : 0;
+  state.range = age < 1.5 ? "1D" : age < 6 ? "5D" : "1M";
+  if (!RANGES[state.range].allow.includes(state.interval)) state.interval = RANGES[state.range].def;
+  syncRangeButtons(); showTab("center", "chart");
+  if (state.symbol === state.mainPlan.symbol) { state.candles = []; loadChart(); } else setSymbol(state.mainPlan.symbol);
+}
 
 // Display bars in the PC's local time (lightweight-charts renders UTC).
 const shift = (t) => t - new Date(t * 1000).getTimezoneOffset() * 60;
 const intraday = () => !["1d", "1wk"].includes(state.interval);
+
+// Range = how much history is shown; each range allows a set of bar sizes. `days` is the calendar
+// lookback fetched (a little extra so EMAs/VWAP are warmed up); `sessions`/`cal` set the visible window.
+const RANGES = {
+  "1D": { days: 4, def: "5m", allow: ["1m", "5m", "15m"], sessions: 1 },
+  "5D": { days: 9, def: "15m", allow: ["1m", "5m", "15m", "60m"], sessions: 5 },
+  "1M": { days: 45, def: "60m", allow: ["5m", "15m", "60m", "1d"], cal: 31 },
+  "3M": { days: 130, def: "1d", allow: ["60m", "1d"], cal: 92 },
+  "1Y": { days: 420, def: "1d", allow: ["1d"], cal: 365 },
+};
+function syncRangeButtons() {
+  const r = RANGES[state.range];
+  $$("#ranges button").forEach((b) => b.classList.toggle("on", b.dataset.r === state.range));
+  $$("#intervals button").forEach((b) => { const ok = r.allow.includes(b.dataset.i); b.disabled = !ok; b.classList.toggle("on", b.dataset.i === state.interval); });
+}
+/** Show the chosen range: the last N sessions (intraday) or the last N calendar days. */
+function applyRangeView(data) {
+  const r = RANGES[state.range];
+  if (!data.length) return;
+  let from = 0;
+  if (r.sessions) {
+    const days = [...new Set(data.map((b) => nyParts(new Date(b.time * 1000)).day))];
+    const firstDay = days[Math.max(0, days.length - r.sessions)];
+    from = data.findIndex((b) => nyParts(new Date(b.time * 1000)).day === firstDay);
+  } else {
+    const cut = Date.now() / 1000 - r.cal * 86400;
+    from = Math.max(0, data.findIndex((b) => b.time >= cut));
+  }
+  chart.timeScale().setVisibleLogicalRange({ from: from - 0.5, to: data.length + 5 });
+  // Dashed separators at each session start when more than one day of intraday bars is shown.
+  const seps = [];
+  if (intraday() && state.range !== "1D") { let d = null; for (const b of data) { const day = nyParts(new Date(b.time * 1000)).day; if (day !== d) { d = day; seps.push(shift(b.time)); } } }
+  mainLayer.setSeparators(seps);
+}
 
 function ema(data, n) {
   const k = 2 / (n + 1); let prev = null;
@@ -113,9 +168,12 @@ function vwap(data) {
   let day = null, pv = 0, vol = 0; const out = [];
   for (const b of data) {
     const d = nyParts(new Date(b.time * 1000)).day;
+    const fresh = d !== day && day !== null;
     if (d !== day) { day = d; pv = 0; vol = 0; }
     const tp = (b.high + b.low + b.close) / 3; pv += tp * b.volume; vol += b.volume;
-    if (vol > 0) out.push({ time: shift(b.time), value: pv / vol });
+    // Hide the segment joining two sessions (no vertical jump between days).
+    if (fresh && out.length) out[out.length - 1].color = "rgba(0,0,0,0)";
+    if (vol > 0) out.push({ time: shift(b.time), value: pv / vol, ...(fresh ? { color: "rgba(0,0,0,0)" } : {}) });
   }
   return out;
 }
@@ -151,17 +209,19 @@ async function loadChart(keepView = false) {
   const sym = state.symbol, iv = state.interval;
   $("#chartMsg").textContent = keepView ? "" : "loading…";
   try {
-    const data = await api(`/api/candles/${encodeURIComponent(sym)}?interval=${iv}`);
-    if (sym !== state.symbol || iv !== state.interval) return;
+    const rg = state.range;
+    const data = await api(`/api/candles/${encodeURIComponent(sym)}?interval=${iv}&days=${RANGES[rg].days}`);
+    if (sym !== state.symbol || iv !== state.interval || rg !== state.range) return;
     if (keepView && state.candles.length && data.length) {
       const lastT = state.candles[state.candles.length - 1].time;
       for (const b of data.filter((b) => b.time >= lastT)) { candleS.update(barData(b)); volS.update(volData(b)); }
     } else {
       candleS.setData(data.map(barData)); volS.setData(data.map(volData));
-      chart.timeScale().fitContent();
-      if (intraday() && data.length > 160) chart.timeScale().setVisibleLogicalRange({ from: data.length - 160, to: data.length + 6 });
+      applyRangeView(data);
     }
     state.candles = data;
+    if (state.mainPlan && state.mainPlan.symbol === sym) mainLayer.set(state.mainPlan, data, paperMarkers(sym, data, shift));
+    else candleS.setMarkers(paperMarkers(sym, data, shift));
     drawIndicators(); updateLegend();
     $("#chartMsg").textContent = data.length ? "" : "no data";
   } catch (e) { $("#chartMsg").textContent = `⚠ ${e.message}`; }
@@ -171,13 +231,14 @@ function updateLegend(param) {
   if (!b) { $("#legend").textContent = ""; return; }
   const src = state.candles.find((c) => shift(c.time) === b.time);
   const cls = b.close >= b.open ? "up" : "down";
-  $("#legend").innerHTML = `<b>${state.symbol}</b> · ${state.interval} &nbsp; O <b>${fmt(b.open)}</b> H <b>${fmt(b.high)}</b> L <b>${fmt(b.low)}</b> C <b class="${cls}">${fmt(b.close)}</b> V <b>${src ? fmt(src.volume, 0) : "—"}</b>` +
+  $("#legend").innerHTML = `<b>${state.symbol}</b> · ${state.range} · ${state.interval} &nbsp; O <b>${fmt(b.open)}</b> H <b>${fmt(b.high)}</b> L <b>${fmt(b.low)}</b> C <b class="${cls}">${fmt(b.close)}</b> V <b>${src ? fmt(src.volume, 0) : "—"}</b>` +
     ` &nbsp;<span style="color:${css("--vwap")}">VWAP</span> <span style="color:${css("--ema9")}">EMA9</span> <span style="color:${css("--ema20")}">EMA20</span>`;
 }
 chart.subscribeCrosshairMove(updateLegend);
 
 function setSymbol(sym) {
   sym = sym.trim().toUpperCase(); if (!sym) return;
+  if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
   state.symbol = sym; $("#symInput").value = sym; state.candles = [];
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]);
 }
@@ -346,13 +407,11 @@ function calcRisk() {
 }
 $$("#rAcct,#rPct,#rEntry,#rStop,#rMaxPos,#rSide").forEach((i) => (i.oninput = calcRisk));
 $("#btnUseLast").onclick = () => { const q = state.quotes[state.symbol]; if (q?.last) { $("#rEntry").value = q.last.toFixed(2); calcRisk(); } };
-function clearPlan() { state.planLines.forEach((l) => candleS.removePriceLine(l)); state.planLines = []; }
-$("#btnClearPlan").onclick = clearPlan;
+$("#btnClearPlan").onclick = () => { state.mainPlan = null; mainLayer.clear(); };
 $("#btnDrawPlan").onclick = () => {
-  const p = calcRisk(); if (!p) return; clearPlan();
-  const add = (price, color, title, style = 0) => state.planLines.push(candleS.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
-  add(p.entry, css("--accent"), `ENTRY ${p.shares}`); add(p.stop, css("--down"), "STOP");
-  p.targets.forEach((t, i) => add(t, css("--up"), `${i + 1}R`, 2));
+  const p = calcRisk(); if (!p) return;
+  state.mainPlan = makePlan({ symbol: state.symbol, side: p.side, entry: p.entry, stop: p.stop, targets: p.targets, setup: `${p.shares} shares (Risk tab)` }, null);
+  mainLayer.set(state.mainPlan, state.candles, paperMarkers(state.symbol, state.candles, shift));
 };
 $("#btnAskSize").onclick = () => {
   const p = calcRisk(); if (!p) return; showTab("side", "copilot");
@@ -519,7 +578,7 @@ function renderBrief(b) {
   h.append(open);
   box.append(h);
   if (b.error) box.append(el("div", "msg err small", b.error));
-  const mini = el("div", "brief-mini"); renderMini(mini, b.data || { picks: b.picks }); box.append(mini);
+  const mini = el("div", "brief-mini"); renderMini(mini, b.data || { picks: b.picks }, briefTime(b)); box.append(mini);
   return box;
 }
 /** Center "Market board": the chosen brief, else the latest finished full scan, else the latest brief. */
@@ -615,8 +674,15 @@ $("#addSymForm").onsubmit = (e) => {
   if (v && !state.settings.watchlist.includes(v)) saveSettings({ watchlist: [...state.settings.watchlist, v] });
 };
 $$("#intervals button").forEach((b) => (b.onclick = () => {
-  $$("#intervals button").forEach((x) => x.classList.toggle("on", x === b)); state.interval = b.dataset.i; state.candles = []; loadChart(); renderWorkflows();
+  if (b.disabled) return;
+  state.interval = b.dataset.i; syncRangeButtons(); state.candles = []; loadChart(); renderWorkflows();
 }));
+$$("#ranges button").forEach((b) => (b.onclick = () => {
+  state.range = b.dataset.r;
+  if (!RANGES[state.range].allow.includes(state.interval)) state.interval = RANGES[state.range].def;
+  syncRangeButtons(); state.candles = []; loadChart(); renderWorkflows();
+}));
+syncRangeButtons();
 $$("#indicators button").forEach((b) => (b.onclick = () => { state.ind[b.dataset.ind] = !state.ind[b.dataset.ind]; b.classList.toggle("on"); drawIndicators(); }));
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#symInput").select(); }

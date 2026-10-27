@@ -57,43 +57,24 @@ function ladder(p) {
   return g;
 }
 
-/** Intraday sparkline with the plan's levels, loaded from /api/candles. */
-async function sparkline(host, p) {
-  host.textContent = "loading chart…";
-  try {
-    const bars = await api(`/api/candles/${encodeURIComponent(p.symbol)}?interval=5m`);
-    const day = bars.slice(-90);
-    if (!day.length) { host.textContent = "no data"; return; }
-    const levels = [nv(p.entry), nv(p.stop), ...(p.targets || []).map(nv)].filter((v) => v !== null);
-    const closes = day.map((b) => b.close), lo = Math.min(...closes, ...levels), hi = Math.max(...closes, ...levels);
-    const W = 360, H = 120, pad = 6;
-    const x = (i) => pad + (i / (day.length - 1 || 1)) * (W - pad * 2), y = (v) => H - pad - ((v - lo) / (hi - lo || 1)) * (H - pad * 2);
-    const g = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "bd-spark" });
-    const line = (v, color, dash) => v !== null && svg("line", { x1: pad, x2: W - pad, y1: y(v), y2: y(v), stroke: color, "stroke-dasharray": dash ? "4 3" : "", "stroke-width": 1 }, g);
-    line(nv(p.stop), cssv("--down")); line(nv(p.entry), cssv("--accent"));
-    (p.targets || []).forEach((t) => line(nv(t), cssv("--up"), true));
-    const up = closes.at(-1) >= closes[0];
-    svg("polyline", { points: closes.map((c, i) => `${x(i)},${y(c)}`).join(" "), fill: "none", stroke: up ? cssv("--up") : cssv("--down"), "stroke-width": 1.6 }, g);
-    host.innerHTML = ""; host.append(g);
-  } catch (e) { host.textContent = `chart unavailable (${e.message})`; }
-}
+const briefTime = (b) => (b?.created_at ? Date.parse(b.created_at.replace(" ", "T") + "Z") / 1000 : null);
 
 function planPick(p) {
-  setSymbol(String(p.symbol)); showTab("center", "chart"); showTab("side", "risk");
+  showPlanOnMain(p, p._t); showTab("side", "risk");
   if (nv(p.entry) !== null) $("#rEntry").value = p.entry;
   if (nv(p.stop) !== null) $("#rStop").value = p.stop;
   $("#rSide").value = /short/i.test(p.bias || "") ? "short" : "long";
-  setTimeout(() => $("#btnDrawPlan").click(), 1500);
+  calcRisk();
 }
 
 /** Sortable picks table with an expandable detail row per pick. compact = side panel / chat. */
-function picksTable(picks, { compact = false } = {}) {
+function picksTable(picks, { compact = false, time = null } = {}) {
   const wrap = el("div", "bd-table-wrap");
   const cols = compact
     ? [["#", "rank"], ["Symbol", "symbol"], ["Bias", "bias"], ["Score", "score"], ["Entry", "entry"], ["Stop", "stop"], ["T1", "t1"], ["R:R", "rr"]]
     : [["#", "rank"], ["Symbol", "symbol"], ["Bias", "bias"], ["Setup", "setup"], ["Score", "score"], ["Conf.", "confidence"], ["Catalyst", "catalyst"],
        ["PM %", "premarket_change_pct"], ["RVOL", "rvol"], ["Entry", "entry"], ["Stop", "stop"], ["T1", "t1"], ["T2", "t2"], ["R:R", "rr"], ["Size", "size_shares"]];
-  const rows = picks.map((p, i) => ({ ...p, rank: nv(p.rank) ?? i + 1, t1: (p.targets || [])[0], t2: (p.targets || [])[1],
+  const rows = picks.map((p, i) => ({ ...p, _t: time, rank: nv(p.rank) ?? i + 1, t1: (p.targets || [])[0], t2: (p.targets || [])[1],
     rr: nv(p.rr) ?? (nv(p.entry) !== null && nv(p.stop) !== null && (p.targets || [])[0] != null ? Math.abs(p.targets[0] - p.entry) / Math.abs(p.entry - p.stop || 1) : null) }));
   let sortKey = "rank", asc = true;
   const table = el("table", "bd-table"), thead = el("thead"), tbody = el("tbody"), hr = el("tr");
@@ -130,7 +111,9 @@ function picksTable(picks, { compact = false } = {}) {
       const detail = el("tr", "pick-detail hidden"), td = el("td"); td.colSpan = cols.length + 1; detail.append(td);
       tr.onclick = () => {
         const open = detail.classList.toggle("hidden") === false;
-        if (open && !td.childElementCount) td.append(pickDetail(p));
+        tr.classList.toggle("selected", open);
+        if (open) td.append(pickDetail(p, compact, td));
+        else { td._dispose?.(); td._dispose = null; td.innerHTML = ""; } // free the chart
       };
       tbody.append(tr, detail);
     }
@@ -139,21 +122,29 @@ function picksTable(picks, { compact = false } = {}) {
   return wrap;
 }
 
-function pickDetail(p) {
+function pickDetail(p, compact = false, holder = null) {
+  // Full candlestick chart of the recommendation: risk/reward zones, levels, and what happened since.
+  const wrapAll = el("div", "bd-detail-wrap"), chartHost = el("div");
+  // The table can be wider than the panel: size the detail to the visible area and keep it in view while scrolling sideways.
+  const vis = holder?.closest(".bd-table-wrap")?.clientWidth;
+  if (vis) { wrapAll.style.width = `${vis - 18}px`; wrapAll.style.position = "sticky"; wrapAll.style.left = "0"; }
+  const dispose = renderTradeChart(chartHost, p, p._t, { height: compact ? 260 : 380 });
+  if (holder) holder._dispose = dispose;
+  wrapAll.append(chartHost);
   const box = el("div", "bd-detail"), left = el("div"), right = el("div", "bd-detail-txt");
-  const spark = el("div", "bd-spark-host"); left.append(spark, ladder(p)); sparkline(spark, p);
+  left.append(ladder(p));
   const kv = (k, v) => { if (v == null || v === "") return; const d = el("div"); d.append(el("span", "dim", `${k}: `), document.createTextNode(Array.isArray(v) ? v.join(", ") : String(v))); right.append(d); };
   kv("Setup", p.setup); kv("Catalyst", p.catalyst); kv("Exit plan", p.exit_plan); kv("Invalidation", p.invalidation);
   kv("Targets", (p.targets || []).map((t) => fmt(t)).join(" / ")); kv("Sector", p.sector); kv("Skills", p.skills); kv("Why", p.reason);
   const acts = el("div", "row gap"), c = el("button", "ghost small", "open chart"), pl = el("button", "primary small", "plan this trade"), ask = el("button", "ghost small", "ask Copilot");
-  c.onclick = (e) => { e.stopPropagation(); setSymbol(String(p.symbol)); showTab("center", "chart"); };
+  c.onclick = (e) => { e.stopPropagation(); showPlanOnMain(p, p._t); };
   pl.onclick = (e) => { e.stopPropagation(); planPick(p); };
   ask.onclick = (e) => { e.stopPropagation(); showTab("side", "copilot"); sendChat(`Re-check this idea with my trader-* skills using live data and tell me if it is still valid: ${JSON.stringify(p)}`, `Re-check ${p.symbol}`); };
   const pt = el("button", "primary small", /short/i.test(p.bias || "") ? "📝 Paper short" : "📝 Paper buy");
   pt.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
   acts.append(pt, c, pl, ask); right.append(acts);
-  box.append(left, right);
-  return box;
+  box.append(left, right); wrapAll.append(box);
+  return wrapAll;
 }
 
 /** Full board for one brief. */
@@ -213,7 +204,7 @@ function renderBoard(host, b) {
   const picks = d.picks || [];
   const ps = section(`Recommendations (${picks.length})`, el("span", "dim small", "  click a row for chart, levels and exit plan · click a header to sort"));
   if (picks.length) {
-    ps.append(picksTable(picks));
+    ps.append(picksTable(picks, { time: briefTime(b) }));
     const scores = picks.filter((p) => nv(p.score) !== null);
     if (scores.length) { const sc = el("div", "bd-scores"); sc.append(el("div", "dim small", "Score by pick"), barChart(scores.map((p) => ({ label: `${p.symbol} ${/short/i.test(p.bias || "") ? "▼" : "▲"}`, value: p.score })), { unit: "", signed: false, max: 100 })); ps.append(sc); }
   } else ps.append(el("div", "dim", "No trade met the rules in this brief."));
@@ -246,11 +237,11 @@ function renderBoard(host, b) {
 }
 
 /** Compact version for the Briefs tab and Copilot answers. */
-function renderMini(host, result) {
+function renderMini(host, result, time = null) {
   const picks = result?.picks || [];
   const m = result?.market || {};
   if (m.regime || m.summary) { const h = el("div", "small"); if (m.regime) h.append(el("b", /on/i.test(m.regime) ? "up" : /off/i.test(m.regime) ? "down" : "", `${m.regime} `)); if (m.summary) h.append(document.createTextNode(m.summary)); host.append(h); }
-  if (picks.length) host.append(picksTable(picks, { compact: true }));
+  if (picks.length) host.append(picksTable(picks, { compact: true, time }));
 }
 
 /** Pull the trailing ```json result out of a Copilot answer. */
