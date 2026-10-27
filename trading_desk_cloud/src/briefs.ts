@@ -88,10 +88,10 @@ export const isTradingDay = (ny = nyNow()) => !["Sat", "Sun"].includes(ny.weekda
 const EARLY_CLOSES = new Set(["2026-11-27", "2026-12-24", "2027-11-26"]);
 export const CALENDAR = { holidays: [...HOLIDAYS], early_closes: [...EARLY_CLOSES] };
 
-/** Official US equity sessions (minutes after New York midnight): pre-market 04:00, open 09:30, close 16:00, after-hours to 20:00. */
+/** Trading sessions (minutes after New York midnight): pre-market from 07:00, open 09:30, close 16:00, after-hours to 20:00. */
 export function sessionTimes(date: string) {
   const early = EARLY_CLOSES.has(date);
-  return { pre: 240, open: 570, close: early ? 780 : 960, postEnd: early ? 1020 : 1200 };
+  return { pre: 420, open: 570, close: early ? 780 : 960, postEnd: early ? 1020 : 1200 };
 }
 export type Phase = "pre" | "regular" | "post" | "closed";
 export function marketPhase(ny = nyNow()): Phase {
@@ -109,6 +109,14 @@ export function nextTradingDate(date: string): string {
     if (isTradingDay({ date: iso, weekday: WD[d.getUTCDay()], minutes: 0 })) return iso;
   }
   return date;
+}
+/** True when a bar starting at unix time `ts` falls inside pre-market, regular or after-hours. Cached per hour (DST shifts on the hour). */
+const hourCache = new Map<number, ReturnType<typeof nyNow>>();
+export function inSession(ts: number): boolean {
+  const h = Math.floor(ts / 3600);
+  let base = hourCache.get(h);
+  if (!base) { base = nyNow(new Date(h * 3600 * 1000)); if (hourCache.size > 5000) hourCache.clear(); hourCache.set(h, base); }
+  return marketPhase({ ...base, minutes: base.minutes + Math.floor((ts % 3600) / 60) }) !== "closed";
 }
 /** The trading day a new order belongs to: today until after-hours end, otherwise the next session. */
 export function orderDay(ny = nyNow()): string {

@@ -111,14 +111,19 @@ Open the **Paper trading** tab in the center area. Every user has their own simu
 
 **How orders fill:**
 * A server engine runs **every minute**, even with your browser closed. It checks working orders and open positions against 1-minute price bars.
-* A limit order fills at its price or better. A stop trigger fills at its price or worse.
+* **The entry price is the most you pay on a buy** (the least you accept on a short).
+  * If the stock is already at or below the entry, the buy fills immediately at the market price. For example, with the entry at 38.60 and the stock at 37.55, it buys now at about 37.55.
+  * If the stock is above the entry, the order waits until the price comes back down to it, then fills at the entry or better.
+  * Shorts work the same way in reverse.
+  * Recommendations, auto-trade, the order ticket and the chart replay all follow this rule.
+* Auto-trade skips a pick when the price is already through its stop-loss or past its take-profit. The order ticket refuses those cases with a message.
 * A position closes automatically when its stop-loss or take-profit is touched. If one bar touches both, it counts as the stop (the conservative assumption).
 * **Extended hours are automatic:** orders trade on the official schedule, with no setting to turn on.
-  * Pre-market runs 04:00–09:30 New York, the regular session 09:30–16:00, and after-hours 16:00–20:00.
+  * Pre-market runs 07:00–09:30 New York, the regular session 09:30–16:00, and after-hours 16:00–20:00.
   * On NYSE early-close days the regular session ends at 13:00 and after-hours at 17:00. Holidays are closed.
   * Stops and targets are watched in every session.
   * The Paper trading tab shows which session is live.
-* **While the market is closed** (20:00–04:00, weekends and holidays), a new order belongs to the next session. A market order, or a Sell now, executes at the first trade of the next pre-market.
+* **While the market is closed** (20:00–07:00, weekends and holidays), a new order belongs to the next session. A market order, or a Sell now, executes at the first trade of the next pre-market.
 * Unfilled entry orders expire when after-hours ends (20:00 New York).
 
 **Exit mode (per trade):**

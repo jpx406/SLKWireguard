@@ -259,7 +259,7 @@
     <div class="f-grid">
       <label>Symbol<input name="symbol" required maxlength="15" class="mono" style="text-transform:uppercase"></label>
       <label>Side<select name="side"><option value="long">Buy (long)</option><option value="short">Sell short</option></select></label>
-      <label>Order type<select name="type"><option value="market">Market (now)</option><option value="limit">Limit (buy at or below / short at or above)</option><option value="stop">Stop trigger (breakout entry)</option></select></label>
+      <label>Order type<select name="type"><option value="market">Market (now)</option><option value="limit">Entry price (buy at or below / short at or above)</option></select></label>
       <label class="px">Entry price<input name="price" type="number" step="0.01" min="0"></label>
       <label>Size by<select name="sizeBy"><option value="qty">Shares</option><option value="usd">Dollars</option><option value="risk">Risk % of equity</option></select></label>
       <label><span id="sizeLbl">Shares</span><input name="size" type="number" step="any" min="0" required></label>

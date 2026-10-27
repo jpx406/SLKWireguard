@@ -1,9 +1,10 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
 import { candles, latestPrice } from "./market";
-import { nyNow, isTradingDay, marketPhase, orderDay, sessionTimes } from "./briefs";
+import { nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
+/** "stop" only exists on rows from older versions; it is now handled exactly like a limit. */
 export type OrderType = "market" | "limit" | "stop";
 /** eod = close 5 min before the regular close (or before the after-hours end for trades opened after the bell); hold = keep (overnight too) until the stop-loss or take-profit is hit, or you close it. */
 export type ExitMode = "eod" | "hold";
@@ -104,8 +105,8 @@ export async function getAccount(db: D1Database, user: string): Promise<Account 
 
 async function barsFor(symbol: string): Promise<Bar[]> {
   const all = await candles(symbol, "1m");
-  const cutoff = nowS() - 60; // only completed minutes
-  return all.filter((b) => b.time <= cutoff);
+  const cutoff = nowS() - 60; // only completed minutes, and only trades inside our sessions (07:00-20:00 New York)
+  return all.filter((b) => b.time <= cutoff && inSession(b.time));
 }
 export const lastPrice = latestPrice;
 
@@ -121,21 +122,23 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   const symbol = String(inp.symbol || "").toUpperCase();
   if (!/^[A-Z0-9.\-^=]{1,15}$/.test(symbol)) return { error: "Bad symbol" };
   const side: Side = inp.side === "short" ? "short" : "long";
-  const type: OrderType = inp.type === "limit" || inp.type === "stop" ? inp.type : "market";
+  // The entry price is the most you pay on a buy (the least you accept on a short). If the market is already
+  // at or better than it, the order fills now at the market price; otherwise it waits for the price to come to it.
+  const type: OrderType = inp.type === "limit" || inp.type === "stop" ? "limit" : "market";
   const stop = num(inp.stop), target = num(inp.target);
   let price = num(inp.price);
   let last: number;
   try { last = await lastPrice(symbol); } catch (e) { return { error: (e as Error).message } }
-  if (type !== "market" && !(price && price > 0)) return { error: "Limit/stop orders need a price." };
-  const ref = type === "market" ? last : price!;
+  if (type !== "market" && !(price && price > 0)) return { error: "Limit orders need an entry price." };
+  const marketable = type === "market" || (side === "long" ? last <= price! : last >= price!);
+  const ref = marketable ? last : price!;
   let qty = num(inp.qty);
   if (!qty && num(inp.amount_usd)) qty = Math.floor(num(inp.amount_usd)! / ref);
   qty = qty ? Math.floor(qty) : 0;
   if (qty < 1) return { error: "Quantity must be at least 1 share." };
-  if (stop !== null && (side === "long" ? stop >= ref : stop <= ref)) return { error: `Stop-loss must be ${side === "long" ? "below" : "above"} the entry price (${r2(ref)}).` };
-  if (target !== null && (side === "long" ? target <= ref : target >= ref)) return { error: `Take-profit must be ${side === "long" ? "above" : "below"} the entry price (${r2(ref)}).` };
-  if (type === "limit" && (side === "long" ? price! > last * 1.02 : price! < last * 0.98))
-    return { error: `A ${side} limit that far through the market (${r2(last)}) would fill at once; use a market order or a stop order.` };
+  const at = marketable ? `the market price (${r2(ref)}), where this order fills now` : `the entry price (${r2(ref)})`;
+  if (stop !== null && (side === "long" ? stop >= ref : stop <= ref)) return { error: `Stop-loss must be ${side === "long" ? "below" : "above"} ${at}.` };
+  if (target !== null && (side === "long" ? target <= ref : target >= ref)) return { error: `Take-profit must be ${side === "long" ? "above" : "below"} ${at}.` };
   const need = qty * ref + acct.s.commission;
   if (need > acct.cash + 1e-6) return { error: `Not enough paper cash: need $${r2(need)}, have $${r2(acct.cash)}.` };
 
@@ -152,7 +155,7 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked,exit_mode)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
     order.source, order.brief_id, order.note, order.day, t, order.last_checked, exitMode).run();
-  if (type === "market" && !closed) {
+  if (marketable && !closed) {
     const position = await fill(db, order, last, t);
     return position ? { order: { ...order, status: "filled", fill_price: last }, position } : { error: "Fill rejected (cash changed)." };
   }
@@ -204,7 +207,7 @@ export async function closePosition(db: D1Database, user: string, id: string) {
   const p = await db.prepare("SELECT * FROM paper_positions WHERE id = ? AND user = ? AND status = 'open'").bind(id, user).first<Position>();
   if (!p) return { error: "Position not found or already closed." };
   if (marketPhase() === "closed") {
-    // Nothing trades now: sell at the first trade of the next session (04:00 New York pre-market).
+    // Nothing trades now: sell at the first trade of the next session (07:00 New York pre-market).
     await db.prepare("UPDATE paper_positions SET close_req = ? WHERE id = ? AND status = 'open'").bind(nowS(), id).run();
     return { ok: true, queued: true };
   }
@@ -265,12 +268,10 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     for (const b of bs) {
       let px: number | null = null;
       if (o.type === "market") px = b.open; // queued while closed: first trade of the session
-      else if (o.type === "limit") {
+      else {
+        // Buy at or below the entry (short at or above), at the bar's open if it is already better.
         if (o.side === "long" && b.low <= o.price!) px = Math.min(o.price!, b.open);
         if (o.side === "short" && b.high >= o.price!) px = Math.max(o.price!, b.open);
-      } else if (o.type === "stop") {
-        if (o.side === "long" && b.high >= o.price!) px = Math.max(o.price!, b.open);
-        if (o.side === "short" && b.low <= o.price!) px = Math.min(o.price!, b.open);
       }
       if (px !== null) {
         // If the bar already gapped through the bracket stop, the trade is invalid: cancel instead of filling.
@@ -360,9 +361,10 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     if (qty < 1) continue;
     let last: number;
     try { last = await lastPrice(symbol); } catch { continue; }
-    // Entry above the market (long) / below (short) is a breakout trigger -> stop order; otherwise a limit.
-    const type: OrderType = side === "long" ? (entry > last ? "stop" : "limit") : (entry < last ? "stop" : "limit");
-    const r = await placeOrder(db, a.user, { symbol, side, type, price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300) });
+    // Entry = most to pay: fills now if the market is at or below it (long), else waits for a pullback to it.
+    // Skip the pick when the price is already through the stop-loss or past the take-profit.
+    if (side === "long" ? last <= stop || (target !== null && last >= target) : last >= stop || (target !== null && last <= target)) continue;
+    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300) });
     if (!r.error) { busy.add(symbol); slots--; }
   }
 }

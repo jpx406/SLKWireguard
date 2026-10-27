@@ -72,7 +72,7 @@ function openTicket(pre = {}) {
   const f = $("#ticketForm");
   f.reset(); $("#ticketErr").textContent = "";
   f.symbol.value = (pre.symbol || state.symbol || "").toUpperCase();
-  f.side.value = pre.side || "long"; f.type.value = pre.type || "market";
+  f.side.value = pre.side || "long"; f.type.value = pre.type === "stop" ? "limit" : pre.type || "market";
   f.price.value = pre.price ?? ""; f.stop.value = pre.stop ?? ""; f.target.value = pre.target ?? ""; f.note.value = pre.note || "";
   f.sizeBy.value = pre.qty ? "qty" : "risk"; f.size.value = pre.qty ?? (state.paper?.settings?.risk_pct ?? 1);
   f.exit_mode.value = pre.exit_mode || (state.paper?.settings?.auto_flat === false ? "hold" : "eod");
@@ -103,6 +103,10 @@ function syncTicket() {
   const out = $("#ticketPreview"); out.innerHTML = "";
   const kv = (k, val, cls = "") => out.append(el("span", "k", k), el("span", cls, val));
   kv("Last price", ticketLast == null ? "…" : fmt(ticketLast));
+  if (v.type === "limit" && v.entry && ticketLast != null) {
+    const now = v.side === "long" ? ticketLast <= v.entry : ticketLast >= v.entry;
+    kv("Execution", now ? `fills now at about ${fmt(ticketLast)} (${v.side === "long" ? "at or below" : "at or above"} your entry)` : `waits until the price ${v.side === "long" ? "drops" : "rises"} to ${fmt(v.entry)}`, now ? "up" : "");
+  }
   if (v.entry && v.qty) {
     const cost = v.entry * v.qty, cash = state.paper?.account?.cash ?? 0;
     kv("Shares", fmt(v.qty, 0)); kv("Position", `${money(cost)} (${fmt((cost / Math.max(cash, 1)) * 100, 1)}% of cash)`, cost > cash ? "down" : "");
@@ -112,7 +116,7 @@ function syncTicket() {
     if (v.stop && v.target) kv("Reward : risk", `${fmt(Math.abs(v.target - v.entry) / Math.abs(v.entry - v.stop), 2)} R`);
     if (cost > cash) out.append(el("span", "warn", "Not enough paper cash for this size."));
     const ph = marketState().s;
-    if (ph === "closed") out.append(el("span", "note", v.type === "market" ? "Market closed: this market order fills at the first trade of the next session (04:00 New York pre-market)." : "Market closed: the order starts working at the next session (04:00 New York pre-market)."));
+    if (ph === "closed") out.append(el("span", "note", v.type === "market" ? "Market closed: this market order fills at the first trade of the next session (07:00 New York pre-market)." : "Market closed: the order starts working at the next session (07:00 New York pre-market)."));
     else if (ph === "pre" || ph === "after") out.append(el("span", "note", `${ph === "pre" ? "Pre-market" : "After-hours"}: fills on extended-hours trades (thinner volume, wider spreads). Stops and targets are watched in every session.`));
     if (v.exit_mode === "hold" && !v.stop && !v.target) out.append(el("span", "warn", "Hold mode with no stop-loss or take-profit: the position stays open until you close it."));
     else if (v.exit_mode === "hold") out.append(el("span", "note", "Held overnight until the stop or target is hit (it can gap past them at the next open)."));
@@ -131,13 +135,11 @@ $("#ticketForm").onsubmit = async (e) => {
     $("#ticketDlg").close(); showTab("center", "paper"); loadPaper();
   } catch (err) { $("#ticketErr").textContent = err.message; }
 };
-/** Prefill from a recommendation: entry above the market (long) is a breakout trigger -> stop order; otherwise a limit. */
+/** Prefill from a recommendation. The entry is the most to pay (long) / least to accept (short): it fills now if the market is already there. */
 async function openTicketFromPick(p) {
   const side = /short/i.test(p.bias || "") ? "short" : "long";
-  let last = null;
-  try { const [q] = await api(`/api/quotes?symbols=${encodeURIComponent(p.symbol)}`); last = q?.last ?? null; } catch { /* unknown */ }
   const entry = p.entry == null ? null : Number(p.entry);
-  const type = entry == null ? "market" : last == null ? "limit" : side === "long" ? (entry > last ? "stop" : "limit") : (entry < last ? "stop" : "limit");
+  const type = entry == null ? "market" : "limit";
   openTicket({ symbol: p.symbol, side, type, price: entry, stop: p.stop, target: (p.targets || [])[0], qty: p.size_shares || null, note: p.setup || "" });
 }
 $("#btnTradeSym").onclick = () => openTicket({ symbol: state.symbol });
@@ -171,7 +173,7 @@ function sessionNote(ss) {
     pre: "PRE-MARKET: orders fill on extended-hours trades.",
     regular: "REGULAR SESSION.",
     post: "AFTER-HOURS: orders fill on extended-hours trades.",
-    closed: `MARKET CLOSED: new orders work from the next session (${ss?.next_day ?? "next trading day"}, 04:00 pre-market).`,
+    closed: `MARKET CLOSED: new orders work from the next session (${ss?.next_day ?? "next trading day"}, 07:00 pre-market).`,
   }[phase];
   const n = el("div", `session-note ${phase}`); n.append(el("b", null, txt), el("span", "dim", ` ${hours}`)); return n;
 }
@@ -221,10 +223,10 @@ function renderPaper(d) {
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
     const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at next open" : p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
     close.disabled = !!p.close_req;
-    if (p.close_req) close.title = "Requested while the market was closed; executes at the first trade of the next session (04:00 New York).";
+    if (p.close_req) close.title = "Requested while the market was closed; executes at the first trade of the next session (07:00 New York).";
     close.onclick = async () => {
       const shut = marketState().s === "closed";
-      if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market${shut ? "?\n\nThe market is closed: it executes at the first trade of the next session (04:00 New York pre-market)." : "?"}`)) return;
+      if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market${shut ? "?\n\nThe market is closed: it executes at the first trade of the next session (07:00 New York pre-market)." : "?"}`)) return;
       try { await api(`/api/paper/positions/${p.id}/close`, { method: "POST", body: "{}" }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
     edit.onclick = async () => {
@@ -241,7 +243,7 @@ function renderPaper(d) {
   const os = section(`Working orders (${working.length})`);
   const orderRow = (o) => {
     const tr = el("tr");
-    tr.append(td(o.symbol, "sym"), td(o.side === "long" ? "buy" : "short", o.side === "long" ? "up" : "down"), td(o.type), td(o.price == null ? "market" : fmt(o.price), "num"),
+    tr.append(td(o.symbol, "sym"), td(o.side === "long" ? "buy" : "short", o.side === "long" ? "up" : "down"), td(o.type === "market" ? "market" : "limit"), td(o.price == null ? "market" : fmt(o.price), "num"),
       td(o.qty, "num"), td(fmt(o.stop), "num down"), td(fmt(o.target), "num up"), td(o.source), td(o.status, `pill ${o.status === "filled" ? "done" : o.status === "open" ? "running" : "error"}`),
       td(o.reason || (o.fill_price ? `filled @ ${fmt(o.fill_price)}` : ago(o.created_at)), "dim small"));
     const act = el("td");
@@ -253,7 +255,7 @@ function renderPaper(d) {
     tr.append(act); return tr;
   };
   const oh = ["Symbol", "Side", "Type", "Price", "Qty", "Stop", "Target", "Source", "Status", "", ""];
-  os.append(working.length ? table(oh, working.map(orderRow)) : el("div", "dim small", "No working orders. Limit and stop orders stay working until they trigger or the day ends."));
+  os.append(working.length ? table(oh, working.map(orderRow)) : el("div", "dim small", "No working orders. An entry order waits here only while the price is above your entry (long) or below it (short); it expires when after-hours ends."));
   if (recent.length) { const det = el("details"), s = el("summary", "dim small", `Recent orders (${recent.length})`); det.append(s, table(oh, recent.map(orderRow))); os.append(det); }
   host.append(os);
 
@@ -277,7 +279,7 @@ function renderPaper(d) {
     return tr;
   })) : el("div", "dim small", "Closed trades appear here."));
   host.append(hs);
-  host.append(el("div", "dim tiny", `Simulated fills against 1-minute bars from ${state.status?.market?.label || "the market data feed"}: limit orders fill at the limit or better, stop orders at the trigger or worse, and a bar that touches both stop and target counts as the stop. Real fills, slippage and liquidity differ.`));
+  host.append(el("div", "dim tiny", `Simulated fills against 1-minute bars from ${state.status?.market?.label || "the market data feed"}: an entry fills at the entry price or better (at once if the market is already there), and a bar that touches both stop and target counts as the stop. Real fills, slippage and liquidity differ.`));
 }
 
 function equityChart(points) {

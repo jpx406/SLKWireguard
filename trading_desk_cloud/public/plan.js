@@ -22,21 +22,22 @@ function replayPlan(plan, bars) {
   let i = bars.findIndex((b) => b.time >= plan.time);
   if (i < 0) return { ev, status: "Waiting for price data after the plan time." };
   ev.push({ time: bars[i].time, kind: "plan" });
-  const long = plan.side === "long", ref = bars[i].open;
-  // Entry above the market for a long (below for a short) is a breakout trigger; otherwise a pullback limit.
-  const breakout = long ? plan.entry > ref : plan.entry < ref;
-  let entryAt = -1;
+  const long = plan.side === "long";
+  // The entry is the most to pay on a long (least to accept on a short): already there -> filled at once,
+  // otherwise filled when the price comes back to it. Same rule as the paper-trading engine.
+  let entryAt = -1, fillPx = plan.entry;
   for (; i < bars.length; i++) {
     const b = bars[i];
-    const hit = breakout ? (long ? b.high >= plan.entry : b.low <= plan.entry) : (long ? b.low <= plan.entry : b.high >= plan.entry);
-    if (hit) { entryAt = i; break; }
+    if (long ? b.low <= plan.entry : b.high >= plan.entry) { entryAt = i; fillPx = long ? Math.min(plan.entry, b.open) : Math.max(plan.entry, b.open); break; }
   }
-  if (entryAt < 0) return { ev, status: `Entry ${planFmt(plan.entry)} not triggered yet (${breakout ? "breakout" : "pullback"} entry).` };
+  if (entryAt < 0) return { ev, status: `Waiting for a ${long ? "pullback to" : "bounce to"} ${planFmt(plan.entry)}.` };
   ev.push({ time: bars[entryAt].time, kind: "entry" });
-  const risk = Math.abs(plan.entry - (plan.stop ?? plan.entry)) || null;
-  const R = (px) => (risk ? ((px - plan.entry) * (long ? 1 : -1)) / risk : null);
+  const risk = Math.abs(fillPx - (plan.stop ?? fillPx)) || null;
+  const R = (px) => (risk ? ((px - fillPx) * (long ? 1 : -1)) / risk : null);
   let next = 0;
-  for (let j = entryAt + (breakout ? 0 : 1); j < bars.length; j++) {
+  // An immediate fill at the bar's open can still see the stop or targets in that same bar.
+  const atOpen = fillPx !== plan.entry;
+  for (let j = entryAt + (atOpen ? 0 : 1); j < bars.length; j++) {
     const b = bars[j];
     if (plan.stop != null && (long ? b.low <= plan.stop : b.high >= plan.stop)) {
       ev.push({ time: b.time, kind: "stop" });
