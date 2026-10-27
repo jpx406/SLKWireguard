@@ -4,7 +4,7 @@ import { authenticate, login, logout, listUsers, createUser, updateUser, deleteU
 import { autoTradeNewBriefs, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
-import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
+import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
 
@@ -179,8 +179,13 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     if (prompt.length > 50_000) return bad("Prompt too long");
     let sid = b.session_id ?? null;
     if (sid && !/^[A-Za-z0-9_-]{8,128}$/.test(sid)) return bad("Bad session id");
-    if (!sid) sid = await createSession(env, (await getSettings(env.DB)).session_budget_usd);
-    return new Response(runTurn(env, sid, prompt), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
+    let text = prompt;
+    if (!sid) {
+      const s = await getSettings(env.DB);
+      sid = await createSession(env, s.session_budget_usd);
+      text = configContext(s.trader_config) + prompt;
+    }
+    return new Response(runTurn(env, sid, text), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
   }
 
   if (path === "/briefs" && m === "GET") {

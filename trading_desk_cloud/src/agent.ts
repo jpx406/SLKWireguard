@@ -30,6 +30,25 @@ export async function syncConfigFile(env: Env, rawConfig: string) {
   if (old) await anthropic.files.delete(old).catch(() => {}); // best effort
 }
 
+/**
+ * Preamble for the first message of a session: where the config is, and the SEC
+ * User-Agent spelled out, because some skills look for their config in another
+ * place and would otherwise refuse ("needs sec_user_agent").
+ */
+export function configContext(rawConfig: string): string {
+  let ua = "";
+  try {
+    const c = JSON.parse(rawConfig || "{}");
+    ua = String(c.sec_user_agent ?? c.sec?.user_agent ?? c.SEC_USER_AGENT ?? "").trim();
+  } catch { /* invalid config is reported in Settings */ }
+  if (!rawConfig.trim()) return "";
+  const lines = [
+    `[Setup] My trader config.json is mounted at ${CONFIG_MOUNT}. If a skill reads its config from another path (for example ./trader/config.json, ~/trader/config.json or its own skill folder), copy ${CONFIG_MOUNT} there before running it.`,
+  ];
+  if (ua) lines.push(`My SEC/EDGAR User-Agent is "${ua.replace(/"/g, "'")}". It is my real contact and I approve its use for every SEC request (also export SEC_USER_AGENT with this value). Do not skip trader-analyst, copycat or filings checks for lack of it.`);
+  return lines.join(" ") + "\n\n";
+}
+
 /** Create a session for this conversation; returns its id. */
 export async function createSession(env: Env, budgetUsd: number) {
   const fileId = await getSetting<string | null>(env.DB, "config_file_id", null);

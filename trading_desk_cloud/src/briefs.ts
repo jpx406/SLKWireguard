@@ -2,7 +2,7 @@
 // when New York time reaches an enabled slot, a Claude session runs that slot's routine with
 // the trader-* skills. Results are collected on later ticks (or when the UI asks) and stored in D1.
 import type { Env } from "./env";
-import { client, createSession } from "./agent";
+import { client, configContext, createSession } from "./agent";
 import { getSetting, getSettings } from "./db";
 import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
@@ -117,7 +117,7 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filters
     const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd);
     const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
     if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
-    const text = `[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
+    const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text }] }] });
     await env.DB.prepare("UPDATE briefs SET session_id = ?, status = 'running' WHERE id = ?").bind(sid, id).run();
   } catch (e) {
