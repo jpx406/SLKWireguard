@@ -3,7 +3,7 @@ import type { Env } from "./env";
 import { authenticate, login, logout, listUsers, createUser, updateUser, deleteUser, changeOwnPassword, type Identity } from "./auth";
 import { autoTradeNewBriefs, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
-import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase } from "./market";
+import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -22,6 +22,18 @@ function parseConfig(raw: string) {
   catch (e) { return { config: null, error: String((e as Error).message) }; }
 }
 
+/** Point market data at the configured source (setting cached for 30 s per isolate). */
+let srcCache: { at: number; v: DataSource } | null = null;
+async function setupMarket(env: Env) {
+  setMarketBase(env.MARKET_DATA_BASE);
+  if (!srcCache || Date.now() - srcCache.at > 30_000) {
+    let v: DataSource = "auto";
+    try { await ensureSchema(env.DB); v = await getSetting<DataSource>(env.DB, "data_source", "auto"); } catch { /* default */ }
+    srcCache = { at: Date.now(), v };
+  }
+  configureMarket({ source: srcCache.v, keyId: env.ALPACA_KEY_ID, secret: env.ALPACA_SECRET_KEY, alpacaBase: env.ALPACA_DATA_BASE });
+}
+
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
 const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/];
 // Shared settings: admin only.
@@ -36,6 +48,10 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return bad("Only the admin can change this.", 403);
   if (!who.ai && AI_ROUTES.some((r) => r.test(path))) return bad("Your account is not allowed to run Claude scans or chat. Ask the admin.", 403);
 
+  if (path === "/market/test" && m === "GET") {
+    if (who.role !== "admin") return bad("Only the admin can test the data connection.", 403);
+    return json({ iex: await testAlpaca("iex"), sip: await testAlpaca("sip"), info: marketInfo() });
+  }
   if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD });
   if (path === "/me/password" && m === "POST") {
     const b = await body<{ current?: string; next?: string }>(req);
@@ -106,6 +122,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       config, config_error: error, config_mount: CONFIG_MOUNT,
       paper: config ? config.paper !== false : null,
       agent_ready: !!(env.ANTHROPIC_API_KEY && env.AGENT_ID && env.ENVIRONMENT_ID),
+      market: marketInfo(),
       server_time: new Date().toISOString(),
     });
   }
@@ -116,6 +133,12 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     if ("watchlist" in patch) {
       const wl = Array.isArray(patch.watchlist) ? patch.watchlist.map((x) => String(x).trim().toUpperCase()).filter((x) => SYMBOL_RE.test(x)) : [];
       await setSetting(env.DB, "watchlist", [...new Set(wl)].slice(0, 40));
+    }
+    if ("data_source" in patch) {
+      const v = String(patch.data_source);
+      if (!["auto", "yahoo", "alpaca_iex", "alpaca_sip"].includes(v)) return bad("Unknown data source.");
+      await setSetting(env.DB, "data_source", v);
+      srcCache = null; await setupMarket(env);
     }
     if ("session_budget_usd" in patch) {
       const b = Number(patch.session_budget_usd);
@@ -236,8 +259,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    setMarketBase(env.MARKET_DATA_BASE);
     const url = new URL(req.url);
+    if (url.pathname.startsWith("/api/")) await setupMarket(env);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
     if (req.method === "POST" && url.pathname === "/api/login") {
       if (req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
@@ -257,8 +280,7 @@ export default {
     }
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    setMarketBase(env.MARKET_DATA_BASE);
-    ctx.waitUntil(runSchedule(env));
+    ctx.waitUntil(setupMarket(env).then(() => runSchedule(env)));
   },
 } satisfies ExportedHandler<Env>;
 

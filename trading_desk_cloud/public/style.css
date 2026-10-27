@@ -319,3 +319,4 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 .no-ai .ap-slot button, .no-ai #workflows button { pointer-events: none; opacity: .45; }
 #usersTable select { padding: 2px 4px; font-size: 12px; }
 #usersTable td button { margin-right: 4px; }
+.tabs button { white-space: nowrap; }

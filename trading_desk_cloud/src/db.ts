@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
   watchlist: ["SPY", "QQQ", "AAPL", "NVDA", "TSLA", "AMD", "MSFT", "META"],
   session_budget_usd: 5,
   trader_config: "", // raw text of trader/config.json
+  data_source: "auto" as "auto" | "yahoo" | "alpaca_iex" | "alpaca_sip",
 };
 export type Settings = typeof DEFAULT_SETTINGS;
 

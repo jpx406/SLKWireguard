@@ -247,7 +247,7 @@ function renderPaper(d) {
     return tr;
   })) : el("div", "dim small", "Closed trades appear here."));
   host.append(hs);
-  host.append(el("div", "dim tiny", "Simulated fills against delayed 1-minute bars (Yahoo Finance): limit orders fill at the limit or better, stop orders at the trigger or worse, and a bar that touches both stop and target counts as the stop. Real fills, slippage and liquidity differ."));
+  host.append(el("div", "dim tiny", `Simulated fills against 1-minute bars from ${state.status?.market?.label || "the market data feed"}: limit orders fill at the limit or better, stop orders at the trigger or worse, and a bar that touches both stop and target counts as the stop. Real fills, slippage and liquidity differ.`));
 }
 
 function equityChart(points) {

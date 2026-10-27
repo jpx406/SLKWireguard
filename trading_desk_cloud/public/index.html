@@ -37,7 +37,7 @@
       <form id="addSymForm" class="inline"><input id="addSym" placeholder="+ add" maxlength="15"></form>
     </div>
     <div id="watchlist" class="watch-list"></div>
-    <div class="dim tiny pad">Quotes via Yahoo Finance, ~15s refresh. Not for execution.</div>
+    <div id="dataLabel" class="dim tiny pad">Quotes via Yahoo Finance, ~15s refresh. Not for execution.</div>
   </aside>
 
   <!-- Chart + bottom panel -->
@@ -183,6 +183,14 @@
   <form id="settingsForm">
     <h3>Settings</h3>
     <label>Watchlist (comma separated)<input name="watchlist"></label>
+    <label>Market data source
+      <select name="data_source">
+        <option value="auto">Auto: Alpaca real-time if keys are set, else Yahoo</option>
+        <option value="alpaca_iex">Alpaca IEX: real-time, free plan (IEX exchange only)</option>
+        <option value="alpaca_sip">Alpaca SIP: real-time, all exchanges (Algo Trader Plus plan)</option>
+        <option value="yahoo">Yahoo Finance: delayed, no key needed</option>
+      </select></label>
+    <div class="row gap"><button type="button" id="btnTestData" class="ghost small">Test Alpaca connection</button><span id="dataTestOut" class="small dim"></span></div>
     <label>Max spend per Copilot session (USD)<input name="session_budget_usd" type="number" step="0.5" min="0.5" max="100"></label>
     <label>trader/config.json — paste your file; Claude's skills read it inside the sandbox
       <textarea name="trader_config" rows="12" class="mono" spellcheck="false" placeholder='{ "paper": true, "sec_user_agent": "Your Name you@example.com" }'></textarea></label>

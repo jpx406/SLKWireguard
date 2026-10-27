@@ -9,7 +9,7 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 | Login | The app's own login: admin password as an encrypted Worker secret, extra users with hashed passwords in D1 |
 | Paper trading | Simulated accounts per user; order engine runs every minute (Cron Trigger) |
 | Copilot and your 15 `trader-*` skills | **Claude Managed Agents**: Claude runs your SKILL.md files and Python tools in an Anthropic cloud sandbox |
-| Quotes and candles | Yahoo Finance (delayed and unofficial; for context only) |
+| Quotes, candles, paper fills | **Alpaca** real-time (free IEX feed, or full SIP feed on Alpaca's paid plan), with Yahoo Finance (delayed) as automatic fallback |
 
 **It cannot place orders.** No broker is connected anywhere in this stack. The agent's instructions forbid placing orders, and any tool call that would need approval is automatically denied. Place tickets yourself in your broker or in Claude Code.
 
@@ -76,6 +76,29 @@ The **Briefs** tab is the first tab. On US market days, the Worker runs these sc
 * The scans run on Cloudflare's schedule even when your browser is closed. Weekends and NYSE holidays are skipped.
 * Every brief is a Claude session capped at your per-session budget. Three briefs a day costs roughly $1–3 per brief in Anthropic usage. Turn off the ones you don't need.
 
+## Real-time market data (Alpaca)
+
+Out of the box the app uses Yahoo Finance, which is delayed. For real-time data:
+
+1. Create a free account at **alpaca.markets**. In the dashboard, generate an API key. Paper-trading keys work for market data.
+2. Store the key as two Cloudflare secrets. Never put them in a file:
+   ```powershell
+   .\node_modules\.bin\wrangler.cmd secret put ALPACA_KEY_ID
+   .\node_modules\.bin\wrangler.cmd secret put ALPACA_SECRET_KEY
+   ```
+3. In ⚙ Settings → **Market data source**, leave it on **Auto** and click **Test Alpaca connection**.
+
+| Source | Cost | Notes |
+|---|---|---|
+| **Alpaca IEX** (Auto picks this once keys are set) | free | Real-time trades from the IEX exchange (~2–3% of US volume). Prices are accurate on liquid stocks, but bar volume and high/low are partial, and coverage is thin on small caps |
+| **Alpaca SIP** | Alpaca "Algo Trader Plus" (~$99/mo) | Real-time feed from all US exchanges. If your plan doesn't include it, the app falls back to IEX and says so |
+| **Yahoo Finance** | free | Delayed and unofficial; no key needed |
+
+* **What uses it:** the chart, watchlist quotes and the paper-trading engine. Market orders and P&L use Alpaca's latest trade price.
+* **Index and futures symbols** (^VIX, ES=F) always come from Yahoo.
+* **If Alpaca has a problem**, the app falls back to Yahoo automatically, and the footer under the watchlist shows which feed is live and any error.
+* **Claude's skills** inside the sandbox keep using their own data sources.
+
 ## Paper trading (simulated, no real money)
 
 Open the **Paper trading** tab in the center area. Every user has their own simulated account, starting with **$10,000**. You can change the amount under ⚙ Settings & auto-trade → Reset.
@@ -107,7 +130,7 @@ Open the **Paper trading** tab in the center area. Every user has their own simu
 * Entries above the market become breakout stop orders, and the rest become limits.
 * Each scan is auto-traded only once.
 
-Fills are simulated on delayed Yahoo Finance data, so real fills, slippage and liquidity will differ.
+Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo), so real fills, slippage and liquidity will differ.
 
 ## Users
 

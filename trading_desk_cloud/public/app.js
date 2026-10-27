@@ -404,9 +404,18 @@ async function saveSettings(patch) {
 $("#btnSettings").onclick = () => {
   const f = $("#settingsForm"), s = state.settings;
   f.watchlist.value = s.watchlist.join(", "); f.session_budget_usd.value = s.session_budget_usd; f.trader_config.value = s.trader_config || "";
+  f.data_source.value = s.data_source || "auto"; $("#dataTestOut").textContent = "";
   $("#settingsErr").textContent = ""; $("#settingsDlg").showModal();
 };
 $("#btnSettingsCancel").onclick = () => $("#settingsDlg").close();
+$("#btnTestData").onclick = async () => {
+  const out = $("#dataTestOut"); out.textContent = "testing…"; out.className = "small dim";
+  try {
+    const r = await api("/api/market/test");
+    out.textContent = `IEX: ${r.iex.ok ? "✓" : "✗"} ${r.iex.detail} · SIP: ${r.sip.ok ? "✓" : "✗"} ${r.sip.detail}`;
+    out.className = `small ${r.iex.ok ? "up" : "down"}`;
+  } catch (e) { out.textContent = e.message; out.className = "small down"; }
+};
 $("#btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
 $("#settingsForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -418,7 +427,7 @@ $("#settingsForm").onsubmit = async (e) => {
     if (!secUserAgent(cfg) && !confirm('Your config has no "sec_user_agent" (Name + email). The SEC-based skills will refuse to run without it. Save anyway?')) return;
   }
   try {
-    await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw });
+    await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
@@ -436,6 +445,11 @@ async function loadStatus() {
   else { b.className = "badge muted"; b.textContent = st.config_error ? "CONFIG ERROR" : "NO CONFIG"; }
   b.title = "trader/config.json — edit in Settings";
   $("#claudeDot").className = `dot ${st.agent_ready ? "ok" : "bad"}`;
+  if (st.market) {
+    const mk = st.market, dl = $("#dataLabel");
+    dl.textContent = `Data: ${mk.label}${mk.last_error ? ` — Alpaca error, using Yahoo: ${mk.last_error}` : ""}${mk.sip_denied ? " (SIP not in your plan, using IEX)" : ""}. Not for execution.`;
+    dl.className = `tiny pad ${mk.last_error ? "down" : mk.active.startsWith("alpaca") ? "up" : "dim"}`;
+  }
   $("#configView").textContent = st.config ? JSON.stringify(st.config, null, 2) : st.config_error || "Not set. Paste your trader/config.json in Settings ⚙.";
   const ua = secUserAgent(st.config);
   if (st.config && !ua) showBanner('trader/config.json has no "sec_user_agent", so the SEC-based skills (analyst, copycat, filings) will refuse to run. Open Settings ⚙ and add e.g. "sec_user_agent": "Your Name you@email.com".');

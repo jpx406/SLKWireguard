@@ -1,6 +1,6 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
-import { candles } from "./market";
+import { candles, latestPrice } from "./market";
 import { nyNow, isTradingDay } from "./briefs";
 
 export type Side = "long" | "short";
@@ -99,12 +99,7 @@ async function barsFor(symbol: string): Promise<Bar[]> {
   const cutoff = nowS() - 60; // only completed minutes
   return all.filter((b) => b.time <= cutoff);
 }
-export async function lastPrice(symbol: string): Promise<number> {
-  const all = await candles(symbol, "1m");
-  const last = all.at(-1);
-  if (!last) throw new Error(`No price for ${symbol}`);
-  return last.close;
-}
+export const lastPrice = latestPrice;
 
 // --------------------------------------------------------------------------------------- orders
 export type OrderInput = {
