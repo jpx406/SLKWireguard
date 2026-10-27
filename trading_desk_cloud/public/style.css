@@ -340,3 +340,9 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 .bd-detail-wrap { display: flex; flex-direction: column; gap: 8px; padding: 6px 2px 10px; white-space: normal; }
 .pick-row.selected { background: #172033; box-shadow: inset 2px 0 0 var(--accent); }
 @media (max-width: 1100px) { #chart .legend { position: absolute; top: 4px; padding: 0; } }
+
+.session-note { font-size: 12px; padding: 6px 10px; border-radius: 6px; margin: 4px 0 10px; border: 1px solid var(--line, #2a2f3a); }
+.session-note b { font-weight: 600; }
+.session-note.regular b { color: var(--up, #22c55e); }
+.session-note.pre b, .session-note.post b { color: #f5b942; }
+.session-note.closed b { color: var(--dim, #8b93a3); }

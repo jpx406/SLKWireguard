@@ -111,6 +111,9 @@ function syncTicket() {
     if (v.target) kv("Gain at target", money((v.target - v.entry) * v.qty * sg), "up");
     if (v.stop && v.target) kv("Reward : risk", `${fmt(Math.abs(v.target - v.entry) / Math.abs(v.entry - v.stop), 2)} R`);
     if (cost > cash) out.append(el("span", "warn", "Not enough paper cash for this size."));
+    const ph = marketState().s;
+    if (ph === "closed") out.append(el("span", "note", v.type === "market" ? "Market closed: this market order fills at the first trade of the next session (04:00 New York pre-market)." : "Market closed: the order starts working at the next session (04:00 New York pre-market)."));
+    else if (ph === "pre" || ph === "after") out.append(el("span", "note", `${ph === "pre" ? "Pre-market" : "After-hours"}: fills on extended-hours trades (thinner volume, wider spreads). Stops and targets are watched in every session.`));
     if (v.exit_mode === "hold" && !v.stop && !v.target) out.append(el("span", "warn", "Hold mode with no stop-loss or take-profit: the position stays open until you close it."));
     else if (v.exit_mode === "hold") out.append(el("span", "note", "Held overnight until the stop or target is hit (it can gap past them at the next open)."));
   } else out.append(el("span", "warn", f.sizeBy.value === "risk" && !v.stop ? "Risk sizing needs a stop-loss." : "Enter a price and size."));
@@ -159,6 +162,19 @@ function table(headers, rows) {
   const tb = el("tbody"); rows.forEach((r) => tb.append(r)); t.append(tb);
   const w = el("div", "bd-table-wrap"); w.append(t); return w;
 }
+/** One line on which session is trading now and what that means for orders. */
+function sessionNote(ss) {
+  const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const hours = ss ? `Pre-market ${hm(ss.pre)}–${hm(ss.open)} · Regular ${hm(ss.open)}–${hm(ss.close)} · After-hours ${hm(ss.close)}–${hm(ss.postEnd)} New York` : "";
+  const phase = ss?.phase ?? "closed";
+  const txt = {
+    pre: "PRE-MARKET: orders fill on extended-hours trades.",
+    regular: "REGULAR SESSION.",
+    post: "AFTER-HOURS: orders fill on extended-hours trades.",
+    closed: `MARKET CLOSED: new orders work from the next session (${ss?.next_day ?? "next trading day"}, 04:00 pre-market).`,
+  }[phase];
+  const n = el("div", `session-note ${phase}`); n.append(el("b", null, txt), el("span", "dim", ` ${hours}`)); return n;
+}
 function td(text, cls = "") { return el("td", cls, text == null ? "—" : String(text)); }
 
 function renderPaper(d) {
@@ -169,6 +185,7 @@ function renderPaper(d) {
   const nb = el("button", "primary small", "+ New order"), sb = el("button", "ghost small", "⚙ Settings & auto-trade");
   nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
   acts.append(nb, sb); head.append(acts); host.append(head);
+  host.append(sessionNote(d.session));
   if (d.settings.auto_trade) host.append(el("div", "small up", `Auto-trade ON: orders are placed from each finished scan (score ≥ ${d.settings.auto_min_score}, up to ${d.settings.auto_max_positions} at a time, ${d.settings.sizing === "risk" ? `${d.settings.risk_pct}% risk per trade` : d.settings.sizing === "fixed" ? `${money(d.settings.fixed_usd)} per trade` : "recommended size"}, ${d.settings.auto_flat ? "closed at end of day" : "held until stop or target"}).`));
 
   const todayPnl = a.today_realized + a.unrealized;
@@ -202,9 +219,12 @@ function renderPaper(d) {
     };
     exTd.append(ex);
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
-    const act = el("td"), close = el("button", "primary small", p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
+    const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at next open" : p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
+    close.disabled = !!p.close_req;
+    if (p.close_req) close.title = "Requested while the market was closed; executes at the first trade of the next session (04:00 New York).";
     close.onclick = async () => {
-      if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market?`)) return;
+      const shut = marketState().s === "closed";
+      if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market${shut ? "?\n\nThe market is closed: it executes at the first trade of the next session (04:00 New York pre-market)." : "?"}`)) return;
       try { await api(`/api/paper/positions/${p.id}/close`, { method: "POST", body: "{}" }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
     edit.onclick = async () => {

@@ -56,20 +56,26 @@ function nyParts(date) {
   return { day: `${p.year}-${p.month}-${p.day}`, wd: p.weekday, min: +p.hour * 60 + +p.minute, hms: `${p.hour}:${p.minute}:${p.second}` };
 }
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+// Official sessions: pre-market 04:00, open 09:30, close 16:00 (13:00 on early-close days), after-hours to 20:00 (17:00).
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const isTradingDate = (day, wd) => WEEKDAYS.includes(wd) && !(state.status?.calendar?.holidays || []).includes(day);
+function sessionTimes(day) {
+  const early = (state.status?.calendar?.early_closes || []).includes(day);
+  return { pre: 240, open: 570, close: early ? 780 : 960, postEnd: early ? 1020 : 1200 };
+}
 function marketState(now = new Date()) {
   const ny = nyParts(now);
-  const wk = WEEKDAYS.includes(ny.wd);
+  const t = sessionTimes(ny.day), td = isTradingDate(ny.day, ny.wd);
   let s = "closed", target = null, label = "";
-  if (wk && ny.min >= 570 && ny.min < 960) { s = "open"; target = 960; label = "to close"; }
-  else if (wk && ny.min >= 240 && ny.min < 570) { s = "pre"; target = 570; label = "to open"; }
-  else if (wk && ny.min >= 960 && ny.min < 1200) { s = "after"; target = 1200; label = "to AH end"; }
+  if (td && ny.min >= t.open && ny.min < t.close) { s = "open"; target = t.close; label = "to close"; }
+  else if (td && ny.min >= t.pre && ny.min < t.open) { s = "pre"; target = t.open; label = "to open"; }
+  else if (td && ny.min >= t.close && ny.min < t.postEnd) { s = "after"; target = t.postEnd; label = "to AH end"; }
   let mins;
   if (target != null) mins = target - ny.min;
-  else { // minutes until next weekday 09:30 ET (holidays not modelled)
-    const order = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let i = order.indexOf(ny.wd), days = 0;
-    if (!(wk && ny.min < 570)) { do { i = (i + 1) % 7; days++; } while (!WEEKDAYS.includes(order[i])); }
-    mins = days * 1440 + 570 - ny.min; label = "to open";
+  else { // minutes until the next trading day's 04:00 pre-market
+    const d = new Date(`${ny.day}T12:00:00Z`); let days = 0;
+    if (!(td && ny.min < t.pre)) { do { d.setUTCDate(d.getUTCDate() + 1); days++; } while (days < 14 && !isTradingDate(d.toISOString().slice(0, 10), DAY_NAMES[d.getUTCDay()])); }
+    mins = days * 1440 + 240 - ny.min; label = "to pre-market";
   }
   return { s, ny, countdown: `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m ${label}` };
 }

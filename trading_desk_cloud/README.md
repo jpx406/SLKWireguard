@@ -113,10 +113,16 @@ Open the **Paper trading** tab in the center area. Every user has their own simu
 * A server engine runs **every minute**, even with your browser closed. It checks working orders and open positions against 1-minute price bars.
 * A limit order fills at its price or better. A stop trigger fills at its price or worse.
 * A position closes automatically when its stop-loss or take-profit is touched. If one bar touches both, it counts as the stop (the conservative assumption).
-* Unfilled entry orders expire at 16:00 New York time.
+* **Extended hours are automatic:** orders trade on the official schedule, with no setting to turn on.
+  * Pre-market runs 04:00–09:30 New York, the regular session 09:30–16:00, and after-hours 16:00–20:00.
+  * On NYSE early-close days the regular session ends at 13:00 and after-hours at 17:00. Holidays are closed.
+  * Stops and targets are watched in every session.
+  * The Paper trading tab shows which session is live.
+* **While the market is closed** (20:00–04:00, weekends and holidays), a new order belongs to the next session. A market order, or a Sell now, executes at the first trade of the next pre-market.
+* Unfilled entry orders expire when after-hours ends (20:00 New York).
 
 **Exit mode (per trade):**
-* **Close at end of day:** the position closes at 15:55 New York if the stop or target hasn't hit first.
+* **Close at end of day:** the position closes 5 minutes before the regular close (15:55 New York) if the stop or target hasn't hit first. A trade opened after the bell, in after-hours, closes 5 minutes before after-hours ends (19:55).
 * **Hold until stop-loss or take-profit:** the position stays open overnight and across days until one is hit, or until you close it. Overnight gaps fill at the next bar's open, the way a real gap would.
 
 Choose the mode on the order ticket, switch it any time with the **Exit** button on an open position, and set the default for new trades and auto-trades in ⚙ Settings & auto-trade.

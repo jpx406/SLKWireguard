@@ -6,7 +6,7 @@ import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, trad
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
-import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
+import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (detail: string, status = 400) => json({ detail }, status);
@@ -125,6 +125,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       paper: config ? config.paper !== false : null,
       agent_ready: !!(env.ANTHROPIC_API_KEY && env.AGENT_ID && env.ENVIRONMENT_ID),
       market: marketInfo(),
+      calendar: CALENDAR,
       server_time: new Date().toISOString(),
     });
   }

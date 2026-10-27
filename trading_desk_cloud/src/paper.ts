@@ -1,11 +1,11 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
 import { candles, latestPrice } from "./market";
-import { nyNow, isTradingDay } from "./briefs";
+import { nyNow, isTradingDay, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
 export type OrderType = "market" | "limit" | "stop";
-/** eod = close at 15:55 New York; hold = keep (overnight too) until the stop-loss or take-profit is hit, or you close it. */
+/** eod = close 5 min before the regular close (or before the after-hours end for trades opened after the bell); hold = keep (overnight too) until the stop-loss or take-profit is hit, or you close it. */
 export type ExitMode = "eod" | "hold";
 
 export type PaperSettings = {
@@ -37,7 +37,7 @@ type Position = {
   id: string; user: string; symbol: string; side: Side; qty: number; entry: number; stop: number | null; target: number | null;
   status: string; source: string; note: string | null; opened_at: number; last_checked: number; closed_at: number | null;
   exit: number | null; exit_reason: string | null; pnl: number | null; fees: number; day_opened: string; day_closed: string | null; order_id: string | null;
-  exit_mode: ExitMode | null;
+  exit_mode: ExitMode | null; close_req?: number | null;
 };
 type Bar = { time: number; open: number; high: number; low: number; close: number };
 
@@ -67,6 +67,8 @@ export async function ensurePaper(db: D1Database) {
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN auto_done INTEGER").run(); } catch { /* exists or briefs not yet created */ }
   // Added later: per-trade exit mode (older rows follow the account default).
   for (const t of ["paper_orders", "paper_positions"]) { try { await db.prepare(`ALTER TABLE ${t} ADD COLUMN exit_mode TEXT`).run(); } catch { /* exists */ } }
+  // Added later: a sell requested while the market is closed executes at the next session's first trade.
+  try { await db.prepare("ALTER TABLE paper_positions ADD COLUMN close_req INTEGER").run(); } catch { /* exists */ }
   ready = true;
 }
 
@@ -139,15 +141,18 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
 
   const exitMode: ExitMode = inp.exit_mode === "eod" || inp.exit_mode === "hold" ? inp.exit_mode : acct.s.auto_flat ? "eod" : "hold";
   const t = nowS(), ny = nyNow();
+  // Orders work in pre-market, regular and after-hours sessions. Placed while the market is closed,
+  // they belong to the next session (a market order then fills at its first trade).
+  const closed = marketPhase(ny) === "closed";
   const order: Order = {
     id: uid(), user, symbol, side, type, price: type === "market" ? null : price, qty, stop, target, status: "open",
-    source: inp.source ?? "manual", brief_id: inp.brief_id ?? null, note: (inp.note ?? "").slice(0, 300) || null, day: ny.date,
+    source: inp.source ?? "manual", brief_id: inp.brief_id ?? null, note: (inp.note ?? "").slice(0, 300) || null, day: orderDay(ny),
     created_at: t, last_checked: Math.floor(t / 60) * 60 + 60, filled_at: null, fill_price: null, reason: null, exit_mode: exitMode,
   };
   await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked,exit_mode)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
     order.source, order.brief_id, order.note, order.day, t, order.last_checked, exitMode).run();
-  if (type === "market") {
+  if (type === "market" && !closed) {
     const position = await fill(db, order, last, t);
     return position ? { order: { ...order, status: "filled", fill_price: last }, position } : { error: "Fill rejected (cash changed)." };
   }
@@ -198,6 +203,11 @@ export async function cancelOrder(db: D1Database, user: string, id: string) {
 export async function closePosition(db: D1Database, user: string, id: string) {
   const p = await db.prepare("SELECT * FROM paper_positions WHERE id = ? AND user = ? AND status = 'open'").bind(id, user).first<Position>();
   if (!p) return { error: "Position not found or already closed." };
+  if (marketPhase() === "closed") {
+    // Nothing trades now: sell at the first trade of the next session (04:00 New York pre-market).
+    await db.prepare("UPDATE paper_positions SET close_req = ? WHERE id = ? AND status = 'open'").bind(nowS(), id).run();
+    return { ok: true, queued: true };
+  }
   const price = await lastPrice(p.symbol);
   return (await closePos(db, p, price, "manual")) ? { ok: true, price } : { error: "Already closed." };
 }
@@ -243,7 +253,8 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
 
   for (const o of orders) {
     const s = await sOf(o.user);
-    if (o.day < ny.date || (o.day === ny.date && ny.minutes >= 16 * 60)) {
+    // Day orders stay working through pre-market, the regular session and after-hours.
+    if (o.day < ny.date || (o.day === ny.date && ny.minutes >= sessionTimes(o.day).postEnd)) {
       await db.prepare("UPDATE paper_orders SET status = 'expired', reason = 'day order expired' WHERE id = ? AND status = 'open'").bind(o.id).run(); continue;
     }
     if (o.source === "auto" && t > o.created_at + s.auto_valid_min * 60) {
@@ -253,7 +264,8 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     let filled: Position | null = null;
     for (const b of bs) {
       let px: number | null = null;
-      if (o.type === "limit") {
+      if (o.type === "market") px = b.open; // queued while closed: first trade of the session
+      else if (o.type === "limit") {
         if (o.side === "long" && b.low <= o.price!) px = Math.min(o.price!, b.open);
         if (o.side === "short" && b.high >= o.price!) px = Math.max(o.price!, b.open);
       } else if (o.type === "stop") {
@@ -280,6 +292,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     const bs = (bars.get(p.symbol) || []).filter((b) => b.time >= p.last_checked);
     let done = false;
     for (const b of bs) {
+      if (p.close_req && b.time >= p.close_req) { done = await closePos(db, p, r2(b.open), "manual (next open)", b.time + 59); break; }
       // Conservative: if one bar touches both stop and target, assume the stop came first.
       if (p.stop !== null && (p.side === "long" ? b.low <= p.stop : b.high >= p.stop)) {
         const px = p.side === "long" ? Math.min(p.stop, b.open) : Math.max(p.stop, b.open);
@@ -291,9 +304,12 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
       }
     }
     if (done) continue;
-    // End-of-day trades close at 15:55 New York (or at the next run if one was opened on an earlier day).
+    // End-of-day trades close 5 minutes before the regular close; ones opened after the bell close 5 minutes
+    // before after-hours ends (or at the next run if one was opened on an earlier day).
     const mode = p.exit_mode ?? (s.auto_flat ? "eod" : "hold");
-    if (mode === "eod" && ((isTradingDay(ny) && ny.minutes >= 15 * 60 + 55) || p.day_opened < ny.date)) {
+    const st = sessionTimes(p.day_opened);
+    const cut = nyNow(new Date(p.opened_at * 1000)).minutes >= st.close - 5 ? st.postEnd - 5 : st.close - 5;
+    if (mode === "eod" && (p.day_opened < ny.date || (p.day_opened === ny.date && ny.minutes >= cut))) {
       const last = bars.get(p.symbol)?.at(-1)?.close;
       if (last) { await closePos(db, p, last, "end of day"); continue; }
     }
@@ -314,7 +330,7 @@ export async function autoTradeNewBriefs(db: D1Database) {
   } catch { return; }
   if (!briefs.length) return;
   for (const b of briefs) await db.prepare("UPDATE briefs SET auto_done = 1 WHERE id = ?").bind(b.id).run();
-  if (!isTradingDay(ny) || ny.minutes >= 15 * 60 + 30) return; // too late to open day trades
+  if (!isTradingDay(ny) || ny.minutes >= sessionTimes(ny.date).close - 30) return; // too late to open day trades
   const accounts = (await db.prepare("SELECT * FROM paper_accounts").all<Account>()).results
     .map((a) => ({ ...a, s: sanitizePaperSettings(JSON.parse(a.settings || "{}")) })).filter((a) => a.s.auto_trade);
   for (const b of briefs) {
@@ -396,5 +412,6 @@ export async function summary(db: D1Database, user: string) {
       today_realized: today?.pnl ?? 0, today_trades: today?.trades ?? 0, win_rate: closedAll ? r2((wins / closedAll) * 100) : null, trades: closedAll,
     },
     settings: a.s, positions, orders, trades, daily, curve, ny_date: ny.date,
+    session: { phase: marketPhase(ny), ...sessionTimes(ny.date), next_day: orderDay(ny) },
   };
 }

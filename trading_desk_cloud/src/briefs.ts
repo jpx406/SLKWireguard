@@ -84,6 +84,37 @@ export function nyNow(d = new Date()) {
 const toMin = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
 export const isTradingDay = (ny = nyNow()) => !["Sat", "Sun"].includes(ny.weekday) && !HOLIDAYS.has(ny.date);
 
+// NYSE early closes: regular session ends 13:00 New York, after-hours at 17:00.
+const EARLY_CLOSES = new Set(["2026-11-27", "2026-12-24", "2027-11-26"]);
+export const CALENDAR = { holidays: [...HOLIDAYS], early_closes: [...EARLY_CLOSES] };
+
+/** Official US equity sessions (minutes after New York midnight): pre-market 04:00, open 09:30, close 16:00, after-hours to 20:00. */
+export function sessionTimes(date: string) {
+  const early = EARLY_CLOSES.has(date);
+  return { pre: 240, open: 570, close: early ? 780 : 960, postEnd: early ? 1020 : 1200 };
+}
+export type Phase = "pre" | "regular" | "post" | "closed";
+export function marketPhase(ny = nyNow()): Phase {
+  if (!isTradingDay(ny)) return "closed";
+  const t = sessionTimes(ny.date), m = ny.minutes;
+  return m < t.pre ? "closed" : m < t.open ? "pre" : m < t.close ? "regular" : m < t.postEnd ? "post" : "closed";
+}
+const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** First trading date strictly after `date` (YYYY-MM-DD). */
+export function nextTradingDate(date: string): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  for (let i = 0; i < 14; i++) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const iso = d.toISOString().slice(0, 10);
+    if (isTradingDay({ date: iso, weekday: WD[d.getUTCDay()], minutes: 0 })) return iso;
+  }
+  return date;
+}
+/** The trading day a new order belongs to: today until after-hours end, otherwise the next session. */
+export function orderDay(ny = nyNow()): string {
+  return isTradingDay(ny) && ny.minutes < sessionTimes(ny.date).postEnd ? ny.date : nextTradingDate(ny.date);
+}
+
 let briefSchemaReady = false;
 export async function ensureBriefSchema(db: D1Database) {
   if (briefSchemaReady) return;
