@@ -168,6 +168,22 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **What each user has of their own:** a paper account and a journal. The watchlist, config, filters and autopilot are shared and only the admin can change them.
 * **Passwords:** users can change their own password under 👤. The admin can reset a password (which logs that user out) or delete a user.
 
+
+**Each user has their own paper account:**
+* **Account:** cash and starting amount (⚙ Settings & auto-trade → Reset), plus orders, positions, history and daily summary.
+* **Watchlist:** each user's own. The admin's watchlist is the one the scans use.
+* **Auto-trade settings:** on/off, min score, sizing, risk per trade, take-profit target and default exit.
+* **Auto-trade triggers:**
+  * which scans trade automatically (for example only "Final pre-open plan")
+  * long, short or both
+  * minimum reward:risk and minimum stock price
+  * the time window for auto entries
+  * a maximum number of auto entries per day
+  * a daily-loss limit that pauses auto-trading for the rest of the day
+  * symbols never to auto-trade
+
+**Shared and admin-only:** the scans themselves (Autopilot schedule and scan filters), the trader config, the data source and the Claude budget. Scans are run once and shared because they cost money. Each user only chooses which results to trade.
+
 ## Troubleshooting
 
 If something fails, a red **Problem:** bar at the top of the app says what went wrong. You can also open `https://trading-desk.nesrapp.com/api/status` in a new tab.

@@ -1,7 +1,7 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
 import { candles, latestPrice } from "./market";
-import { nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
+import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
 /** "stop" only exists on rows from older versions; it is now handled exactly like a limit. */
@@ -21,11 +21,25 @@ export type PaperSettings = {
   target: "t1" | "t2";          // which recommendation target becomes the take-profit
   commission: number;           // $ per fill
   auto_flat: boolean;           // default exit for new trades: true = close at 15:55 New York, false = hold until stop/target
+  // Per-user triggers: which recommendations this account trades automatically.
+  auto_slots: string[];         // scans that trigger auto-trades ([] = every scan)
+  auto_side: "both" | "long" | "short";
+  auto_min_rr: number;          // reward:risk to the chosen target (0 = any)
+  auto_min_price: number;       // skip stocks under this price (0 = any)
+  auto_blocked: string[];       // never auto-trade these symbols
+  auto_start: string;           // auto entries only between these New York times
+  auto_end: string;
+  auto_max_trades_day: number;  // auto entries per day
+  auto_max_daily_loss: number;  // stop auto entries once today's P&L is down this many $ (0 = off)
 };
 export const DEFAULT_PAPER: PaperSettings = {
   auto_trade: false, auto_min_score: 70, auto_max_positions: 5, auto_valid_min: 120,
   sizing: "risk", risk_pct: 1, fixed_usd: 2000, max_position_pct: 25, target: "t1", commission: 0, auto_flat: true,
+  auto_slots: [], auto_side: "both", auto_min_rr: 0, auto_min_price: 0, auto_blocked: [],
+  auto_start: "07:00", auto_end: "15:30", auto_max_trades_day: 10, auto_max_daily_loss: 0,
 };
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const toMin = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
 
 type Account = { user: string; starting_cash: number; cash: number; settings: string; created_at: string };
 type Order = {
@@ -42,7 +56,7 @@ type Position = {
 };
 type Bar = { time: number; open: number; high: number; low: number; close: number };
 
-const nowS = () => Math.floor(Date.now() / 1000);
+const nowS = () => Math.floor(clockNow().getTime() / 1000);
 const uid = () => crypto.randomUUID().replace(/-/g, "").slice(0, 14);
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const sign = (s: Side) => (s === "long" ? 1 : -1);
@@ -88,6 +102,15 @@ export function sanitizePaperSettings(x: unknown, base: PaperSettings = DEFAULT_
   if ("max_position_pct" in o) s.max_position_pct = clamp(o.max_position_pct, 1, 100, s.max_position_pct);
   if (o.target === "t1" || o.target === "t2") s.target = o.target;
   if ("commission" in o) s.commission = clamp(o.commission, 0, 100, s.commission);
+  if (Array.isArray(o.auto_slots)) s.auto_slots = [...new Set(o.auto_slots.map(String).filter((x) => /^[a-z]{2,20}$/.test(x)))].slice(0, 20);
+  if (o.auto_side === "both" || o.auto_side === "long" || o.auto_side === "short") s.auto_side = o.auto_side;
+  if ("auto_min_rr" in o) s.auto_min_rr = clamp(o.auto_min_rr, 0, 20, s.auto_min_rr);
+  if ("auto_min_price" in o) s.auto_min_price = clamp(o.auto_min_price, 0, 100_000, s.auto_min_price);
+  if (Array.isArray(o.auto_blocked)) s.auto_blocked = [...new Set(o.auto_blocked.map((x) => String(x).trim().toUpperCase()).filter((x) => /^[A-Z0-9.\-]{1,15}$/.test(x)))].slice(0, 200);
+  if (typeof o.auto_start === "string" && HHMM.test(o.auto_start)) s.auto_start = o.auto_start;
+  if (typeof o.auto_end === "string" && HHMM.test(o.auto_end)) s.auto_end = o.auto_end;
+  if ("auto_max_trades_day" in o) s.auto_max_trades_day = Math.round(clamp(o.auto_max_trades_day, 1, 100, s.auto_max_trades_day));
+  if ("auto_max_daily_loss" in o) s.auto_max_daily_loss = clamp(o.auto_max_daily_loss, 0, 100_000_000, s.auto_max_daily_loss);
   return s;
 }
 
@@ -325,9 +348,9 @@ type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; st
 export async function autoTradeNewBriefs(db: D1Database) {
   await ensurePaper(db);
   const ny = nyNow();
-  let briefs: { id: string; data: string | null; label: string }[] = [];
+  let briefs: { id: string; data: string | null; label: string; slot: string }[] = [];
   try {
-    briefs = (await db.prepare("SELECT id, data, label FROM briefs WHERE status = 'done' AND auto_done IS NULL AND day = ?").bind(ny.date).all<{ id: string; data: string | null; label: string }>()).results;
+    briefs = (await db.prepare("SELECT id, data, label, slot FROM briefs WHERE status = 'done' AND auto_done IS NULL AND day = ?").bind(ny.date).all<{ id: string; data: string | null; label: string; slot: string }>()).results;
   } catch { return; }
   if (!briefs.length) return;
   for (const b of briefs) await db.prepare("UPDATE briefs SET auto_done = 1 WHERE id = ?").bind(b.id).run();
@@ -337,24 +360,37 @@ export async function autoTradeNewBriefs(db: D1Database) {
   for (const b of briefs) {
     let picks: Pick[] = [];
     try { picks = (JSON.parse(b.data || "{}")?.picks ?? []) as Pick[]; } catch { continue; }
-    for (const a of accounts) await autoTradeAccount(db, a, picks, b);
+    for (const a of accounts) {
+      // Each account's own triggers: which scans, which time window.
+      if (a.s.auto_slots.length && !a.s.auto_slots.includes(b.slot)) continue;
+      if (ny.minutes < toMin(a.s.auto_start) || ny.minutes >= toMin(a.s.auto_end)) continue;
+      await autoTradeAccount(db, a, picks, b);
+    }
   }
 }
 
 async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string }) {
-  const s = a.s;
+  const s = a.s, today = nyNow().date;
+  let tradesLeft = s.auto_max_trades_day - ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source = 'auto' AND day = ? AND status IN ('open', 'filled')")
+    .bind(a.user, today).first<{ n: number }>())?.n ?? 0);
+  if (tradesLeft <= 0) return;
+  if (s.auto_max_daily_loss > 0 && (await todayPnl(db, a.user, today)) <= -s.auto_max_daily_loss) return;
+  const blocked = new Set(s.auto_blocked);
   const openPos = (await db.prepare("SELECT symbol FROM paper_positions WHERE user = ? AND status = 'open'").bind(a.user).all<{ symbol: string }>()).results;
   const openOrd = (await db.prepare("SELECT symbol FROM paper_orders WHERE user = ? AND status = 'open'").bind(a.user).all<{ symbol: string }>()).results;
   const busy = new Set([...openPos, ...openOrd].map((x) => x.symbol));
   let slots = s.auto_max_positions - busy.size;
   const eq = await equityOf(db, a.user);
   for (const p of [...picks].sort((x, y) => (num(y.score) ?? 0) - (num(x.score) ?? 0))) {
-    if (slots <= 0) break;
+    if (slots <= 0 || tradesLeft <= 0) break;
     const symbol = String(p.symbol || "").toUpperCase(), entry = num(p.entry), stop = num(p.stop);
-    if (!symbol || busy.has(symbol) || entry === null || stop === null || (num(p.score) ?? 0) < s.auto_min_score) continue;
+    if (!symbol || busy.has(symbol) || blocked.has(symbol) || entry === null || stop === null || (num(p.score) ?? 0) < s.auto_min_score) continue;
     const side: Side = /short/i.test(p.bias || "") ? "short" : "long";
+    if (s.auto_side !== "both" && s.auto_side !== side) continue;
+    if (entry < s.auto_min_price) continue;
     const targets = (p.targets || []).map(num).filter((x): x is number => x !== null);
     const target = (s.target === "t2" ? targets[1] : undefined) ?? targets[0] ?? null;
+    if (s.auto_min_rr > 0 && (target === null || Math.abs(target - entry) / Math.max(Math.abs(entry - stop), 1e-9) < s.auto_min_rr)) continue;
     const perShareRisk = Math.abs(entry - stop);
     let qty = s.sizing === "rec" ? num(p.size_shares) ?? 0 : s.sizing === "fixed" ? s.fixed_usd / entry : perShareRisk > 0 ? (eq * s.risk_pct / 100) / perShareRisk : 0;
     qty = Math.floor(Math.min(qty, (eq * s.max_position_pct / 100) / entry));
@@ -365,8 +401,17 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     // Skip the pick when the price is already through the stop-loss or past the take-profit.
     if (side === "long" ? last <= stop || (target !== null && last >= target) : last >= stop || (target !== null && last <= target)) continue;
     const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300) });
-    if (!r.error) { busy.add(symbol); slots--; }
+    if (!r.error) { busy.add(symbol); slots--; tradesLeft--; }
   }
+}
+
+/** Today's realized P&L plus the open positions' unrealized P&L. */
+async function todayPnl(db: D1Database, user: string, day: string) {
+  const realized = (await db.prepare("SELECT COALESCE(SUM(pnl), 0) AS p FROM paper_positions WHERE user = ? AND status = 'closed' AND day_closed = ?").bind(user, day).first<{ p: number }>())?.p ?? 0;
+  const pos = (await db.prepare("SELECT * FROM paper_positions WHERE user = ? AND status = 'open'").bind(user).all<Position>()).results;
+  let unreal = 0;
+  for (const p of pos) { try { unreal += ((await lastPrice(p.symbol)) - p.entry) * p.qty * sign(p.side); } catch { /* skip */ } }
+  return realized + unreal;
 }
 
 // --------------------------------------------------------------------------------------- reporting

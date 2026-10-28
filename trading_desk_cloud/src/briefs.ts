@@ -77,7 +77,11 @@ const HOLIDAYS = new Set([
 ]);
 
 const nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-export function nyNow(d = new Date()) {
+// Tests can move the session clock (DEV_CLOCK_SHIFT_SEC in .dev.vars); always 0 in production.
+let clockShiftMs = 0;
+export const setClockShift = (sec: number) => { clockShiftMs = Number.isFinite(sec) ? sec * 1000 : 0; };
+export const clockNow = () => new Date(Date.now() + clockShiftMs);
+export function nyNow(d = clockNow()) {
   const p = Object.fromEntries(nyFmt.formatToParts(d).map((x) => [x.type, x.value]));
   return { date: `${p.year}-${p.month}-${p.day}`, weekday: p.weekday, minutes: +p.hour * 60 + +p.minute };
 }
@@ -233,7 +237,7 @@ export async function finalizeBriefs(env: Env) {
 }
 
 /** Cron entry point. */
-export async function runSchedule(env: Env, now = new Date()) {
+export async function runSchedule(env: Env, now = clockNow()) {
   await ensureBriefSchema(env.DB);
   // Paper trading: fill/close against the latest 1-minute bars, then auto-trade any newly finished brief.
   try { await runEngine(env.DB); } catch (e) { console.error("paper engine", e); }

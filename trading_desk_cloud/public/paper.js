@@ -188,7 +188,14 @@ function renderPaper(d) {
   nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
   acts.append(nb, sb); head.append(acts); host.append(head);
   host.append(sessionNote(d.session));
-  if (d.settings.auto_trade) host.append(el("div", "small up", `Auto-trade ON: orders are placed from each finished scan (score ≥ ${d.settings.auto_min_score}, up to ${d.settings.auto_max_positions} at a time, ${d.settings.sizing === "risk" ? `${d.settings.risk_pct}% risk per trade` : d.settings.sizing === "fixed" ? `${money(d.settings.fixed_usd)} per trade` : "recommended size"}, ${d.settings.auto_flat ? "closed at end of day" : "held until stop or target"}).`));
+  if (d.settings.auto_trade) {
+    const st = d.settings, names = Object.fromEntries((state.briefData?.slots || []).map((x) => [x.id, x.label]));
+    const from = st.auto_slots?.length ? st.auto_slots.map((x) => names[x] || x).join(", ") : "every scan";
+    const extra = [st.auto_side !== "both" ? `${st.auto_side} only` : "", st.auto_min_rr ? `R:R ≥ ${st.auto_min_rr}` : "", st.auto_min_price ? `price ≥ ${money(st.auto_min_price)}` : "",
+      `${st.auto_start}–${st.auto_end} NY`, `max ${st.auto_max_trades_day}/day`, st.auto_max_daily_loss ? `pauses after −${money(st.auto_max_daily_loss)} today` : "",
+      st.auto_blocked?.length ? `never ${st.auto_blocked.join(", ")}` : ""].filter(Boolean).join(" · ");
+    host.append(el("div", "small up", `Auto-trade ON from ${from}: score ≥ ${st.auto_min_score}, up to ${st.auto_max_positions} at a time, ${st.sizing === "risk" ? `${st.risk_pct}% risk per trade` : st.sizing === "fixed" ? `${money(st.fixed_usd)} per trade` : "recommended size"}, ${st.auto_flat ? "closed at end of day" : "held until stop or target"} · ${extra}.`));
+  }
 
   const todayPnl = a.today_realized + a.unrealized;
   const cards = el("div", "bd-indices");
@@ -300,6 +307,16 @@ function openPaperSettings() {
   const f = $("#paperSetForm"), s = state.paper.settings;
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "sizing", "risk_pct", "fixed_usd", "max_position_pct", "target", "commission"]) f[k].value = s[k];
   f.auto_trade.checked = s.auto_trade; f.auto_flat.value = s.auto_flat ? "eod" : "hold"; f.starting_cash.value = state.paper.account.starting_cash;
+  for (const k of ["auto_side", "auto_min_rr", "auto_min_price", "auto_start", "auto_end", "auto_max_trades_day", "auto_max_daily_loss"]) f[k].value = s[k];
+  f.auto_blocked.value = (s.auto_blocked || []).join(", ");
+  // Which scans trigger auto-trades in this account (none ticked = every scan).
+  const box = $("#psSlots"); box.innerHTML = "";
+  box.append(el("span", "dim small", "Trade automatically from:"));
+  for (const sl of state.briefData?.slots || []) {
+    const lb = el("label", "check"), cb = el("input"); cb.type = "checkbox"; cb.value = sl.id;
+    cb.checked = !s.auto_slots?.length || s.auto_slots.includes(sl.id);
+    lb.append(cb, document.createTextNode(` ${sl.label}`)); box.append(lb);
+  }
   $("#paperSetErr").textContent = ""; $("#paperSetDlg").showModal();
 }
 $("#btnPaperSetCancel").onclick = () => $("#paperSetDlg").close();
@@ -308,6 +325,12 @@ $("#paperSetForm").onsubmit = async (e) => {
   const f = e.target, s = {};
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "risk_pct", "fixed_usd", "max_position_pct", "commission"]) s[k] = Number(f[k].value);
   s.sizing = f.sizing.value; s.target = f.target.value; s.auto_trade = f.auto_trade.checked; s.auto_flat = f.auto_flat.value === "eod";
+  for (const k of ["auto_min_rr", "auto_min_price", "auto_max_trades_day", "auto_max_daily_loss"]) s[k] = Number(f[k].value);
+  s.auto_side = f.auto_side.value; s.auto_start = f.auto_start.value; s.auto_end = f.auto_end.value;
+  s.auto_blocked = f.auto_blocked.value.toUpperCase().split(/[\s,;]+/).filter(Boolean);
+  const boxes = [...$$("#psSlots input")], ticked = boxes.filter((b) => b.checked).map((b) => b.value);
+  if (boxes.length && !ticked.length) { $("#paperSetErr").textContent = "Tick at least one scan, or turn auto-trade off."; return; }
+  s.auto_slots = ticked.length === boxes.length ? [] : ticked;
   try { await api("/api/paper/settings", { method: "PUT", body: JSON.stringify({ settings: s }) }); $("#paperSetDlg").close(); loadPaper(); }
   catch (err) { $("#paperSetErr").textContent = err.message; }
 };

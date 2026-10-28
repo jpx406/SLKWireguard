@@ -6,7 +6,7 @@ import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, trad
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
-import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, startBrief, type Autopilot, type SlotId } from "./briefs";
+import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const bad = (detail: string, status = 400) => json({ detail }, status);
@@ -44,6 +44,18 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   const m = req.method;
   await ensureSchema(env.DB);
   await ensureBriefSchema(env.DB);
+  // Each non-admin user keeps their own watchlist; the admin's is the shared one the scans use.
+  if (who.role !== "admin" && path === "/settings") {
+    const key = `watchlist:${who.user}`;
+    if (m === "PUT") {
+      const patch = (await body<{ settings?: Record<string, unknown> }>(req)).settings ?? {};
+      if (Object.keys(patch).some((k) => k !== "watchlist")) return bad("Only the admin can change shared settings. You can change your own watchlist.", 403);
+      const wl = Array.isArray(patch.watchlist) ? patch.watchlist.map((x) => String(x).trim().toUpperCase()).filter((x) => SYMBOL_RE.test(x)) : [];
+      await setSetting(env.DB, key, [...new Set(wl)].slice(0, 40));
+    }
+    const s = await getSettings(env.DB);
+    return json({ ...s, trader_config: "", watchlist: await getSetting(env.DB, key, s.watchlist) });
+  }
   if (who.role !== "admin" && (path.startsWith("/users") || (m !== "GET" && ADMIN_WRITES.some((r) => r.test(path)))))
     return bad("Only the admin can change this.", 403);
   if (!who.ai && AI_ROUTES.some((r) => r.test(path))) return bad("Your account is not allowed to run Claude scans or chat. Ask the admin.", 403);
@@ -271,6 +283,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+    if (env.DEV_CLOCK_SHIFT_SEC) setClockShift(Number(env.DEV_CLOCK_SHIFT_SEC));
     if (url.pathname.startsWith("/api/")) await setupMarket(env);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
     if (req.method === "POST" && url.pathname === "/api/login") {
@@ -291,6 +304,7 @@ export default {
     }
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (env.DEV_CLOCK_SHIFT_SEC) setClockShift(Number(env.DEV_CLOCK_SHIFT_SEC));
     ctx.waitUntil(setupMarket(env).then(() => runSchedule(env)));
   },
 } satisfies ExportedHandler<Env>;
