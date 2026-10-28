@@ -150,10 +150,36 @@ $("#btnPaperPlan").onclick = () => {
 };
 
 /* ------------------------------------------------------------------ paper account view */
+state.paperView = null; // null = my account; otherwise a username shown read-only
 async function loadPaper() {
   let d;
-  try { d = await api("/api/paper"); } catch (e) { $("#paper").innerHTML = ""; $("#paper").append(el("div", "msg err", e.message)); return; }
-  state.paper = d; renderPaper(d);
+  const view = state.paperView;
+  try {
+    d = await api(view ? `/api/paper?user=${encodeURIComponent(view)}` : "/api/paper");
+    // The all-accounts table needs a price per open position: refresh it at most once a minute.
+    if (!state.paperBoardAt || Date.now() - state.paperBoardAt > 60_000) { state.paperBoard = await api("/api/paper/accounts"); state.paperBoardAt = Date.now(); }
+  } catch (e) {
+    if (view) { state.paperView = null; showBanner(e.message); return loadPaper(); }
+    $("#paper").innerHTML = ""; $("#paper").append(el("div", "msg err", e.message)); return;
+  }
+  if (!d.read_only) state.paper = d; // the ticket, settings and chart markers always use my own account
+  renderPaper(d);
+}
+function viewPaper(user) { state.paperView = user && user !== state.me?.user ? user : null; state.paperBoardAt = 0; loadPaper(); }
+
+/** Everyone's accounts side by side (read-only); click a row to open that account. */
+function accountsBoard(rows, current) {
+  const sec = section(`All paper accounts (${rows.length})`);
+  sec.append(table(["#", "User", "Equity", "Total P&L", "Total %", "Today", "Win rate", "Trades", "Open", "Auto"], rows.map((r, i) => {
+    const tr = el("tr", r.user === current ? "pick-row selected" : "pick-row"); tr.style.cursor = "pointer"; tr.title = "View this account (read-only)";
+    tr.onclick = () => viewPaper(r.user);
+    const today = r.today_realized + r.unrealized;
+    tr.append(td(i + 1, "num dim"), td(r.user + (r.user === state.me?.user ? " (me)" : ""), "sym"), td(money(r.equity), "num"), td(money(r.total_pnl), `num ${pnlCls(r.total_pnl)}`),
+      td(`${r.total_pct >= 0 ? "+" : ""}${fmt(r.total_pct)}%`, `num ${pnlCls(r.total_pct)}`), td(money(today), `num ${pnlCls(today)}`),
+      td(r.win_rate == null ? "—" : `${fmt(r.win_rate, 1)}%`, "num"), td(r.trades, "num"), td(r.open_positions, "num"), td(r.auto_trade ? "on" : "off", r.auto_trade ? "up" : "dim"));
+    return tr;
+  })));
+  return sec;
 }
 function stat(label, value, cls = "", sub = "") {
   const c = el("div", "bd-card"); c.append(el("div", "dim small", label), el("div", `mono big ${cls}`, value)); if (sub) c.append(el("div", `small ${cls}`, sub)); return c;
@@ -180,13 +206,25 @@ function sessionNote(ss) {
 function td(text, cls = "") { return el("td", cls, text == null ? "—" : String(text)); }
 
 function renderPaper(d) {
-  const host = $("#paper"), a = d.account; host.innerHTML = "";
+  const host = $("#paper"), a = d.account, ro = !!d.read_only; host.innerHTML = "";
   const head = el("div", "bd-head");
-  head.append(el("h2", null, "Paper trading"), el("span", "badge paper", "SIMULATED"), el("span", "dim small", `${a.user} · started with ${money(a.starting_cash)}`));
+  head.append(el("h2", null, "Paper trading"), el("span", "badge paper", "SIMULATED"));
+  if (ro) head.append(el("span", "badge view-only", `VIEW ONLY · ${a.user}`));
+  head.append(el("span", "dim small", `${a.user} · started with ${money(a.starting_cash)}`));
   const acts = el("span", "row gap"); acts.style.marginLeft = "auto";
-  const nb = el("button", "primary small", "+ New order"), sb = el("button", "ghost small", "⚙ Settings & auto-trade");
-  nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
-  acts.append(nb, sb); head.append(acts); host.append(head);
+  // Account picker: my account or anyone else's (read-only).
+  const pick = el("select", "small"); pick.title = "View another user's paper account (read-only)";
+  const others = (state.paperBoard || []).map((r) => r.user).filter((u) => u !== state.me?.user);
+  pick.append(new Option("My account", ""), ...others.map((u) => new Option(`${u} (view only)`, u)));
+  pick.value = ro ? a.user : ""; pick.onchange = () => viewPaper(pick.value);
+  if (others.length) acts.append(pick);
+  if (ro) { const back = el("button", "primary small", "← My account"); back.onclick = () => viewPaper(null); acts.append(back); }
+  else {
+    const nb = el("button", "primary small", "+ New order"), sb = el("button", "ghost small", "⚙ Settings & auto-trade");
+    nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
+    acts.append(nb, sb);
+  }
+  head.append(acts); host.append(head);
   host.append(sessionNote(d.session));
   if (d.settings.auto_trade) {
     const st = d.settings, names = Object.fromEntries((state.briefData?.slots || []).map((x) => [x.id, x.label]));
@@ -205,6 +243,7 @@ function renderPaper(d) {
     stat("Total P&L", money(a.total_pnl), pnlCls(a.total_pnl), `${money(a.realized)} realized`),
     stat("Win rate", a.win_rate == null ? "—" : `${fmt(a.win_rate, 1)}%`, "", `${a.trades} closed trades`));
   host.append(cards);
+  if ((state.paperBoard || []).length > 1) host.append(accountsBoard(state.paperBoard, a.user));
 
   // Charts: equity curve + daily P&L
   if (d.daily.length) {
@@ -226,7 +265,7 @@ function renderPaper(d) {
     ex.title = "Click to switch"; ex.onclick = async () => {
       try { await api(`/api/paper/positions/${p.id}`, { method: "PUT", body: JSON.stringify({ exit_mode: mode === "eod" ? "hold" : "eod" }) }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
-    exTd.append(ex);
+    if (ro) exTd.append(el("span", `small exit-${mode}`, mode === "eod" ? "End of day" : "Hold to stop/target")); else exTd.append(ex);
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
     const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at next open" : p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
     close.disabled = !!p.close_req;
@@ -241,7 +280,8 @@ function renderPaper(d) {
       const t = prompt(`New take-profit for ${p.symbol} (blank = none):`, p.target ?? ""); if (t === null) return;
       try { await api(`/api/paper/positions/${p.id}`, { method: "PUT", body: JSON.stringify({ stop: s, target: t }) }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
-    act.append(close, edit); tr.append(act); return tr;
+    if (!ro) act.append(close, edit);
+    tr.append(act); return tr;
   })) : el("div", "dim small", "No open positions."));
   host.append(ps);
 
@@ -254,7 +294,7 @@ function renderPaper(d) {
       td(o.qty, "num"), td(fmt(o.stop), "num down"), td(fmt(o.target), "num up"), td(o.source), td(o.status, `pill ${o.status === "filled" ? "done" : o.status === "open" ? "running" : "error"}`),
       td(o.reason || (o.fill_price ? `filled @ ${fmt(o.fill_price)}` : ago(o.created_at)), "dim small"));
     const act = el("td");
-    if (o.status === "open") {
+    if (o.status === "open" && !ro) {
       const c = el("button", "ghost small", "cancel");
       c.onclick = async () => { try { await api(`/api/paper/orders/${o.id}`, { method: "DELETE" }); loadPaper(); } catch (e) { showBanner(e.message); } };
       act.append(c);

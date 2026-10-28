@@ -182,6 +182,8 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
   * a daily-loss limit that pauses auto-trading for the rest of the day
   * symbols never to auto-trade
 
+**Viewing other users' accounts (read-only):** Paper trading shows an **All paper accounts** table, which every user can see. It lists equity, total P&L and %, today's P&L, win rate, trades and open positions for each user, best performer first. Click a row, or pick a name in the account selector, to open that user's positions, orders, daily summary and trade history. The account is marked **VIEW ONLY** and has no buttons to buy, sell, cancel or edit, and the server only accepts changes to your own account. **← My account** takes you back.
+
 **Shared and admin-only:** the scans themselves (Autopilot schedule and scan filters), the trader config, the data source and the Claude budget. Scans are run once and shared because they cost money. Each user only chooses which results to trade.
 
 ## Troubleshooting

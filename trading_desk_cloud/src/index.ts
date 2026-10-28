@@ -1,7 +1,7 @@
 // Trading Desk on Cloudflare: static UI (./public) + JSON API under /api, behind Cloudflare Access.
 import type { Env } from "./env";
 import { authenticate, login, logout, listUsers, createUser, updateUser, deleteUser, changeOwnPassword, type Identity } from "./auth";
-import { autoTradeNewBriefs, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
+import { autoTradeNewBriefs, hasAccount, leaderboard, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
@@ -91,9 +91,13 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
 
   // ---- paper trading (per user)
   if (path === "/paper" && m === "GET") {
-    await runEngine(env.DB, who.user);
-    return json(await summary(env.DB, who.user));
+    // ?user=<name> views someone else's account read-only; every write below always uses the caller's own account.
+    const target = url.searchParams.get("user") || who.user;
+    if (target !== who.user && !(target.length <= 100 && (await hasAccount(env.DB, target)))) return bad("No paper account for that user.", 404);
+    await runEngine(env.DB, target);
+    return json({ ...(await summary(env.DB, target)), read_only: target !== who.user });
   }
+  if (path === "/paper/accounts" && m === "GET") return json(await leaderboard(env.DB));
   if (path === "/paper/orders" && m === "POST") {
     const b = await body<Record<string, unknown>>(req);
     const r = await placeOrder(env.DB, who.user, {

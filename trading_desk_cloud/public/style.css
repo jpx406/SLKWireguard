@@ -350,3 +350,5 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 .slot-picks { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-bottom: 8px; }
 .slot-picks label.check { display: inline-flex; flex-direction: row; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
 #paperSetForm .wide { grid-column: 1 / -1; }
+
+.badge.view-only { background: rgba(245, 185, 66, .15); color: #f5b942; border: 1px solid rgba(245, 185, 66, .4); }

@@ -427,6 +427,26 @@ async function equityOf(db: D1Database, user: string) {
   return eq;
 }
 
+/** Every account's headline numbers, best total return first (everyone can see these, read-only). */
+export async function leaderboard(db: D1Database) {
+  await ensurePaper(db);
+  let known = new Set<string>(["admin"]);
+  try { known = new Set([...known, ...(await db.prepare("SELECT id FROM users").all<{ id: string }>()).results.map((u) => u.id)]); } catch { /* no users table yet */ }
+  // Hide accounts of deleted password users (Cloudflare Access users are e-mails and always shown).
+  const users = (await db.prepare("SELECT user FROM paper_accounts").all<{ user: string }>()).results.map((r) => r.user)
+    .filter((u) => u.includes("@") || known.has(u));
+  const rows = await Promise.all(users.map(async (u) => {
+    const s = await summary(db, u);
+    return { ...s.account, open_positions: s.positions.length, working_orders: s.orders.filter((o) => o.status === "open").length, auto_trade: s.settings.auto_trade };
+  }));
+  return rows.sort((a, b) => b.total_pct - a.total_pct);
+}
+
+export async function hasAccount(db: D1Database, user: string) {
+  await ensurePaper(db);
+  return !!(await db.prepare("SELECT 1 FROM paper_accounts WHERE user = ?").bind(user).first());
+}
+
 export async function summary(db: D1Database, user: string) {
   const a = await getAccount(db, user);
   const ny = nyNow();
