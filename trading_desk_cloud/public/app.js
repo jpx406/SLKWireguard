@@ -637,16 +637,17 @@ async function saveSettings(patch) {
 /* Preferences: for everyone, on this device or account (appearance, watchlist, notifications). */
 function openPrefs() {
   const f = $("#prefsForm");
-  f.appearance.value = getAppearance(); f.watchlist.value = (state.settings?.watchlist || []).join(", ");
+  f.appearance.value = getAppearance(); f.textsize.value = getTextSize(); f.watchlist.value = (state.settings?.watchlist || []).join(", ");
   $("#prefsErr").textContent = ""; syncNotifyButtons(); $("#prefsDlg").showModal();
 }
 $("#btnSettings").onclick = openPrefs;
-$("#btnPrefsCancel").onclick = () => { applyAppearance(getAppearance()); $("#prefsDlg").close(); };
+$("#btnPrefsCancel").onclick = () => { applyAppearance(getAppearance()); applyTextSize(getTextSize()); $("#prefsDlg").close(); };
 $("#prefAppearance").onchange = (e) => applyAppearance(e.target.value); // preview right away
+$("#prefTextSize").onchange = (e) => applyTextSize(e.target.value);
 $("#prefsForm").onsubmit = async (e) => {
   e.preventDefault();
   const f = e.target;
-  setAppearance(f.appearance.value);
+  setAppearance(f.appearance.value); setTextSize(f.textsize.value);
   try {
     await saveSettings({ watchlist: f.watchlist.value.toUpperCase().split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean) });
     $("#prefsDlg").close();
@@ -667,6 +668,16 @@ function applyAppearance(v) {
     themeCharts();
   });
 }
+/* Text size: one step around the default (which itself follows the iPhone/iPad Text Size setting). Stored per device. */
+const TEXT_KEY = "td.textsize";
+function getTextSize() { try { return localStorage.getItem(TEXT_KEY) || "standard"; } catch { return "standard"; } }
+function setTextSize(v) { try { localStorage.setItem(TEXT_KEY, v); } catch { /* this session only */ } applyTextSize(v); }
+function applyTextSize(v) {
+  const root = document.documentElement;
+  if (v === "small" || v === "large") root.dataset.text = v; else delete root.dataset.text;
+  chart.applyOptions({ layout: { fontSize: v === "small" ? 11 : v === "large" ? 13 : 12 } });
+}
+applyTextSize(getTextSize());
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getAppearance() === "system") applyAppearance("system"); });
 
 /* Admin Settings: shared by everyone (data source, budgets, Claude cost controls, trading rules). */

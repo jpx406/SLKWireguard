@@ -47,11 +47,20 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 /* Type scale in rem. Mac/desktop: 13 pt body (81.25% of the browser's text size, so its setting still applies).
-   Touch devices: a 17 pt body that follows Dynamic Type on iPhone and iPad. Nothing is smaller than 11 pt. */
+   Touch devices: a 15 pt body (Apple's Subheadline style, as in the Stocks app) that follows Dynamic Type on
+   iPhone and iPad. Preferences > Text Size moves one step smaller or larger. Nothing is smaller than 11 pt. */
 html { font-size: 81.25%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+:root[data-text="small"] { font-size: 75%; }
+:root[data-text="large"] { font-size: 87.5%; }
 @media (pointer: coarse) {
-  html { font-size: 100%; }
-  @supports (font: -apple-system-body) { html { font: -apple-system-body; } }
+  html { font-size: 93.75%; }
+  :root[data-text="small"] { font-size: 81.25%; }
+  :root[data-text="large"] { font-size: 100%; }
+  @supports (font: -apple-system-subheadline) {
+    html { font: -apple-system-subheadline; }
+    :root[data-text="small"] { font: -apple-system-footnote; }
+    :root[data-text="large"] { font: -apple-system-body; }
+  }
 }
 body { background: var(--bg); color: var(--text); font: 1rem/1.45 var(--font); overflow: hidden; }
 .mono { font-family: var(--mono); }
@@ -530,7 +539,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .tabbar { display: grid; grid-template-columns: repeat(5, 1fr); flex: none; background: var(--panel); border-top: 1px solid var(--line);
     padding: 2px max(4px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(4px, env(safe-area-inset-left, 0px)); }
   .tabbar button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: transparent; border: none;
-    border-radius: 0; color: var(--dim); font-size: 0.75rem; min-height: 50px; padding: 4px 0; }
+    border-radius: 0; color: var(--dim); font-size: max(11px, .75rem); min-height: 50px; padding: 4px 0; }
   .tabbar button .ic { width: 22px; height: 22px; }
   .tabbar button .ic + span { margin-left: 0; }
   .tabbar button.on { color: var(--accent); }
@@ -547,7 +556,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .sym-input { width: 84px; font-size: 1.05rem; }
   .chart-toolbar .quote-line { grid-column: 2; flex-direction: column; gap: 0; min-width: 0; line-height: 1.15; }
   .chart-toolbar .quote-line .big { font-size: 1.1rem; }
-  .chart-toolbar #qChg { font-size: .8rem; white-space: nowrap; }
+  .chart-toolbar #qChg { font-size: max(11px, .8rem); white-space: nowrap; }
   .chart-toolbar #btnTradeSym { grid-column: 3; }
   .chart-controls { grid-column: 1 / -1; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
     margin: 0 -10px; padding: 0 10px; scroll-snap-type: x proximity; }
@@ -557,7 +566,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   #chartMsg { grid-column: 1 / -1; }
   #chartMsg:empty { display: none; }
   /* Legend: one line of prices; the symbol and range are already in the header above. */
-  #chart .legend, .legend { position: absolute; top: 4px; left: 8px; right: 64px; font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; }
+  #chart .legend, .legend { position: absolute; top: 4px; left: 8px; right: 64px; font-size: max(11px, .72rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; }
   .legend .lg-id, .legend .lg-ind { display: none; }
   .pane.chart-body .chart { min-height: 260px; }
 }
@@ -569,4 +578,13 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .sym-input { width: 72px; }
   .chart-toolbar { gap: 8px 8px; }
   .chart-toolbar #btnTradeSym { padding-left: 10px; padding-right: 10px; }
+}
+/* iPhone: headings and big numbers one step smaller so a screen shows more at once. */
+@media (max-width: 700px) {
+  .bd-head h2, .pane-title { font-size: 1.154rem; }
+  .big, .bd-card .big, .usage-top b { font-size: 1.077rem; }
+  .board-inner { padding: 10px 12px 20px; gap: 10px; }
+  .bd-card { padding: 6px 8px; }
+  .session-note { font-size: .846rem; padding: 5px 8px; }
+  .topbar .badge { font-size: max(11px, .75rem); }
 }

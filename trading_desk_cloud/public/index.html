@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Trading Desk</title>
-<script>try { var a = localStorage.getItem("td.appearance"); if (a === "light" || a === "dark") document.documentElement.dataset.theme = a; } catch (e) {}</script>
+<script>try { var a = localStorage.getItem("td.appearance"); if (a === "light" || a === "dark") document.documentElement.dataset.theme = a;
+  var t = localStorage.getItem("td.textsize"); if (t === "small" || t === "large") document.documentElement.dataset.text = t; } catch (e) {}</script>
 <meta name="theme-color" content="#11151d">
 <meta name="color-scheme" content="dark light">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -221,6 +222,8 @@
     <h3>Preferences</h3>
     <label>Appearance<select name="appearance" id="prefAppearance">
       <option value="system">Match this device</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+    <label>Text size<select name="textsize" id="prefTextSize">
+      <option value="small">Smaller</option><option value="standard">Standard</option><option value="large">Larger</option></select></label>
     <label>Watchlist (comma separated)<input name="watchlist" id="prefWatchlist" autocapitalize="characters" spellcheck="false"></label>
     <div class="row gap"><span class="small dim">Notifications when a brief is ready</span><span class="spacer"></span><button type="button" id="btnPrefNotify" class="ghost small">Turn On</button></div>
     <div id="prefsErr" class="err-text"></div>
