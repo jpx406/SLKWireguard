@@ -69,7 +69,7 @@
         <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus" aria-label="Symbol"></form>
         <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
         <button id="btnTradeSym" class="primary small" title="Paper-trade this symbol">Paper Trade</button>
-        <div class="seg" id="ranges" title="How much history to show">
+        <div class="chart-controls"><div class="seg" id="ranges" title="How much history to show">
           <button data-r="1D" class="on">1D</button><button data-r="5D">5D</button><button data-r="1M">1M</button><button data-r="3M">3M</button><button data-r="1Y">1Y</button>
         </div>
         <div class="seg" id="intervals" title="Bar size">
@@ -79,6 +79,7 @@
         <div class="seg" id="indicators">
           <button data-ind="vwap" class="on">VWAP</button><button data-ind="ema9" class="on">EMA9</button>
           <button data-ind="ema20" class="on">EMA20</button><button data-ind="levels" class="on">PDH/PDL</button>
+        </div>
         </div>
         <span id="chartMsg" class="dim small"></span>
       </div>

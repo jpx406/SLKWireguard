@@ -299,8 +299,8 @@ function updateLegend(param) {
   if (!b) { $("#legend").textContent = ""; return; }
   const src = state.candles.find((c) => shift(c.time) === b.time);
   const cls = b.close >= b.open ? "up" : "down";
-  $("#legend").innerHTML = `<b>${state.symbol}</b> · ${state.range} · ${state.interval} &nbsp; O <b>${fmt(b.open)}</b> H <b>${fmt(b.high)}</b> L <b>${fmt(b.low)}</b> C <b class="${cls}">${fmt(b.close)}</b> V <b>${src ? fmt(src.volume, 0) : "—"}</b>` +
-    ` &nbsp;<span style="color:${css("--vwap")}">VWAP</span> <span style="color:${css("--ema9")}">EMA9</span> <span style="color:${css("--ema20")}">EMA20</span>`;
+  $("#legend").innerHTML = `<span class="lg-id"><b>${state.symbol}</b> · ${state.range} · ${state.interval} &nbsp; </span>O <b>${fmt(b.open)}</b> H <b>${fmt(b.high)}</b> L <b>${fmt(b.low)}</b> C <b class="${cls}">${fmt(b.close)}</b> V <b>${src ? fmt(src.volume, 0) : "—"}</b>` +
+    `<span class="lg-ind"> &nbsp;<span style="color:${css("--vwap")}">VWAP</span> <span style="color:${css("--ema9")}">EMA9</span> <span style="color:${css("--ema20")}">EMA20</span></span>`;
 }
 chart.subscribeCrosshairMove(updateLegend);
 

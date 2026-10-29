@@ -537,3 +537,36 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .watch .panel-head { padding: 12px; }
 }
 @media (min-width: 701px) { .more-pane { display: none !important; } }
+
+/* Chart controls: inline on a Mac; on iPhone one compact header (symbol, price, Paper Trade) and one
+   swipeable row of range, bar size and indicators, so the chart gets most of the screen. */
+.chart-controls { display: contents; }
+@media (max-width: 700px) {
+  .chart-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 10px; padding: 8px 10px; }
+  .chart-toolbar #symForm { grid-column: 1; }
+  .sym-input { width: 84px; font-size: 1.05rem; }
+  .chart-toolbar .quote-line { grid-column: 2; flex-direction: column; gap: 0; min-width: 0; line-height: 1.15; }
+  .chart-toolbar .quote-line .big { font-size: 1.1rem; }
+  .chart-toolbar #qChg { font-size: .8rem; white-space: nowrap; }
+  .chart-toolbar #btnTradeSym { grid-column: 3; }
+  .chart-controls { grid-column: 1 / -1; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    margin: 0 -10px; padding: 0 10px; scroll-snap-type: x proximity; }
+  .chart-controls::-webkit-scrollbar { display: none; }
+  .chart-controls .seg { flex: none; scroll-snap-align: start; }
+  .chart-controls .seg button { padding: 6px 10px; min-width: 40px; }
+  #chartMsg { grid-column: 1 / -1; }
+  #chartMsg:empty { display: none; }
+  /* Legend: one line of prices; the symbol and range are already in the header above. */
+  #chart .legend, .legend { position: absolute; top: 4px; left: 8px; right: 64px; font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; }
+  .legend .lg-id, .legend .lg-ind { display: none; }
+  .pane.chart-body .chart { min-height: 260px; }
+}
+/* Smallest iPhones (320-380 pt): icon-only account button, shorter badge, narrower symbol field. */
+@media (max-width: 380px) {
+  #meName { display: none; }
+  .user-chip { min-width: 44px; justify-content: center; }
+  #modeBadge { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+  .sym-input { width: 72px; }
+  .chart-toolbar { gap: 8px 8px; }
+  .chart-toolbar #btnTradeSym { padding-left: 10px; padding-right: 10px; }
+}
