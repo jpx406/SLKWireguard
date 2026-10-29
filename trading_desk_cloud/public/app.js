@@ -23,6 +23,27 @@ function icon(name) {
   const solid = name === "play";
   return `<svg class="ic${solid ? " solid" : ""}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
 }
+/**
+ * In-app alert (replaces the browser's confirm box). Resolves true when the action button is chosen.
+ * Destructive actions get a red button, and Cancel is the default (focused, and chosen by Escape).
+ */
+function askConfirm({ title, message = "", confirm = "OK", destructive = true }) {
+  let d = $("#alertDlg");
+  if (!d) {
+    d = document.createElement("dialog"); d.id = "alertDlg"; d.className = "alert-dlg";
+    d.setAttribute("role", "alertdialog"); d.setAttribute("aria-labelledby", "alertTitle"); d.setAttribute("aria-describedby", "alertMsg");
+    d.innerHTML = '<h3 id="alertTitle"></h3><p id="alertMsg"></p><div class="row gap end"><button type="button" id="alertCancel" class="ghost">Cancel</button><button type="button" id="alertOk"></button></div>';
+    document.body.append(d);
+  }
+  $("#alertTitle").textContent = title; $("#alertMsg").textContent = message; $("#alertMsg").hidden = !message;
+  const ok = $("#alertOk"); ok.textContent = confirm; ok.className = destructive ? "danger" : "primary";
+  return new Promise((resolve) => {
+    const done = (v) => { d.close(); resolve(v); };
+    ok.onclick = () => done(true); $("#alertCancel").onclick = () => done(false);
+    d.oncancel = (e) => { e.preventDefault(); done(false); };
+    d.showModal(); (destructive ? $("#alertCancel") : ok).focus();
+  });
+}
 /** Set a button's content to an icon plus a text label. */
 function iconLabel(btn, name, text) { btn.innerHTML = `${icon(name)}<span>${text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</span>`; return btn; }
 const api = async (path, opts = {}) => {
@@ -251,8 +272,20 @@ async function loadChart(keepView = false) {
     if (state.mainPlan && state.mainPlan.symbol === sym) mainLayer.set(state.mainPlan, data, paperMarkers(sym, data, shift));
     else candleS.setMarkers(paperMarkers(sym, data, shift));
     drawIndicators(); updateLegend();
-    $("#chartMsg").textContent = data.length ? "" : "no data";
-  } catch (e) { $("#chartMsg").textContent = `⚠ ${e.message}`; }
+    $("#chartMsg").textContent = "";
+    chartEmpty(data.length ? null : emptyChartText(sym));
+  } catch (e) { $("#chartMsg").textContent = ""; chartEmpty(`Couldn't load ${sym}: ${e.message}`); }
+}
+/** Say why the chart is blank and what to do, instead of an empty canvas. */
+function emptyChartText(sym) {
+  const m = marketState();
+  if (m.s === "closed") return `No ${sym} trades in this range yet. The market is closed; ${m.countdown}. Try 5D to see the last sessions.`;
+  return `No ${sym} trades in this range yet. Check the symbol, or try a longer range such as 5D.`;
+}
+function chartEmpty(text) {
+  let box = $("#chartEmpty");
+  if (!box) { box = el("div", "chart-empty"); box.id = "chartEmpty"; box.setAttribute("role", "status"); $("#chart").append(box); }
+  box.textContent = text || ""; box.hidden = !text;
 }
 function updateLegend(param) {
   const b = param?.seriesData?.get(candleS) || (state.candles.length ? barData(state.candles[state.candles.length - 1]) : null);
@@ -522,7 +555,10 @@ async function loadJournal() {
     const cells = [t.date, t.symbol, t.side, t.qty, fmt(t.entry), fmt(t.stop), fmt(t.exit), t.pnl == null ? "open" : fmt(t.pnl), t.r == null ? "" : fmt(t.r), t.setup || "", t.notes || ""];
     cells.forEach((c, i) => { const td = el("td", i >= 3 && i <= 8 ? "num" : "", c ?? ""); if (i === 7 && t.pnl != null) td.classList.add(t.pnl >= 0 ? "up" : "down"); tr.append(td); });
     const x = el("button", "x"); x.innerHTML = icon("x"); x.title = "Delete"; x.setAttribute("aria-label", `Delete journal entry ${t.symbol} ${t.date}`);
-    x.onclick = async () => { if (confirm(`Delete ${t.symbol} ${t.date}?`)) { await api(`/api/journal/${t.id}`, { method: "DELETE" }); loadJournal(); } };
+    x.onclick = async () => {
+      if (!(await askConfirm({ title: `Delete the ${t.symbol} trade from ${t.date}?`, message: "It is removed from your journal and its statistics. This can't be undone.", confirm: "Delete" }))) return;
+      await api(`/api/journal/${t.id}`, { method: "DELETE" }); loadJournal();
+    };
     const td = el("td"); td.append(x); tr.append(td); tb.append(tr);
   }
   const closed = rows.filter((t) => t.pnl != null), wins = closed.filter((t) => t.pnl > 0);
@@ -571,7 +607,7 @@ $("#settingsForm").onsubmit = async (e) => {
   if (raw.trim()) {
     let cfg;
     try { cfg = JSON.parse(raw); } catch (err) { $("#settingsErr").textContent = `config.json is not valid JSON: ${err.message}`; return; }
-    if (!secUserAgent(cfg) && !confirm('Your config has no "sec_user_agent" (Name + email). The SEC-based skills will refuse to run without it. Save anyway?')) return;
+    if (!secUserAgent(cfg) && !(await askConfirm({ title: "Save without an SEC contact?", message: 'Your config has no "sec_user_agent" (your name and email). The SEC-based skills (analyst, copycat, filings) will refuse to run until you add it.', confirm: "Save Anyway", destructive: false }))) return;
   }
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));

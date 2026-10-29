@@ -48,7 +48,9 @@ async function loadUsers(list) {
     const roleTd = el("td"); roleTd.append(role);
     const act = el("td"), pw = el("button", "ghost small", "Reset Password"), del = el("button", "ghost small", "Delete");
     pw.onclick = () => { const p = prompt(`New password for ${u.id} (10+ characters):`); if (p) userCall("PUT", u.id, { password: p }); };
-    del.onclick = () => { if (confirm(`Delete user ${u.id}? Their paper account stays in the database but they can no longer log in.`)) userCall("DELETE", u.id); };
+    del.onclick = async () => {
+      if (await askConfirm({ title: `Delete ${u.id}?`, message: "They can no longer log in. Their paper account and history stay in the database.", confirm: "Delete User" })) userCall("DELETE", u.id);
+    };
     act.append(pw, del);
     tr.append(el("td", "sym", u.id), roleTd, aiTd, el("td", "dim small", u.created_at || ""), act); tb.append(tr);
   }
@@ -268,14 +270,20 @@ function renderPaper(d) {
     };
     if (ro) exTd.append(el("span", `small exit-${mode}`, mode === "eod" ? "End of Day" : "Hold to Stop/Target")); else exTd.append(ex);
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
-    const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at Next Open" : p.side === "long" ? "Sell Now" : "Cover Now"), edit = el("button", "ghost small", "Edit");
+    const act = el("td"), close = el("button", "ghost small destructive", p.close_req ? "Sells at Next Open" : p.side === "long" ? "Sell Now" : "Cover Now"), edit = el("button", "ghost small", "Edit");
     close.disabled = !!p.close_req;
     close.setAttribute("aria-label", `${p.side === "long" ? "Sell" : "Cover"} ${p.qty} ${p.symbol} now`);
     edit.setAttribute("aria-label", `Edit stop-loss and take-profit for ${p.symbol}`);
     if (p.close_req) close.title = "Requested while the market was closed; executes at the first trade of the next session (07:00 New York).";
     close.onclick = async () => {
       const shut = marketState().s === "closed";
-      if (!confirm(`${p.side === "long" ? "Sell" : "Buy to cover"} ${p.qty} ${p.symbol} at market${shut ? "?\n\nThe market is closed: it executes at the first trade of the next session (07:00 New York pre-market)." : "?"}`)) return;
+      const verb = p.side === "long" ? "Sell" : "Cover";
+      const est = p.last == null ? "" : ` Last price ${fmt(p.last)}, about ${money(p.last * p.qty)}; P&L now ${money(p.unrealized)}.`;
+      if (!(await askConfirm({
+        title: `${verb} ${p.qty} ${p.symbol}?`,
+        message: shut ? `The market is closed: this executes at the first trade of the next session (07:00 New York pre-market).${est}` : `At market, now.${est}`,
+        confirm: verb,
+      }))) return;
       try { await api(`/api/paper/positions/${p.id}/close`, { method: "POST", body: "{}" }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
     edit.onclick = async () => {
@@ -285,7 +293,7 @@ function renderPaper(d) {
     };
     if (!ro) act.append(close, edit);
     tr.append(act); return tr;
-  })) : el("div", "dim small", "No open positions."));
+  })) : el("div", "dim small", ro ? "No open positions." : "No open positions. Place one with New Order, or use Paper Buy on a recommendation in the Market Board."));
   host.append(ps);
 
   // Orders
@@ -379,7 +387,7 @@ $("#paperSetForm").onsubmit = async (e) => {
 };
 $("#btnPaperReset").onclick = async () => {
   const cash = Number($("#paperSetForm").starting_cash.value);
-  if (!confirm(`Reset the paper account to ${money(cash)}? All paper orders, positions and history are deleted.`)) return;
+  if (!(await askConfirm({ title: `Reset your paper account to ${money(cash)}?`, message: "All paper orders, positions and trade history are deleted. This can't be undone.", confirm: "Reset Account" }))) return;
   try { await api("/api/paper/reset", { method: "POST", body: JSON.stringify({ starting_cash: cash }) }); $("#paperSetDlg").close(); loadPaper(); }
   catch (err) { $("#paperSetErr").textContent = err.message; }
 };

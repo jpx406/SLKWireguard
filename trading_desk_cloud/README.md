@@ -160,6 +160,13 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
   - from that box: **Paper buy** or **open on main chart**
 - If you hold the symbol in paper trading, your own fills are marked on the main chart.
 
+## iPhone and iPad
+
+* **Install it like an app:** open the desk in Safari, tap Share, then **Add to Home Screen**. It opens full screen with its own icon.
+* **Built for touch:** on touch screens, buttons are 44 pt.
+* **Text size follows the device:** on iPhone and iPad, text follows your Text Size setting (Dynamic Type).
+* **Sizes on a Mac:** body text is 13 pt and controls are at least 28 pt, both following Apple's guidelines.
+
 ## Users
 
 * **Admin:** log in with username **admin** and the `LOGIN_PASSWORD` secret. To change it, run `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`. This logs everyone out.

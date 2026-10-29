@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Trading Desk</title>
+<meta name="theme-color" content="#11151d">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trading Desk">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
@@ -14,7 +23,7 @@
 <body>
 <div id="banner" class="banner hidden" role="alert"></div>
 <header class="topbar">
-  <div class="brand"><span class="logo" aria-hidden="true">▲</span> Trading Desk</div>
+  <div class="brand"><span class="logo" aria-hidden="true">▲</span> <span class="brand-name">Trading Desk</span></div>
   <button type="button" id="modeBadge" class="badge muted" title="Your trading rules (trader/config.json)">Checking Rules…</button>
   <div class="clocks">
     <div class="clock"><span class="lbl">Riyadh</span><span id="clkRiyadh" class="mono">--:--:--</span></div>
