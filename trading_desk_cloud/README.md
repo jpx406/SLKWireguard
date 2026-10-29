@@ -160,6 +160,22 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
   - from that box: **Paper buy** or **open on main chart**
 - If you hold the symbol in paper trading, your own fills are marked on the main chart.
 
+## Layout
+
+**One way to move around, adapted to the screen:**
+
+| Screen | Layout |
+|---|---|
+| Mac and wide windows | **Sidebar** (Chart, Market Board, Paper Trading, Journal, Help & Skills, then the watchlist), the selected section in the middle, and an **inspector** on the right with Briefs, Copilot or Position Size |
+| iPad and smaller windows | Sidebar with every section; one section shows at a time |
+| iPhone | **Tab bar** at the bottom: Watchlist, Chart, Board, Paper and More. More holds Briefs, Copilot, Position Size, Journal, Help and Preferences. Tapping a watchlist symbol opens its chart. |
+
+**Where things moved:**
+* **Tool Output:** the Claude console is now **Tool Output** at the bottom of Copilot.
+* **Help & Skills:** Skills and the Guide open as a **Help & Skills** sheet.
+* **Preferences (gear button, every user):** appearance (*Match this device*, Dark or Light, remembered on each device), your watchlist and brief notifications.
+* **Admin Settings:** data source, budgets, Claude cost controls and the trading rules are under **Admin Settings…** inside Preferences, and also behind the trading-rules badge. Admins only.
+
 ## iPhone and iPad
 
 * **Install it like an app:** open the desk in Safari, tap Share, then **Add to Home Screen**. It opens full screen with its own icon.

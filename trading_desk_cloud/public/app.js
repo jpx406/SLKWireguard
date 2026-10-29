@@ -137,7 +137,7 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const chart = LightweightCharts.createChart($("#chart"), {
   autoSize: true,
   layout: { background: { color: css("--panel") }, textColor: css("--dim"), fontFamily: css("--font") },
-  grid: { vertLines: { color: "#161c27" }, horzLines: { color: "#161c27" } },
+  grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   rightPriceScale: { borderColor: css("--line") },
   timeScale: { borderColor: css("--line"), timeVisible: true, secondsVisible: false, rightOffset: 6 },
@@ -145,6 +145,13 @@ const chart = LightweightCharts.createChart($("#chart"), {
 const candleS = chart.addCandlestickSeries({ upColor: css("--up"), downColor: css("--down"), borderVisible: false, wickUpColor: css("--up"), wickDownColor: css("--down") });
 const volS = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
 chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+/** Re-read the color tokens after an appearance change. */
+function themeCharts() {
+  chart.applyOptions({ layout: { background: { color: css("--panel") }, textColor: css("--dim") }, grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
+    rightPriceScale: { borderColor: css("--line") }, timeScale: { borderColor: css("--line") } });
+  candleS.applyOptions({ upColor: css("--up"), downColor: css("--down"), wickUpColor: css("--up"), wickDownColor: css("--down") });
+  vwapS.applyOptions({ color: css("--vwap") }); ema9S.applyOptions({ color: css("--ema9") }); ema20S.applyOptions({ color: css("--ema20") });
+}
 const lineOpts = (c) => ({ color: c, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
 const vwapS = chart.addLineSeries(lineOpts(css("--vwap")));
 const ema9S = chart.addLineSeries(lineOpts(css("--ema9")));
@@ -314,7 +321,8 @@ function renderWatchlist() {
     row.setAttribute("aria-label", `${sym}${q.last == null ? "" : `, ${fmt(q.last)}`}${q.change_pct == null ? "" : `, ${q.change_pct > 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent`}`);
     const del = el("button", "w-del"); del.innerHTML = icon("x"); del.title = `Remove ${sym}`; del.setAttribute("aria-label", `Remove ${sym} from watchlist`);
     del.onclick = (e) => { e.stopPropagation(); saveSettings({ watchlist: state.settings.watchlist.filter((s) => s !== sym) }); };
-    row.append(del); row.onclick = () => setSymbol(sym);
+    // On iPhone the watchlist is its own screen: choosing a symbol pushes to its chart.
+    row.append(del); row.onclick = () => { setSymbol(sym); if (state.nav.current === "watchlist") navigate("chart"); };
     box.append(row);
   }
 }
@@ -335,48 +343,92 @@ async function refreshQuotes(only) {
   } catch { /* transient */ }
 }
 
-/* ------------------------------------------------------------------ tabs */
-function showTab(group, tab) {
-  if (group === "center") document.querySelector(".center").classList.toggle("board-mode", tab === "board" || tab === "paper");
-  $$(`.tabs[data-group=${group}] button[data-tab]`).forEach((b) => {
-    const on = b.dataset.tab === tab;
-    b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
-  });
-  $$(`.tab-body[data-group=${group}]`).forEach((b) => b.classList.toggle("hidden", b.dataset.tab !== tab));
+/* ------------------------------------------------------------------ navigation
+   One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
+   Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
+   iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
+const MAIN_SECTIONS = ["chart", "board", "paper", "journal", "more"];
+const INSP_SECTIONS = ["briefs", "copilot", "risk"];
+state.nav = { main: "chart", insp: "briefs", current: "chart" };
+const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
+/** Is a section on screen right now? */
+function sectionVisible(sec) {
+  const n = state.nav;
+  if (layoutMode() === "wide") return sec === n.main || sec === n.insp;
+  return sec === n.current;
 }
-$$(".tabs button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.parentElement.dataset.group, b.dataset.tab)));
+function navigate(sec, { focus = false } = {}) {
+  const n = state.nav;
+  if (MAIN_SECTIONS.includes(sec)) n.main = sec;
+  else if (INSP_SECTIONS.includes(sec)) n.insp = sec;
+  else if (sec !== "watchlist") return;
+  n.current = sec;
+  renderNav();
+  document.dispatchEvent(new CustomEvent("section", { detail: sec }));
+  if (focus) $(`.pane[data-section="${sec}"]`)?.focus?.();
+}
+function renderNav() {
+  const n = state.nav, mode = layoutMode(), b = document.body;
+  b.dataset.mode = mode; b.dataset.section = n.current; b.dataset.main = n.main; b.dataset.insp = n.insp;
+  b.dataset.kind = n.current === "watchlist" ? "watchlist" : INSP_SECTIONS.includes(n.current) ? "insp" : "main";
+  for (const p of $$(".pane[data-section]")) p.hidden = !sectionVisible(p.dataset.section);
+  // Sidebar and tab bar: aria-current marks the section being shown (on a Mac the inspector item counts too).
+  const isCurrent = (sec) => (mode === "wide" ? sec === n.main : sec === n.current) || (mode === "compact" && sec === "more" && ["briefs", "copilot", "risk", "journal"].includes(n.current));
+  for (const it of $$(".nav-item[data-section], .tabbar button[data-section]")) {
+    const on = isCurrent(it.dataset.section);
+    it.classList.toggle("on", on); if (on) it.setAttribute("aria-current", "page"); else it.removeAttribute("aria-current");
+  }
+  for (const t of $$(".inspector-seg [data-section]")) {
+    const on = t.dataset.section === n.insp;
+    t.classList.toggle("on", on); t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1;
+  }
+}
+/** Older call sites: showTab(group, tab). */
+function showTab(group, tab) {
+  if (tab === "skills" || tab === "guide") return openHelp(tab);
+  if (tab === "console") { $("#helpDlg").open && $("#helpDlg").close(); navigate("copilot"); $("#toolOutput").open = true; return; }
+  navigate(tab);
+}
+document.addEventListener("click", (e) => {
+  const t = e.target instanceof Element ? e.target.closest("[data-section], [data-action]") : null;
+  if (!t || !t.matches(".nav-item, .tabbar button, .inspector-seg button, .more-item")) return;
+  if (t.dataset.action === "help") return openHelp("skills");
+  if (t.dataset.action === "prefs") return openPrefs();
+  navigate(t.dataset.section);
+});
+// Arrow keys move between the inspector tabs.
+$(".inspector-seg").addEventListener("keydown", (e) => {
+  const tabs = $$(".inspector-seg button"), i = tabs.indexOf(document.activeElement);
+  const j = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length : -1;
+  if (i < 0 || j < 0) return;
+  e.preventDefault(); tabs[j].focus(); tabs[j].click();
+});
+let lastMode = null;
+addEventListener("resize", () => { const m = layoutMode(); if (m !== lastMode) { lastMode = m; if (m !== "compact" && state.nav.current === "watchlist") state.nav.current = state.nav.main; renderNav(); } });
+lastMode = layoutMode(); renderNav();
+
+/* Help & Skills sheet */
+function openHelp(which = "skills") {
+  const d = $("#helpDlg");
+  for (const b of $$("#helpSeg [data-help]")) { const on = b.dataset.help === which; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); }
+  for (const p of $$(".help-pane")) p.hidden = p.dataset.help !== which;
+  if (!d.open) d.showModal();
+}
+$$("#helpSeg [data-help]").forEach((b) => (b.onclick = () => openHelp(b.dataset.help)));
+$("#btnHelpClose").onclick = () => $("#helpDlg").close();
 
 /* ------------------------------------------------------------------ accessibility
    Tabs, toggles, clickable rows and dialogs get the roles and keyboard behavior VoiceOver and keyboard users expect. */
-const TAB_GROUP_NAMES = { center: "Main views", bottom: "Console and journal", side: "Briefs and tools" };
 function initA11y() {
-  for (const list of $$(".tabs[data-group]")) {
-    const g = list.dataset.group;
-    list.setAttribute("role", "tablist"); list.setAttribute("aria-label", TAB_GROUP_NAMES[g] || g);
-    for (const b of $$("button[data-tab]", list)) {
-      const panel = $(`.tab-body[data-group=${g}][data-tab=${b.dataset.tab}]`);
-      b.id ||= `tab-${g}-${b.dataset.tab}`; b.setAttribute("role", "tab");
-      b.setAttribute("aria-selected", String(b.classList.contains("on"))); b.tabIndex = b.classList.contains("on") ? 0 : -1;
-      if (panel) { panel.id ||= `panel-${g}-${b.dataset.tab}`; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", b.id); b.setAttribute("aria-controls", panel.id); }
-    }
-    // Arrow keys move between tabs; Home/End jump to the ends.
-    list.addEventListener("keydown", (e) => {
-      const tabs = $$("button[data-tab]", list), i = tabs.indexOf(document.activeElement);
-      if (i < 0) return;
-      const j = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
-      if (j < 0) return;
-      e.preventDefault(); tabs[j].focus(); tabs[j].click();
-    });
-  }
   const segNames = { ranges: "Time range", intervals: "Bar size", indicators: "Indicators" };
-  for (const seg of $$(".seg[id]")) { seg.setAttribute("role", "group"); seg.setAttribute("aria-label", segNames[seg.id] || seg.title || seg.id); }
+  for (const seg of $$(".seg[id]:not([role=tablist])")) { seg.setAttribute("role", "group"); seg.setAttribute("aria-label", segNames[seg.id] || seg.title || seg.id); }
   for (const d of $$("dialog")) {
     const h = $("h3", d);
     if (h) { h.id ||= `${d.id || "dlg"}-title`; d.setAttribute("aria-labelledby", h.id); }
   }
   // Mirror visual state into ARIA, and make clickable rows reachable by keyboard, as content re-renders.
   const sync = (root) => {
-    for (const b of $$(".seg button", root)) b.setAttribute("aria-pressed", String(b.classList.contains("on")));
+    for (const b of $$(".seg:not([role=tablist]) button", root)) b.setAttribute("aria-pressed", String(b.classList.contains("on")));
     for (const r of $$(".w-row, tr.pick-row", root)) {
       if (r.hasAttribute("tabindex")) continue;
       r.tabIndex = 0;
@@ -386,7 +438,7 @@ function initA11y() {
   sync(document);
   new MutationObserver((muts) => {
     for (const m of muts) {
-      if (m.type === "attributes" && m.target.matches?.(".seg button")) m.target.setAttribute("aria-pressed", String(m.target.classList.contains("on")));
+      if (m.type === "attributes" && m.target.matches?.(".seg:not([role=tablist]) button")) m.target.setAttribute("aria-pressed", String(m.target.classList.contains("on")));
       else if (m.type === "childList") for (const n of m.addedNodes) if (n.nodeType === 1) sync(n.parentElement || n);
     }
   }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
@@ -582,14 +634,49 @@ async function saveSettings(patch) {
   state.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify({ settings: patch }) });
   renderWatchlist(); refreshQuotes(); renderWorkflows();
 }
-$("#modeBadge").onclick = () => { if (!document.body.classList.contains("not-admin")) $("#btnSettings").click(); };
-$("#btnSettings").onclick = () => {
+/* Preferences: for everyone, on this device or account (appearance, watchlist, notifications). */
+function openPrefs() {
+  const f = $("#prefsForm");
+  f.appearance.value = getAppearance(); f.watchlist.value = (state.settings?.watchlist || []).join(", ");
+  $("#prefsErr").textContent = ""; syncNotifyButtons(); $("#prefsDlg").showModal();
+}
+$("#btnSettings").onclick = openPrefs;
+$("#btnPrefsCancel").onclick = () => { applyAppearance(getAppearance()); $("#prefsDlg").close(); };
+$("#prefAppearance").onchange = (e) => applyAppearance(e.target.value); // preview right away
+$("#prefsForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  setAppearance(f.appearance.value);
+  try {
+    await saveSettings({ watchlist: f.watchlist.value.toUpperCase().split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean) });
+    $("#prefsDlg").close();
+  } catch (err) { $("#prefsErr").textContent = err.message; }
+};
+$("#btnAdminSettings").onclick = () => { $("#prefsDlg").close(); openAdminSettings(); };
+$("#modeBadge").onclick = () => { if (!document.body.classList.contains("not-admin")) openAdminSettings(); };
+
+/* Appearance: Match this device (default), Dark or Light. Stored per device. */
+const APPEARANCE_KEY = "td.appearance";
+function getAppearance() { try { return localStorage.getItem(APPEARANCE_KEY) || "system"; } catch { return "system"; } }
+function setAppearance(v) { try { localStorage.setItem(APPEARANCE_KEY, v); } catch { /* private mode: this session only */ } applyAppearance(v); }
+function applyAppearance(v) {
+  const root = document.documentElement;
+  if (v === "light" || v === "dark") root.dataset.theme = v; else delete root.dataset.theme;
+  requestAnimationFrame(() => {
+    const meta = $('meta[name="theme-color"]'); if (meta) meta.content = css("--panel");
+    themeCharts();
+  });
+}
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (getAppearance() === "system") applyAppearance("system"); });
+
+/* Admin Settings: shared by everyone (data source, budgets, Claude cost controls, trading rules). */
+function openAdminSettings() {
   const f = $("#settingsForm"), s = state.settings;
-  f.watchlist.value = s.watchlist.join(", "); f.session_budget_usd.value = s.session_budget_usd; f.trader_config.value = s.trader_config || "";
+  f.session_budget_usd.value = s.session_budget_usd; f.trader_config.value = s.trader_config || "";
   f.data_source.value = s.data_source || "auto"; $("#dataTestOut").textContent = "";
   $("#settingsErr").textContent = ""; $("#settingsDlg").showModal();
   loadUsage();
-};
+}
 $("#btnSettingsCancel").onclick = () => $("#settingsDlg").close();
 $("#btnTestData").onclick = async () => {
   const out = $("#dataTestOut"); out.textContent = "testing…"; out.className = "small dim";
@@ -611,7 +698,7 @@ $("#settingsForm").onsubmit = async (e) => {
   }
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
-    await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
+    await saveSettings({ session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
       ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
@@ -822,9 +909,16 @@ function notify(b) {
   setTimeout(() => (document.title = "Trading Desk"), 15000);
 }
 $("#apEnabled").onchange = (e) => api("/api/autopilot", { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) }).then(loadBriefs).catch((err) => showBanner(err.message));
-$("#btnNotify").onclick = async () => {
-  try { const p = await Notification.requestPermission(); iconLabel($("#btnNotify"), p === "granted" ? "bell" : "bell-off", p === "granted" ? "Notifications On" : "Notifications Blocked"); } catch { iconLabel($("#btnNotify"), "bell-off", "Not Supported"); }
-};
+/* Brief notifications: the Briefs button and the Preferences row share one state. */
+function syncNotifyButtons() {
+  let perm = "unsupported";
+  try { perm = Notification.permission; } catch { /* unsupported */ }
+  const [ic, txt] = perm === "granted" ? ["bell", "Notifications On"] : perm === "denied" ? ["bell-off", "Notifications Blocked"] : perm === "unsupported" ? ["bell-off", "Not Supported"] : ["bell", "Notify Me"];
+  iconLabel($("#btnNotify"), ic, txt);
+  const pb = $("#btnPrefNotify"); pb.textContent = perm === "granted" ? "On" : perm === "denied" ? "Blocked in Browser Settings" : perm === "unsupported" ? "Not Supported" : "Turn On"; pb.disabled = perm !== "default";
+}
+async function requestNotify() { try { await Notification.requestPermission(); } catch { /* unsupported */ } syncNotifyButtons(); }
+$("#btnNotify").onclick = requestNotify; $("#btnPrefNotify").onclick = requestNotify;
 
 /* ------------------------------------------------------------------ wiring */
 $("#symForm").onsubmit = (e) => { e.preventDefault(); setSymbol($("#symInput").value); };
@@ -867,5 +961,5 @@ document.addEventListener("keydown", (e) => {
   setInterval(refreshQuotes, 15000);
   setInterval(() => { if (intraday() && marketState().s !== "closed") loadChart(true); }, 20000);
   setInterval(loadBriefs, 60000);
-  try { if (Notification.permission === "granted") iconLabel($("#btnNotify"), "bell", "Notifications On"); } catch { /* unsupported */ }
+  syncNotifyButtons();
 })();

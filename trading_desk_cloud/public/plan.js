@@ -167,7 +167,7 @@ function renderTradeChart(host, pick, time, { height = 320 } = {}) {
   const c = LightweightCharts.createChart(box, {
     autoSize: true,
     layout: { background: { color: planCss("--panel-2") }, textColor: planCss("--dim"), fontFamily: planCss("--font") },
-    grid: { vertLines: { color: "#161c27" }, horzLines: { color: "#161c27" } },
+    grid: { vertLines: { color: planCss("--grid") }, horzLines: { color: planCss("--grid") } },
     rightPriceScale: { borderColor: planCss("--line") }, timeScale: { borderColor: planCss("--line"), timeVisible: true, secondsVisible: false, rightOffset: 4 },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   });

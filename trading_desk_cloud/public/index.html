@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Trading Desk</title>
+<script>try { var a = localStorage.getItem("td.appearance"); if (a === "light" || a === "dark") document.documentElement.dataset.theme = a; } catch (e) {}</script>
 <meta name="theme-color" content="#11151d">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -34,36 +35,36 @@
     <span id="claudeDot" class="dot" title="Claude agent" aria-hidden="true"></span><span class="dim small">Claude</span>
     <button id="btnMe" class="ghost small user-chip" title="Your account" aria-label="Your account"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg><span id="meName">…</span></button>
     <span id="skillsCount" class="dim small"></span>
-    <button id="btnSettings" class="icon-btn" title="Settings" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button id="btnSettings" class="icon-btn" title="Preferences" aria-label="Preferences"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 </header>
 
 <main class="layout">
-  <!-- Watchlist -->
-  <aside class="panel watch">
+  <!-- Sidebar: the one place to move between sections (Mac and iPad); on iPhone it shows the watchlist only. -->
+  <nav class="panel sidebar" aria-label="Sections">
+    <div class="nav-list">
+      <button type="button" class="nav-item" data-section="chart"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></svg><span>Chart</span></button>
+      <button type="button" class="nav-item" data-section="board"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Market Board</span></button>
+      <button type="button" class="nav-item" data-section="paper"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/></svg><span>Paper Trading</span></button>
+      <button type="button" class="nav-item" data-section="journal"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M8 8h8M8 12h8"/></svg><span>Journal</span></button>
+      <button type="button" class="nav-item insp-item" data-section="briefs"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg><span>Briefs</span></button>
+      <button type="button" class="nav-item insp-item" data-section="copilot"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></svg><span>Copilot</span></button>
+      <button type="button" class="nav-item insp-item" data-section="risk"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Position Size</span></button>
+      <button type="button" class="nav-item" data-action="help"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h.01"/></svg><span>Help &amp; Skills</span></button>
+    </div>
+    <div class="watch">
     <div class="panel-head">
       <span>Watchlist</span>
       <form id="addSymForm" class="inline"><input id="addSym" placeholder="+ Add" maxlength="15" aria-label="Add a symbol to the watchlist"></form>
     </div>
     <div id="watchlist" class="watch-list"></div>
     <div id="dataLabel" class="dim tiny pad">Quotes via Yahoo Finance, ~15s refresh. Not for execution.</div>
-  </aside>
+  </div>
+  </nav>
 
-  <!-- Chart + bottom panel -->
-  <section class="center">
-    <div class="panel chart-panel">
-      <div class="tabs center-tabs" data-group="center">
-        <button data-tab="chart" class="on">Chart</button>
-        <button data-tab="board">Market Board</button>
-        <button data-tab="paper">Paper Trading</button>
-        <span class="spacer"></span>
-        <select id="boardPick" class="board-select hidden" title="Choose a brief" aria-label="Brief shown on the board"></select>
-        <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span>Scan Filters</span></button>
-        <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now"><svg class="ic solid" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l12-7.5z"/></svg><span>Run Full Scan</span></button>
-      </div>
-      <div class="tab-body board hidden" data-group="center" data-tab="board"><div id="board" class="board-inner"></div></div>
-      <div class="tab-body board hidden" data-group="center" data-tab="paper"><div id="paper" class="board-inner"><div class="dim">Loading paper account…</div></div></div>
-      <div class="tab-body chart-body" data-group="center" data-tab="chart">
+  <!-- Content: the selected main section. -->
+  <section class="panel content">
+    <div class="pane chart-body" data-section="chart" aria-label="Chart">
       <div class="chart-toolbar">
         <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus" aria-label="Symbol"></form>
         <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
@@ -83,21 +84,21 @@
       </div>
       <div id="chart" class="chart" role="img" aria-label="Price chart"></div>
       <div id="legend" class="legend mono"></div>
-      </div>
     </div>
-
-    <div class="panel bottom">
-      <div class="tabs" data-group="bottom">
-        <button data-tab="console" class="on">Console</button>
-        <button data-tab="journal">Journal</button>
+    <div class="pane board" data-section="board" aria-label="Market Board">
+      <div class="pane-toolbar">
+        <h2 class="pane-title">Market Board</h2>
         <span class="spacer"></span>
-        <button id="btnClearConsole" class="ghost small">Clear</button>
+        <select id="boardPick" class="board-select hidden" title="Choose a brief" aria-label="Brief shown on the board"></select>
+        <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span>Scan Filters</span></button>
+        <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now"><svg class="ic solid" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l12-7.5z"/></svg><span>Run Full Scan</span></button>
       </div>
-      <div class="tab-body" data-group="bottom" data-tab="console">
-        <pre id="console" class="console mono">Commands Claude runs (skill tools, searches) and their raw output appear here.</pre>
-      </div>
-      <div class="tab-body hidden" data-group="bottom" data-tab="journal">
-        <div class="journal">
+      <div id="board" class="board-inner"></div>
+    </div>
+    <div class="pane board" data-section="paper" aria-label="Paper Trading"><div id="paper" class="board-inner"><div class="dim">Loading paper account…</div></div></div>
+    <div class="pane" data-section="journal" aria-label="Journal">
+      <div class="pane-toolbar"><h2 class="pane-title">Journal</h2></div>
+      <div class="journal">
           <form id="tradeForm" class="trade-form">
             <input name="date" type="date">
             <input name="symbol" placeholder="Sym" maxlength="15" required>
@@ -116,21 +117,28 @@
             <th>Date</th><th>Sym</th><th>Side</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Exit</th><th>P&amp;L</th><th>R</th><th>Setup</th><th>Notes</th><th></th>
           </tr></thead><tbody></tbody></table></div>
         </div>
+    </div>
+    <div class="pane more-pane" data-section="more" aria-label="More">
+      <div class="pane-toolbar"><h2 class="pane-title">More</h2></div>
+      <div class="more-list">
+        <button type="button" class="more-item" data-section="briefs"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg><span>Briefs &amp; Autopilot</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="copilot"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></svg><span>Copilot</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="risk"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Position Size</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="journal"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M8 8h8M8 12h8"/></svg><span>Journal</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-action="help"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h.01"/></svg><span>Help &amp; Skills</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-action="prefs"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Preferences</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
       </div>
     </div>
   </section>
 
-  <!-- Right panel -->
-  <aside class="panel side">
-    <div class="tabs" data-group="side">
-      <button data-tab="briefs" class="on">Briefs</button>
-      <button data-tab="copilot">Copilot</button>
-      <button data-tab="skills">Skills</button>
-      <button data-tab="risk">Risk</button>
-      <button data-tab="guide">Guide</button>
+  <!-- Inspector (Mac): briefs, Copilot and position sizing beside whatever is in the content area. -->
+  <aside class="panel inspector" aria-label="Inspector">
+    <div class="seg inspector-seg" role="tablist" aria-label="Inspector">
+      <button type="button" role="tab" data-section="briefs">Briefs</button>
+      <button type="button" role="tab" data-section="copilot">Copilot</button>
+      <button type="button" role="tab" data-section="risk">Position Size</button>
     </div>
-
-    <div class="tab-body pad briefs" data-group="side" data-tab="briefs">
+    <div class="pane pad briefs" data-section="briefs" aria-label="Briefs">
       <div class="ap-head">
         <label class="switch"><input type="checkbox" id="apEnabled"> <b>Autopilot</b></label>
         <span id="apNote" class="dim small"></span>
@@ -140,8 +148,7 @@
       <div id="apSlots" class="ap-slots"></div>
       <div id="briefList" class="brief-list"><div class="dim small">Loading briefs…</div></div>
     </div>
-
-    <div class="tab-body hidden copilot" data-group="side" data-tab="copilot">
+    <div class="pane copilot" data-section="copilot" aria-label="Copilot">
       <div id="workflows" class="workflows"></div>
       <div id="chat" class="chat">
         <div class="msg sys">Ask anything. Claude runs your trader skills in a secure cloud sandbox.
@@ -156,14 +163,13 @@
           <button id="btnSend" class="primary">Send</button>
         </div>
       </form>
+      <details id="toolOutput" class="tool-output">
+        <summary>Tool Output <span class="dim tiny">(commands Claude runs and their raw results)</span></summary>
+        <div class="row tool-output-bar"><span class="spacer"></span><button type="button" id="btnClearConsole" class="ghost small">Clear</button></div>
+        <pre id="console" class="console mono">Commands Claude runs (skill tools, searches) and their raw output appear here.</pre>
+      </details>
     </div>
-
-    <div class="tab-body hidden" data-group="side" data-tab="skills">
-      <input id="skillFilter" class="filter" placeholder="Filter skills…">
-      <div id="skills" class="skills"></div>
-    </div>
-
-    <div class="tab-body hidden pad" data-group="side" data-tab="risk">
+    <div class="pane pad" data-section="risk" aria-label="Position Size">
       <div class="risk-grid">
         <label>Account size<input id="rAcct" type="number" step="any" value="25000"></label>
         <label>Risk / trade %<input id="rPct" type="number" step="any" value="0.5"></label>
@@ -183,18 +189,51 @@
       <h4>trader/config.json <span class="dim tiny">(edit in Settings)</span></h4>
       <pre id="configView" class="config mono dim">not loaded</pre>
     </div>
-
-    <div class="tab-body hidden pad guide" data-group="side" data-tab="guide">
-      <div class="row gap"><label class="ghost small file-btn">Upload GUIDE.md<input id="guideFile" type="file" accept=".md,.markdown,.txt" hidden></label></div>
-      <div id="guide" class="md">Loading GUIDE.md…</div>
-    </div>
   </aside>
 </main>
 
+<!-- iPhone: tab bar -->
+<nav class="tabbar" aria-label="Sections">
+  <button type="button" data-section="watchlist"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Watchlist</span></button>
+  <button type="button" data-section="chart"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></svg><span>Chart</span></button>
+  <button type="button" data-section="board"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Board</span></button>
+  <button type="button" data-section="paper"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/></svg><span>Paper</span></button>
+  <button type="button" data-section="more"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>More</span></button>
+</nav>
+
+<dialog id="helpDlg" class="filters-dlg help-dlg">
+  <div class="help-head"><h3>Help &amp; Skills</h3><span class="spacer"></span>
+    <div class="seg" id="helpSeg" role="tablist" aria-label="Help"><button type="button" role="tab" data-help="skills" class="on">Skills</button><button type="button" role="tab" data-help="guide">Guide</button></div>
+    <button type="button" id="btnHelpClose" class="ghost">Done</button></div>
+  <div class="help-pane" data-help="skills">
+      <input id="skillFilter" class="filter" placeholder="Filter skills…">
+      <div id="skills" class="skills"></div>
+  </div>
+  <div class="help-pane pad guide" data-help="guide" hidden>
+      <div class="row gap"><label class="ghost small file-btn">Upload GUIDE.md<input id="guideFile" type="file" accept=".md,.markdown,.txt" hidden></label></div>
+      <div id="guide" class="md">Loading GUIDE.md…</div>
+  </div>
+</dialog>
+
+<dialog id="prefsDlg" class="prefs-dlg">
+  <form id="prefsForm">
+    <h3>Preferences</h3>
+    <label>Appearance<select name="appearance" id="prefAppearance">
+      <option value="system">Match this device</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+    <label>Watchlist (comma separated)<input name="watchlist" id="prefWatchlist" autocapitalize="characters" spellcheck="false"></label>
+    <div class="row gap"><span class="small dim">Notifications when a brief is ready</span><span class="spacer"></span><button type="button" id="btnPrefNotify" class="ghost small">Turn On</button></div>
+    <div id="prefsErr" class="err-text"></div>
+    <div class="row gap end">
+      <button type="button" id="btnAdminSettings" class="ghost admin-only" style="margin-right:auto">Admin Settings…</button>
+      <button type="button" id="btnPrefsCancel" class="ghost">Cancel</button><button class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settingsDlg">
   <form id="settingsForm">
-    <h3>Settings</h3>
-    <label>Watchlist (comma separated)<input name="watchlist"></label>
+    <h3>Admin Settings</h3>
+    <p class="small dim" style="margin:0">Shared by everyone using this desk.</p>
     <label>Market data source
       <select name="data_source">
         <option value="auto">Auto: Alpaca real-time if keys are set, else Yahoo</option>

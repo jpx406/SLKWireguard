@@ -393,6 +393,6 @@ $("#btnPaperReset").onclick = async () => {
 };
 
 /* ------------------------------------------------------------------ wiring */
-$$('.center-tabs button[data-tab="paper"]').forEach((b) => b.addEventListener("click", loadPaper));
-setInterval(() => { if (!$('.tab-body[data-tab="paper"]').classList.contains("hidden")) loadPaper(); }, 15000);
+document.addEventListener("section", (e) => { if (e.detail === "paper") loadPaper(); });
+setInterval(() => { if (sectionVisible("paper")) loadPaper(); }, 15000);
 loadMe().then(loadPaper);
