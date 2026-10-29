@@ -352,3 +352,13 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 #paperSetForm .wide { grid-column: 1 / -1; }
 
 .badge.view-only { background: rgba(245, 185, 66, .15); color: #f5b942; border: 1px solid rgba(245, 185, 66, .4); }
+
+.usage-top { display: flex; gap: 18px; margin-bottom: 8px; }
+.usage-top div { display: flex; flex-direction: column; }
+.usage-top b { font-size: 16px; color: var(--text, #e5e7eb); }
+.usage-table { margin: 4px 0 10px; font-size: 12px; }
+#costBox details { margin-top: 6px; }
+.pill.skipped { background: rgba(139,147,163,.15); color: var(--dim, #8b93a3); }
+.brief.skipped { padding: 6px 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#costBox label.check { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 6px 0; }
+#costBox label.check input { width: auto; margin-top: 2px; }

@@ -471,6 +471,7 @@ $("#btnSettings").onclick = () => {
   f.watchlist.value = s.watchlist.join(", "); f.session_budget_usd.value = s.session_budget_usd; f.trader_config.value = s.trader_config || "";
   f.data_source.value = s.data_source || "auto"; $("#dataTestOut").textContent = "";
   $("#settingsErr").textContent = ""; $("#settingsDlg").showModal();
+  loadUsage();
 };
 $("#btnSettingsCancel").onclick = () => $("#settingsDlg").close();
 $("#btnTestData").onclick = async () => {
@@ -492,10 +493,41 @@ $("#settingsForm").onsubmit = async (e) => {
     if (!secUserAgent(cfg) && !confirm('Your config has no "sec_user_agent" (Name + email). The SEC-based skills will refuse to run without it. Save anyway?')) return;
   }
   try {
-    await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value });
+    const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
+    await saveSettings({ watchlist: list(f.watchlist.value.toUpperCase()), session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
+      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
+/** Spend so far (today / 7 / 30 days, by brief type and chat) plus the cost controls. */
+async function loadUsage() {
+  const out = $("#usageOut"), f = $("#settingsForm"), usd = (c) => `$${(c / 100).toFixed(2)}`;
+  state.usage = null;
+  try { state.usage = await api("/api/usage"); } catch (e) { out.textContent = e.message; return; }
+  const u = state.usage, names = Object.fromEntries(u.slots.map((x) => [x.id, x.label]));
+  out.innerHTML = "";
+  const top = el("div", "usage-top");
+  for (const [k, v] of [["Today", u.today], ["Last 7 days", u.last7], ["Last 30 days", u.last30]]) { const c = el("div"); c.append(el("span", "dim", k), el("b", "mono", `$${v.toFixed(2)}`)); top.append(c); }
+  out.append(top);
+  if (u.by.length) {
+    const t = el("table", "bd-table usage-table"), hr = el("tr");
+    ["What (30 days)", "Runs", "Total", "Avg / run", "Max"].forEach((x) => hr.append(el("th", null, x))); t.append(hr);
+    for (const r of u.by) {
+      const tr = el("tr");
+      tr.append(el("td", null, r.kind === "chat" ? "Copilot chats" : names[r.slot] || r.slot), el("td", "num", String(r.runs)), el("td", "num", usd(r.cents)),
+        el("td", "num", usd(r.cents / Math.max(r.runs, 1))), el("td", "num", usd(r.max_cents)));
+      t.append(tr);
+    }
+    out.append(t);
+  } else out.append(el("div", null, "No Claude sessions recorded yet."));
+  f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
+  const grid = $("#engineGrid"); grid.innerHTML = "";
+  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"]]) {
+    const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
+    for (const o of u.engine_options) sel.append(new Option(o.label, o.id));
+    sel.value = u.engines?.[id] || "default"; lb.append(sel); grid.append(lb);
+  }
+}
 /** The SEC asks every client to identify itself as "Name email"; the skills read it from the config. */
 function secUserAgent(cfg) {
   let found = null;
@@ -574,6 +606,9 @@ async function loadBriefs() {
   state.seenBriefs = done;
 }
 function renderBrief(b) {
+  if (b.status === "skipped") { // duplicate scheduled run that was not started (no cost)
+    const s = el("div", "brief skipped dim small"); s.append(el("b", null, b.label || b.slot), el("span", "pill skipped", "skipped"), el("span", "tiny", ` ${b.error || ""}`)); return s;
+  }
   const box = el("div", "brief"), h = el("div", "brief-h");
   const when = new Date(b.created_at.replace(" ", "T") + "Z");
   h.append(el("b", null, b.label || b.slot), el("span", `pill ${b.status}`, b.status === "running" || b.status === "starting" ? "working…" : b.status),
@@ -590,7 +625,7 @@ function renderBrief(b) {
 /** Center "Market board": the chosen brief, else the latest finished full scan, else the latest brief. */
 function updateBoard(briefs, force) {
   const sel = $("#boardPick");
-  const options = briefs.filter((b) => b.status !== "error" || b.content);
+  const options = briefs.filter((b) => (b.status !== "error" && b.status !== "skipped") || b.content);
   sel.innerHTML = "";
   for (const b of options) {
     const o = el("option", null, `${b.label} · ${b.day} ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${b.status === "done" ? "" : ` (${b.status})`}`);

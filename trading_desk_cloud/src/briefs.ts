@@ -3,6 +3,7 @@
 // the trader-* skills. Results are collected on later ticks (or when the UI asks) and stored in D1.
 import type { Env } from "./env";
 import { client, configContext, createSession } from "./agent";
+import { capBlocks, isEngine, recordSpend } from "./cost";
 import { getSetting, getSettings } from "./db";
 import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
@@ -137,6 +138,7 @@ export async function ensureBriefSchema(db: D1Database) {
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN data TEXT").run(); } catch { /* already there */ }
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN params TEXT").run(); } catch { /* already there */ }
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN auto_done INTEGER").run(); } catch { /* already there */ }
+  try { await db.prepare("ALTER TABLE briefs ADD COLUMN engine TEXT").run(); } catch { /* already there */ }
   briefSchemaReady = true;
 }
 
@@ -144,6 +146,37 @@ export async function ensureBriefSchema(db: D1Database) {
 export async function getAutopilot(db: D1Database): Promise<Autopilot> {
   const saved = await getSetting<Autopilot>(db, "autopilot", DEFAULT_AUTOPILOT);
   return { enabled: saved.enabled ?? true, slots: { ...DEFAULT_AUTOPILOT.slots, ...(saved.slots ?? {}) } };
+}
+
+// Briefs that refresh an earlier plan instead of researching from scratch (when "reuse research" is on).
+const REFRESH_SLOTS = new Set(["preopen", "open", "midday", "power", "review"]);
+const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+
+/**
+ * The latest finished plan of the day as a compact hand-off, so a refresh brief re-checks what changes
+ * intraday (prices, levels, volume, news) instead of re-running the slow-moving research again.
+ */
+async function priorPlan(db: D1Database, day: string): Promise<string> {
+  const b = await db.prepare("SELECT label, created_at, data FROM briefs WHERE day = ? AND status = 'done' AND data IS NOT NULL AND data != 'null' ORDER BY created_at DESC LIMIT 1")
+    .bind(day).first<{ label: string; created_at: string; data: string }>();
+  if (!b) return "";
+  let d: Record<string, any>;
+  try { d = JSON.parse(b.data); } catch { return ""; }
+  if (!d || !Array.isArray(d.picks) || !d.picks.length) return "";
+  const keep = ["rank", "symbol", "bias", "setup", "score", "entry", "stop", "targets", "rr", "exit_plan", "invalidation", "catalyst", "market_cap", "avg_volume", "float_shares", "exchange", "is_etf", "earnings_today"];
+  const plan = {
+    market: d.market ? { regime: d.market.regime, summary: d.market.summary, events: d.market.events } : undefined,
+    picks: d.picks.slice(0, 10).map((p: Record<string, unknown>) => Object.fromEntries(keep.filter((k) => k in p).map((k) => [k, p[k]]))),
+    avoid: Array.isArray(d.avoid) ? d.avoid.slice(0, 15) : undefined,
+  };
+  const at = nyNow(new Date(b.created_at.replace(" ", "T") + "Z"));
+  return `[Earlier today] My "${b.label}" brief at ${hhmm(at.minutes)} New York produced this plan:
+\`\`\`json
+${JSON.stringify(plan)}
+\`\`\`
+Start from it instead of redoing the whole research. Keep the slow-moving parts as they are (market backdrop, SEC filings and fundamentals, insider/13F data, earnings and economic calendar, sector context) unless something new has happened since. Put your work into what changes during the day: current prices and key levels, volume and relative volume, fresh news, halts or filings for these names, and strong new movers that are not in the plan. Re-check every pick's entry, stop and targets against current prices and drop or replace the ones that no longer work. In skills_run, mark skills whose earlier results you reused as status "reused".
+
+`;
 }
 
 /** Start a brief now (from the cron or the "Run now" button). */
@@ -155,12 +188,17 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filters
   await env.DB.prepare("INSERT INTO briefs (id, day, slot, label, status) VALUES (?, ?, ?, ?, 'starting')").bind(id, ny.date, slot.id, slot.label).run();
   try {
     const s = await getSettings(env.DB);
+    const capped = await capBlocks(env.DB, s.daily_cap_usd, ny.date);
+    if (capped) throw new Error(capped);
     const watchlist = s.watchlist.join(", ");
+    const engine = isEngine(s.engines?.[slot.id]) ? s.engines[slot.id] : "default";
     // The full scan runs every skill, so it gets twice the normal per-session budget.
-    const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd);
+    const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd, engine as never);
+    await env.DB.prepare("UPDATE briefs SET engine = ? WHERE id = ?").bind(engine, id).run();
+    const handoff = s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "";
     const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
     if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
-    const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
+    const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${handoff}${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text }] }] });
     await env.DB.prepare("UPDATE briefs SET session_id = ?, status = 'running' WHERE id = ?").bind(sid, id).run();
   } catch (e) {
@@ -182,7 +220,8 @@ export function extractResult(text: string): { picks: unknown[]; [k: string]: un
 
 /** Collect results of running briefs; deny any tool call left waiting for approval. */
 export async function finalizeBriefs(env: Env) {
-  const { results } = await env.DB.prepare("SELECT id, session_id, created_at, params FROM briefs WHERE status = 'running'").all<{ id: string; session_id: string; created_at: string; params: string | null }>();
+  const { results } = await env.DB.prepare("SELECT id, session_id, created_at, params, slot, day, engine FROM briefs WHERE status = 'running'")
+    .all<{ id: string; session_id: string; created_at: string; params: string | null; slot: string; day: string; engine: string | null }>();
   const anthropic = client(env);
   for (const b of results) {
     try {
@@ -204,9 +243,11 @@ export async function finalizeBriefs(env: Env) {
       const content = texts.join("\n\n");
       const filters = b.params ? sanitizeFilters(JSON.parse(b.params)) : null;
       const result = filters ? enforceFilters(extractResult(content), filters) : extractResult(content);
-      const finish = (status: "done" | "error", error: string | null) =>
-        env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, data = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
+      const finish = async (status: "done" | "error", error: string | null) => {
+        await recordSpend(env.DB, { session_id: b.session_id, kind: "brief", slot: b.slot, day: b.day, cost, engine: b.engine });
+        return env.DB.prepare("UPDATE briefs SET status = ?, content = ?, picks = ?, data = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
           .bind(status, content, JSON.stringify(result?.picks ?? []), JSON.stringify(result), cost, error, b.id).run();
+      };
 
       if (idleReason === "requires_action") {
         const pending = [...asks].filter((x) => !answered.has(x));
@@ -252,6 +293,17 @@ export async function runSchedule(env: Env, now = clockNow()) {
     const start = toMin(slot.et);
     if (ny.minutes < start || ny.minutes >= start + 30) continue; // 30-min window tolerates a missed tick
     const exists = await env.DB.prepare("SELECT 1 FROM briefs WHERE day = ? AND slot = ? LIMIT 1").bind(ny.date, slot.id).first();
-    if (!exists) await startBrief(env, slot.id, ny);
+    if (exists) continue;
+    // Skip a scheduled brief when another one is still running or started within the last 30 minutes
+    // (for example a manual run): it would repeat the same research minutes apart. Only another full scan
+    // stands in for a full scan.
+    const recent = await env.DB.prepare(`SELECT 1 FROM briefs WHERE status != 'skipped' AND ((status IN ('starting', 'running') AND created_at > datetime('now', '-60 minutes')) OR created_at > datetime('now', '-30 minutes'))
+      ${slot.id === "fullscan" ? "AND slot = 'fullscan'" : ""} LIMIT 1`).first();
+    if (recent) {
+      await env.DB.prepare("INSERT INTO briefs (id, day, slot, label, status, error, finished_at) VALUES (?, ?, ?, ?, 'skipped', ?, datetime('now'))")
+        .bind(crypto.randomUUID().replace(/-/g, "").slice(0, 16), ny.date, slot.id, slot.label, "Skipped: another brief ran less than 30 minutes ago (saves a duplicate run).").run();
+      continue;
+    }
+    await startBrief(env, slot.id, ny);
   }
 }

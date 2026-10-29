@@ -214,6 +214,20 @@ If something fails, a red **Problem:** bar at the top of the app says what went 
 * **Cloudflare:** the free plan covers this (Workers, D1 and Cron Triggers).
 * **Anthropic:** pay as you go for Claude Opus 5.5 tokens plus sandbox time. Every reply shows the session's cost so far. Each session also has a link to its full trace in the Claude Console.
 
+**Cutting the Claude bill** (⚙ Settings → Claude usage & cost, admin only):
+
+* **Usage:** spend today, over 7 days and over 30 days, split by brief type and Copilot chat, with the average and maximum per run. Use it to see where the money goes.
+* **Reuse the morning research (on by default):** later briefs (pre-open, opening range, midday, power hour, review) get the day's earlier plan.
+  * They refresh what changes during the day: prices, levels, volume, news and new movers.
+  * They don't re-run slow-moving research (SEC filings, fundamentals, 13F, calendars) unless something new happened.
+  * The full market scan always runs complete.
+* **Duplicate runs are skipped:** a scheduled brief doesn't start if another brief is running or started in the last 30 minutes, for example a manual run. A full scan is only skipped by another full scan. Skipped runs show as "skipped" and cost nothing.
+* **Daily spending cap (off by default):** once today's recorded spend reaches it, new scans and chats are refused until the next day. Spend is recorded when a session finishes.
+* **Model and effort per task (optional; everything defaults to the agent's Opus 5.5 at high effort):**
+  * Opus 5.5 at medium effort, or Sonnet 5.5 at high effort, can be chosen per brief type or for chat. Both cost less, but may lower quality.
+  * Change one task at a time and compare its briefs for a few days before keeping it. Refresh briefs (pre-open, opening range) are the natural first candidates; the full scan is the last.
+* **Cheapest of all:** turn off Autopilot briefs you don't read.
+
 ## Security notes
 
 * Every `/api` request needs a valid session. You get one by entering the password. The session cookie is HMAC-signed, HttpOnly, Secure and SameSite=Strict, and expires after 30 days. The signing key comes from the password, so changing the password ends every session. Login is rate-limited to 5 wrong tries per IP address and 30 overall in any 15 minutes. If no password (and no Cloudflare Access) is configured, the API refuses to serve.

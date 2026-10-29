@@ -19,6 +19,10 @@ export const DEFAULT_SETTINGS = {
   session_budget_usd: 5,
   trader_config: "", // raw text of trader/config.json
   data_source: "auto" as "auto" | "yahoo" | "alpaca_iex" | "alpaca_sip",
+  // Cost controls (see cost.ts).
+  daily_cap_usd: 0,                        // stop starting Claude sessions once today's spend reaches this (0 = no cap)
+  reuse_research: true,                    // later briefs start from the day's earlier plan instead of redoing it
+  engines: {} as Record<string, string>,   // per brief slot (and "chat"): engine id; missing = "default"
 };
 export type Settings = typeof DEFAULT_SETTINGS;
 

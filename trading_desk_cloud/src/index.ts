@@ -4,6 +4,7 @@ import { authenticate, login, logout, listUsers, createUser, updateUser, deleteU
 import { autoTradeNewBriefs, hasAccount, leaderboard, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
+import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -164,6 +165,17 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       if (!(b > 0 && b <= 100)) return bad("Session budget must be between 0 and 100 USD.");
       await setSetting(env.DB, "session_budget_usd", b);
     }
+    if ("daily_cap_usd" in patch) {
+      const c = Number(patch.daily_cap_usd);
+      if (!(c >= 0 && c <= 10_000)) return bad("Daily cap must be between 0 (no cap) and 10,000 USD.");
+      await setSetting(env.DB, "daily_cap_usd", Math.round(c * 100) / 100);
+    }
+    if ("reuse_research" in patch) await setSetting(env.DB, "reuse_research", patch.reuse_research !== false);
+    if ("engines" in patch) {
+      const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat"]);
+      await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
+    }
     if ("trader_config" in patch) {
       const raw = String(patch.trader_config ?? "");
       if (raw.length > 100_000) return bad("Config too large.");
@@ -173,6 +185,13 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       if (env.ANTHROPIC_API_KEY) await syncConfigFile(env, raw);
     }
     return json(await getSettings(env.DB));
+  }
+
+  if (path === "/usage" && m === "GET") {
+    if (who.role !== "admin") return bad("Only the admin can see Claude spending.", 403);
+    const s = await getSettings(env.DB);
+    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, reuse_research: s.reuse_research, engines: s.engines,
+      engine_options: Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label })), slots: SLOTS.map(({ id, label }) => ({ id, label })) });
   }
 
   if (path === "/guide" && m === "GET") return json({ markdown: await getSetting(env.DB, "guide_md", "") });
@@ -197,12 +216,17 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     let sid = b.session_id ?? null;
     if (sid && !/^[A-Za-z0-9_-]{8,128}$/.test(sid)) return bad("Bad session id");
     let text = prompt;
+    const s = await getSettings(env.DB), day = nyNow().date;
+    const capped = await capBlocks(env.DB, s.daily_cap_usd, day);
+    if (capped) return bad(capped, 429);
+    const engine = isEngine(s.engines?.chat) ? s.engines.chat : "default";
     if (!sid) {
-      const s = await getSettings(env.DB);
-      sid = await createSession(env, s.session_budget_usd);
+      sid = await createSession(env, s.session_budget_usd, engine);
       text = configContext(s.trader_config) + prompt;
     }
-    return new Response(runTurn(env, sid, text), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
+    const chatSid = sid;
+    const onCost = (cost: string | null) => recordSpend(env.DB, { session_id: chatSid, kind: "chat", user: who.user, day, cost, engine });
+    return new Response(runTurn(env, sid, text, onCost), { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
   }
 
   if (path === "/briefs" && m === "GET") {

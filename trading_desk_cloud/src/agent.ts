@@ -4,6 +4,7 @@
 import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import type { Env } from "./env";
 import { getSetting, setSetting } from "./db";
+import { ENGINES, type EngineId } from "./cost";
 
 export const CONFIG_MOUNT = "/workspace/trader/config.json";
 
@@ -50,10 +51,12 @@ export function configContext(rawConfig: string): string {
 }
 
 /** Create a session for this conversation; returns its id. */
-export async function createSession(env: Env, budgetUsd: number) {
+export async function createSession(env: Env, budgetUsd: number, engine: EngineId = "default") {
   const fileId = await getSetting<string | null>(env.DB, "config_file_id", null);
+  const model = ENGINES[engine]?.model;
   const session = await client(env).beta.sessions.create({
-    agent: env.AGENT_ID,
+    // A non-default engine overrides only the model and effort for this session; the agent itself is unchanged.
+    agent: model ? { type: "agent_with_overrides", id: env.AGENT_ID, model: { id: model.id, effort: model.effort } } : env.AGENT_ID,
     environment_id: env.ENVIRONMENT_ID,
     title: `Trading Desk ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
     resources: fileId ? [{ type: "file", file_id: fileId, mount_path: CONFIG_MOUNT }] : [],
@@ -66,7 +69,7 @@ export async function createSession(env: Env, budgetUsd: number) {
  * Send one user message and stream the agent's work back as NDJSON lines:
  * {kind: init|text|tool|tool_result|status|usage|error|done, ...}
  */
-export function runTurn(env: Env, sessionId: string, prompt: string): ReadableStream<Uint8Array> {
+export function runTurn(env: Env, sessionId: string, prompt: string, onCost?: (cost: string | null) => Promise<void>): ReadableStream<Uint8Array> {
   const anthropic = client(env);
   const enc = new TextEncoder();
   const workspace = env.ANTHROPIC_WORKSPACE || "default";
@@ -138,7 +141,9 @@ export function runTurn(env: Env, sessionId: string, prompt: string): ReadableSt
           }
         }
         const s = await anthropic.beta.sessions.retrieve(sessionId).catch(() => null);
-        emit({ kind: "done", session_id: sessionId, cost: s?.usage?.list_cost ? `${s.usage.list_cost.amount} ${s.usage.list_cost.currency}` : cost });
+        const total = s?.usage?.list_cost ? `${s.usage.list_cost.amount} ${s.usage.list_cost.currency}` : cost;
+        await onCost?.(total).catch(() => {});
+        emit({ kind: "done", session_id: sessionId, cost: total });
       } catch (e) {
         const err = e as { status?: number; message?: string };
         emit({ kind: "error", text: err.status === 404 ? "Session not found. Start a new session." : String(err.message || e) });
