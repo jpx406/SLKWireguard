@@ -105,8 +105,8 @@ function picksTable(picks, { compact = false, time = null } = {}) {
     });
     for (const p of sorted) {
       const tr = el("tr", "pick-row"); cols.forEach(([, k]) => tr.append(cell(p, k)));
-      const tdBtn = el("td"), tb = el("button", "ghost small trade-btn", /short/i.test(p.bias || "") ? "Short ▶" : "Buy ▶");
-      tb.title = "Paper-trade this recommendation"; tb.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
+      const tdBtn = el("td"), tb = el("button", "ghost small trade-btn", /short/i.test(p.bias || "") ? "Short" : "Buy");
+      tb.title = "Paper-trade this recommendation"; tb.setAttribute("aria-label", `Paper ${/short/i.test(p.bias || "") ? "short" : "buy"} ${p.symbol}`); tb.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
       tdBtn.append(tb); tr.append(tdBtn);
       const detail = el("tr", "pick-detail hidden"), td = el("td"); td.colSpan = cols.length + 1; detail.append(td);
       tr.onclick = () => {
@@ -136,11 +136,11 @@ function pickDetail(p, compact = false, holder = null) {
   const kv = (k, v) => { if (v == null || v === "") return; const d = el("div"); d.append(el("span", "dim", `${k}: `), document.createTextNode(Array.isArray(v) ? v.join(", ") : String(v))); right.append(d); };
   kv("Setup", p.setup); kv("Catalyst", p.catalyst); kv("Exit plan", p.exit_plan); kv("Invalidation", p.invalidation);
   kv("Targets", (p.targets || []).map((t) => fmt(t)).join(" / ")); kv("Sector", p.sector); kv("Skills", p.skills); kv("Why", p.reason);
-  const acts = el("div", "row gap"), c = el("button", "ghost small", "open chart"), pl = el("button", "primary small", "plan this trade"), ask = el("button", "ghost small", "ask Copilot");
+  const acts = el("div", "row gap"), c = el("button", "ghost small", "Open Chart"), pl = el("button", "primary small", "Plan This Trade"), ask = el("button", "ghost small", "Ask Copilot");
   c.onclick = (e) => { e.stopPropagation(); showPlanOnMain(p, p._t); };
   pl.onclick = (e) => { e.stopPropagation(); planPick(p); };
   ask.onclick = (e) => { e.stopPropagation(); showTab("side", "copilot"); sendChat(`Re-check this idea with my trader-* skills using live data and tell me if it is still valid: ${JSON.stringify(p)}`, `Re-check ${p.symbol}`); };
-  const pt = el("button", "primary small", /short/i.test(p.bias || "") ? "📝 Paper short" : "📝 Paper buy");
+  const pt = el("button", "primary small", /short/i.test(p.bias || "") ? "Paper Short" : "Paper Buy");
   pt.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
   acts.append(pt, c, pl, ask); right.append(acts);
   box.append(left, right); wrapAll.append(box);
@@ -150,7 +150,7 @@ function pickDetail(p, compact = false, holder = null) {
 /** Full board for one brief. */
 function renderBoard(host, b) {
   host.innerHTML = "";
-  if (!b) { host.append(el("div", "bd-empty", "No market board yet. Click ▶ Full market scan (top right) to run every skill over the whole market, or wait for the scheduled scans.")); return; }
+  if (!b) { host.append(el("div", "bd-empty", "No market board yet. Click Run Full Scan (top right) to run every skill over the whole market, or wait for the scheduled scans.")); return; }
   const d = b.data || { picks: b.picks || [] }, m = d.market || {};
   const head = el("div", "bd-head");
   head.append(el("h2", null, b.label || b.slot));

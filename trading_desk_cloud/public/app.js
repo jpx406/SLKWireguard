@@ -3,6 +3,28 @@
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+
+/* ------------------------------------------------------------------ icons
+   One line-icon set (24px grid, 2px stroke), used instead of emoji so icons match across platforms. */
+const ICONS = {
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  sliders: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  "bell-off": '<path d="M8.7 3A6 6 0 0 1 18 8c0 2.6.4 4.6.9 6M17 17H3s3-2 3-9c0-.6.1-1.2.3-1.8"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0M2 2l20 20"/>',
+  external: '<path d="M7 17 17 7M8 7h9v9"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+};
+/** An inline SVG icon (decorative: the button's text or aria-label names the action). */
+function icon(name) {
+  const solid = name === "play";
+  return `<svg class="ic${solid ? " solid" : ""}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
+}
+/** Set a button's content to an icon plus a text label. */
+function iconLabel(btn, name, text) { btn.innerHTML = `${icon(name)}<span>${text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c])}</span>`; return btn; }
 const api = async (path, opts = {}) => {
   let r;
   try { r = await fetch(path, { headers: { "Content-Type": "application/json" }, redirect: "manual", ...opts }); }
@@ -111,9 +133,9 @@ $("#chart").append($("#legend")); // keep the O/H/L/C legend inside the chart pa
 const mainLayer = createPlanLayer(chart, candleS, $("#chart"), {
   shift: (t) => t - new Date(t * 1000).getTimezoneOffset() * 60,
   actions: (a, p) => {
-    const t = el("button", "primary small", p.side === "long" ? "📝 Paper buy" : "📝 Paper short");
+    const t = el("button", "primary small", p.side === "long" ? "Paper Buy" : "Paper Short");
     t.onclick = () => openTicketFromPick({ ...p.raw, symbol: p.symbol, bias: p.side, entry: p.entry, stop: p.stop, targets: p.targets });
-    const x = el("button", "ghost small", "✕ clear plan"); x.onclick = () => { state.mainPlan = null; mainLayer.clear(); };
+    const x = iconLabel(el("button", "ghost small"), "x", "Clear Plan"); x.onclick = () => { state.mainPlan = null; mainLayer.clear(); };
     a.append(t, x);
   },
 });
@@ -256,7 +278,8 @@ function renderWatchlist() {
     const q = state.quotes[sym] || {}; const cls = q.change_pct > 0 ? "up" : q.change_pct < 0 ? "down" : "";
     const row = el("div", `w-row${sym === state.symbol ? " active" : ""}`);
     row.append(el("span", "w-sym", sym), el("span", "w-px", fmt(q.last)), el("span", "w-chg " + cls, q.change_pct == null ? "" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`));
-    const del = el("button", "w-del", "×"); del.title = "Remove";
+    row.setAttribute("aria-label", `${sym}${q.last == null ? "" : `, ${fmt(q.last)}`}${q.change_pct == null ? "" : `, ${q.change_pct > 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent`}`);
+    const del = el("button", "w-del"); del.innerHTML = icon("x"); del.title = `Remove ${sym}`; del.setAttribute("aria-label", `Remove ${sym} from watchlist`);
     del.onclick = (e) => { e.stopPropagation(); saveSettings({ watchlist: state.settings.watchlist.filter((s) => s !== sym) }); };
     row.append(del); row.onclick = () => setSymbol(sym);
     box.append(row);
@@ -267,6 +290,8 @@ function renderActiveQuote() {
   $("#qLast").textContent = fmt(q.last);
   const c = $("#qChg"); c.className = `mono ${q.change_pct > 0 ? "up" : q.change_pct < 0 ? "down" : ""}`;
   c.textContent = q.change_pct == null ? "" : `${q.last - q.prev >= 0 ? "+" : ""}${fmt(q.last - q.prev)} (${fmt(q.change_pct)}%)`;
+  // The canvas chart has no text of its own: describe it for VoiceOver.
+  $("#chart").setAttribute("aria-label", `${state.symbol} price chart, ${state.range || ""} range, ${state.interval} bars.${q.last == null ? "" : ` Last ${fmt(q.last)}${q.change_pct == null ? "" : `, ${q.change_pct >= 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent today`}.`}`);
 }
 async function refreshQuotes(only) {
   const syms = only || [...new Set([...state.settings.watchlist, state.symbol])];
@@ -280,10 +305,65 @@ async function refreshQuotes(only) {
 /* ------------------------------------------------------------------ tabs */
 function showTab(group, tab) {
   if (group === "center") document.querySelector(".center").classList.toggle("board-mode", tab === "board" || tab === "paper");
-  $$(`.tabs[data-group=${group}] button[data-tab]`).forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  $$(`.tabs[data-group=${group}] button[data-tab]`).forEach((b) => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+  });
   $$(`.tab-body[data-group=${group}]`).forEach((b) => b.classList.toggle("hidden", b.dataset.tab !== tab));
 }
 $$(".tabs button[data-tab]").forEach((b) => (b.onclick = () => showTab(b.parentElement.dataset.group, b.dataset.tab)));
+
+/* ------------------------------------------------------------------ accessibility
+   Tabs, toggles, clickable rows and dialogs get the roles and keyboard behavior VoiceOver and keyboard users expect. */
+const TAB_GROUP_NAMES = { center: "Main views", bottom: "Console and journal", side: "Briefs and tools" };
+function initA11y() {
+  for (const list of $$(".tabs[data-group]")) {
+    const g = list.dataset.group;
+    list.setAttribute("role", "tablist"); list.setAttribute("aria-label", TAB_GROUP_NAMES[g] || g);
+    for (const b of $$("button[data-tab]", list)) {
+      const panel = $(`.tab-body[data-group=${g}][data-tab=${b.dataset.tab}]`);
+      b.id ||= `tab-${g}-${b.dataset.tab}`; b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(b.classList.contains("on"))); b.tabIndex = b.classList.contains("on") ? 0 : -1;
+      if (panel) { panel.id ||= `panel-${g}-${b.dataset.tab}`; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", b.id); b.setAttribute("aria-controls", panel.id); }
+    }
+    // Arrow keys move between tabs; Home/End jump to the ends.
+    list.addEventListener("keydown", (e) => {
+      const tabs = $$("button[data-tab]", list), i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      const j = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
+      if (j < 0) return;
+      e.preventDefault(); tabs[j].focus(); tabs[j].click();
+    });
+  }
+  const segNames = { ranges: "Time range", intervals: "Bar size", indicators: "Indicators" };
+  for (const seg of $$(".seg[id]")) { seg.setAttribute("role", "group"); seg.setAttribute("aria-label", segNames[seg.id] || seg.title || seg.id); }
+  for (const d of $$("dialog")) {
+    const h = $("h3", d);
+    if (h) { h.id ||= `${d.id || "dlg"}-title`; d.setAttribute("aria-labelledby", h.id); }
+  }
+  // Mirror visual state into ARIA, and make clickable rows reachable by keyboard, as content re-renders.
+  const sync = (root) => {
+    for (const b of $$(".seg button", root)) b.setAttribute("aria-pressed", String(b.classList.contains("on")));
+    for (const r of $$(".w-row, tr.pick-row", root)) {
+      if (r.hasAttribute("tabindex")) continue;
+      r.tabIndex = 0;
+      if (r.matches(".w-row")) r.setAttribute("role", "button"); // table rows keep their row role
+    }
+  };
+  sync(document);
+  new MutationObserver((muts) => {
+    for (const m of muts) {
+      if (m.type === "attributes" && m.target.matches?.(".seg button")) m.target.setAttribute("aria-pressed", String(m.target.classList.contains("on")));
+      else if (m.type === "childList") for (const n of m.addedNodes) if (n.nodeType === 1) sync(n.parentElement || n);
+    }
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] });
+  // Enter or Space activates a focused clickable row.
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if ((e.key === "Enter" || e.key === " ") && t instanceof HTMLElement && t.matches(".w-row, tr.pick-row")) { e.preventDefault(); t.click(); }
+  });
+}
+initA11y();
 
 /* ------------------------------------------------------------------ Claude copilot */
 function deskContext() {
@@ -377,14 +457,14 @@ function renderSkills() {
     const d = el("details", "skill"), sum = el("summary");
     sum.append(el("div", "skill-name", s.name), el("div", "skill-desc", s.description));
     const body = el("div", "skill-body");
-    const ask = el("button", "primary small", `Ask Claude to use ${s.name}`);
+    const ask = el("button", "primary small", `Ask Claude to Use ${s.name}`);
     ask.onclick = () => { showTab("side", "copilot"); const t = $("#chatInput"); t.value = `Use the ${s.name} skill for ${state.symbol}: `; t.focus(); };
     const run = el("div", "skill-run"), inp = el("input"); inp.placeholder = "run a tool, e.g. scan {symbol} --json";
     const go = el("button", "small", "Run");
     const exec = () => { if (!inp.value.trim()) return; showTab("side", "copilot"); showTab("bottom", "console");
       sendChat(`Using the ${s.name} skill, run its Python tool for: ${fillTemplate(inp.value)}\nShow the raw output, then a short summary.`, `${s.name}: ${fillTemplate(inp.value)}`); };
     go.onclick = exec; inp.onkeydown = (e) => { if (e.key === "Enter") exec(); };
-    const list = el("button", "ghost small", "list its tools");
+    const list = el("button", "ghost small", "List Its Tools");
     list.onclick = () => { showTab("side", "copilot"); sendChat(`List the Python tools in the ${s.name} skill with their arguments (run each with --help). Keep it short.`, `${s.name}: list tools`); };
     run.append(inp, go); body.append(ask, run, list); d.append(sum, body); box.append(d);
   }
@@ -441,7 +521,7 @@ async function loadJournal() {
     const tr = el("tr");
     const cells = [t.date, t.symbol, t.side, t.qty, fmt(t.entry), fmt(t.stop), fmt(t.exit), t.pnl == null ? "open" : fmt(t.pnl), t.r == null ? "" : fmt(t.r), t.setup || "", t.notes || ""];
     cells.forEach((c, i) => { const td = el("td", i >= 3 && i <= 8 ? "num" : "", c ?? ""); if (i === 7 && t.pnl != null) td.classList.add(t.pnl >= 0 ? "up" : "down"); tr.append(td); });
-    const x = el("button", "x", "×"); x.title = "Delete";
+    const x = el("button", "x"); x.innerHTML = icon("x"); x.title = "Delete"; x.setAttribute("aria-label", `Delete journal entry ${t.symbol} ${t.date}`);
     x.onclick = async () => { if (confirm(`Delete ${t.symbol} ${t.date}?`)) { await api(`/api/journal/${t.id}`, { method: "DELETE" }); loadJournal(); } };
     const td = el("td"); td.append(x); tr.append(td); tb.append(tr);
   }
@@ -466,6 +546,7 @@ async function saveSettings(patch) {
   state.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify({ settings: patch }) });
   renderWatchlist(); refreshQuotes(); renderWorkflows();
 }
+$("#modeBadge").onclick = () => { if (!document.body.classList.contains("not-admin")) $("#btnSettings").click(); };
 $("#btnSettings").onclick = () => {
   const f = $("#settingsForm"), s = state.settings;
   f.watchlist.value = s.watchlist.join(", "); f.session_budget_usd.value = s.session_budget_usd; f.trader_config.value = s.trader_config || "";
@@ -537,9 +618,10 @@ function secUserAgent(cfg) {
 async function loadStatus() {
   const st = (state.status = await api("/api/status"));
   const b = $("#modeBadge");
-  if (st.paper === true) { b.className = "badge paper"; b.textContent = "PAPER"; }
-  else if (st.paper === false) { b.className = "badge live"; b.textContent = "LIVE MONEY"; }
-  else { b.className = "badge muted"; b.textContent = st.config_error ? "CONFIG ERROR" : "NO CONFIG"; }
+  // Plain words instead of codes; the badge opens Settings, where the rules are edited.
+  if (st.paper === true) { b.className = "badge paper"; b.textContent = "Paper Mode"; b.title = "Your trading rules set paper mode. Open Settings to change them."; }
+  else if (st.paper === false) { b.className = "badge live"; b.textContent = "Live Money"; b.title = "Your trading rules allow live money. Open Settings to change them."; }
+  else { b.className = "badge muted"; b.textContent = st.config_error ? "Fix Trading Rules" : "Add Trading Rules"; b.title = st.config_error ? `trader/config.json has an error: ${st.config_error}` : "Paste your trader/config.json in Settings so Claude's skills use your limits."; }
   b.title = "trader/config.json — edit in Settings";
   $("#claudeDot").className = `dot ${st.agent_ready ? "ok" : "bad"}`;
   if (st.market) {
@@ -547,14 +629,14 @@ async function loadStatus() {
     dl.textContent = `Data: ${mk.label}${mk.last_error ? ` — Alpaca error, using Yahoo: ${mk.last_error}` : ""}${mk.sip_denied ? " (SIP not in your plan, using IEX)" : ""}. Not for execution.`;
     dl.className = `tiny pad ${mk.last_error ? "down" : mk.active.startsWith("alpaca") ? "up" : "dim"}`;
   }
-  $("#configView").textContent = st.config ? JSON.stringify(st.config, null, 2) : st.config_error || "Not set. Paste your trader/config.json in Settings ⚙.";
+  $("#configView").textContent = st.config ? JSON.stringify(st.config, null, 2) : st.config_error || "Not set. Paste your trader/config.json in Settings.";
   const ua = secUserAgent(st.config);
   if (st.config && !ua) showBanner('trader/config.json has no "sec_user_agent", so the SEC-based skills (analyst, copycat, filings) will refuse to run. Open Settings ⚙ and add e.g. "sec_user_agent": "Your Name you@email.com".');
   prefillRiskFromConfig(st.config);
 }
 async function loadSkills() {
   try { state.skills = await api("/api/skills"); } catch (e) { state.skills = []; }
-  $("#skillsCount").textContent = `· ${state.skills.length} skills`; renderSkills();
+  $("#skillsCount").textContent = `${state.skills.length} skill${state.skills.length === 1 ? "" : "s"} loaded`; renderSkills();
 }
 async function loadGuide() {
   const g = await api("/api/guide");
@@ -586,7 +668,7 @@ async function loadBriefs() {
   for (const s of d.slots) {
     const row = el("div", "ap-slot"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!d.autopilot.slots[s.id];
     cb.onchange = () => api("/api/autopilot", { method: "PUT", body: JSON.stringify({ slots: { [s.id]: cb.checked } }) }).catch((e) => showBanner(e.message));
-    const run = el("button", "ghost small", "run now");
+    const run = el("button", "ghost small", "Run Now"); run.setAttribute("aria-label", `Run ${s.label} now`);
     run.onclick = async () => { run.disabled = true; try { await api("/api/briefs/run", { method: "POST", body: JSON.stringify({ slot: s.id }) }); await loadBriefs(); } catch (e) { showBanner(e.message); } run.disabled = false; };
     row.append(cb, el("span", null, s.label), el("span", "t", `${s.et} NY · ${etToRiyadh(s.et)} Riyadh`), run);
     slots.append(row);
@@ -594,7 +676,7 @@ async function loadBriefs() {
   state.resultFormat = d.result_format || "";
   renderWorkflows();
   const list = $("#briefList"); list.innerHTML = "";
-  if (!d.briefs.length) list.append(el("div", "dim small", "No briefs yet. They start automatically at the times above on market days, or click \"run now\"."));
+  if (!d.briefs.length) list.append(el("div", "dim small", "No briefs yet. They start automatically at the times above on market days, or click Run Now."));
   for (const b of d.briefs) list.append(renderBrief(b));
   updateBoard(d.briefs);
   // Poll faster while something is running.
@@ -614,7 +696,7 @@ function renderBrief(b) {
   h.append(el("b", null, b.label || b.slot), el("span", `pill ${b.status}`, b.status === "running" || b.status === "starting" ? "working…" : b.status),
     el("span", "dim tiny", `${b.day} · ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`));
   if (b.cost) h.append(el("span", "dim tiny", formatCost(b.cost)));
-  const open = el("button", "ghost small", "open board ↗"); open.style.marginLeft = "auto";
+  const open = iconLabel(el("button", "ghost small"), "external", "Open Board"); open.style.marginLeft = "auto";
   open.onclick = () => { state.boardId = b.id; updateBoard(state.briefData.briefs, true); showTab("center", "board"); };
   h.append(open);
   box.append(h);
@@ -705,7 +787,7 @@ function notify(b) {
 }
 $("#apEnabled").onchange = (e) => api("/api/autopilot", { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) }).then(loadBriefs).catch((err) => showBanner(err.message));
 $("#btnNotify").onclick = async () => {
-  try { const p = await Notification.requestPermission(); $("#btnNotify").textContent = p === "granted" ? "🔔 on" : "🔕 blocked"; } catch { $("#btnNotify").textContent = "not supported"; }
+  try { const p = await Notification.requestPermission(); iconLabel($("#btnNotify"), p === "granted" ? "bell" : "bell-off", p === "granted" ? "Notifications On" : "Notifications Blocked"); } catch { iconLabel($("#btnNotify"), "bell-off", "Not Supported"); }
 };
 
 /* ------------------------------------------------------------------ wiring */
@@ -749,5 +831,5 @@ document.addEventListener("keydown", (e) => {
   setInterval(refreshQuotes, 15000);
   setInterval(() => { if (intraday() && marketState().s !== "closed") loadChart(true); }, 20000);
   setInterval(loadBriefs, 60000);
-  try { if (Notification.permission === "granted") $("#btnNotify").textContent = "🔔 on"; } catch { /* unsupported */ }
+  try { if (Notification.permission === "granted") iconLabel($("#btnNotify"), "bell", "Notifications On"); } catch { /* unsupported */ }
 })();

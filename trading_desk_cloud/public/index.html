@@ -12,20 +12,20 @@
 <script src="/vendor/purify.min.js"></script>
 </head>
 <body>
-<div id="banner" class="banner hidden"></div>
+<div id="banner" class="banner hidden" role="alert"></div>
 <header class="topbar">
-  <div class="brand"><span class="logo">▲</span> Trading Desk</div>
-  <div id="modeBadge" class="badge muted" title="From trader/config.json">CONFIG?</div>
+  <div class="brand"><span class="logo" aria-hidden="true">▲</span> Trading Desk</div>
+  <button type="button" id="modeBadge" class="badge muted" title="Your trading rules (trader/config.json)">Checking Rules…</button>
   <div class="clocks">
     <div class="clock"><span class="lbl">Riyadh</span><span id="clkRiyadh" class="mono">--:--:--</span></div>
     <div class="clock"><span class="lbl">New York</span><span id="clkNY" class="mono">--:--:--</span></div>
     <div class="clock"><span id="mktState" class="state">—</span><span id="mktCountdown" class="mono dim"></span></div>
   </div>
   <div class="top-right">
-    <span id="claudeDot" class="dot" title="Claude agent"></span><span class="dim small">Claude</span>
-    <button id="btnMe" class="ghost small user-chip" title="Your account">👤 <span id="meName">…</span></button>
+    <span id="claudeDot" class="dot" title="Claude agent" aria-hidden="true"></span><span class="dim small">Claude</span>
+    <button id="btnMe" class="ghost small user-chip" title="Your account" aria-label="Your account"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg><span id="meName">…</span></button>
     <span id="skillsCount" class="dim small"></span>
-    <button id="btnSettings" class="icon-btn" title="Settings">⚙</button>
+    <button id="btnSettings" class="icon-btn" title="Settings" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
   </div>
 </header>
 
@@ -34,7 +34,7 @@
   <aside class="panel watch">
     <div class="panel-head">
       <span>Watchlist</span>
-      <form id="addSymForm" class="inline"><input id="addSym" placeholder="+ add" maxlength="15"></form>
+      <form id="addSymForm" class="inline"><input id="addSym" placeholder="+ Add" maxlength="15" aria-label="Add a symbol to the watchlist"></form>
     </div>
     <div id="watchlist" class="watch-list"></div>
     <div id="dataLabel" class="dim tiny pad">Quotes via Yahoo Finance, ~15s refresh. Not for execution.</div>
@@ -45,20 +45,20 @@
     <div class="panel chart-panel">
       <div class="tabs center-tabs" data-group="center">
         <button data-tab="chart" class="on">Chart</button>
-        <button data-tab="board">Market board</button>
-        <button data-tab="paper">Paper trading</button>
+        <button data-tab="board">Market Board</button>
+        <button data-tab="paper">Paper Trading</button>
         <span class="spacer"></span>
-        <select id="boardPick" class="board-select hidden" title="Choose a brief"></select>
-        <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan">⚙ Scan filters</button>
-        <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now">▶ Full market scan</button>
+        <select id="boardPick" class="board-select hidden" title="Choose a brief" aria-label="Brief shown on the board"></select>
+        <button id="btnFilters" class="ghost small" title="Screening filters for the full market scan"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span>Scan Filters</span></button>
+        <button id="btnFullScan" class="primary small" title="Run every skill over the whole market now"><svg class="ic solid" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 4.5v15l12-7.5z"/></svg><span>Run Full Scan</span></button>
       </div>
       <div class="tab-body board hidden" data-group="center" data-tab="board"><div id="board" class="board-inner"></div></div>
       <div class="tab-body board hidden" data-group="center" data-tab="paper"><div id="paper" class="board-inner"><div class="dim">Loading paper account…</div></div></div>
       <div class="tab-body chart-body" data-group="center" data-tab="chart">
       <div class="chart-toolbar">
-        <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus"></form>
+        <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus" aria-label="Symbol"></form>
         <div class="quote-line"><span id="qLast" class="mono big">—</span><span id="qChg" class="mono"></span></div>
-        <button id="btnTradeSym" class="primary small" title="Paper-trade this symbol">Paper trade</button>
+        <button id="btnTradeSym" class="primary small" title="Paper-trade this symbol">Paper Trade</button>
         <div class="seg" id="ranges" title="How much history to show">
           <button data-r="1D" class="on">1D</button><button data-r="5D">5D</button><button data-r="1M">1M</button><button data-r="3M">3M</button><button data-r="1Y">1Y</button>
         </div>
@@ -72,7 +72,7 @@
         </div>
         <span id="chartMsg" class="dim small"></span>
       </div>
-      <div id="chart" class="chart"></div>
+      <div id="chart" class="chart" role="img" aria-label="Price chart"></div>
       <div id="legend" class="legend mono"></div>
       </div>
     </div>
@@ -82,7 +82,7 @@
         <button data-tab="console" class="on">Console</button>
         <button data-tab="journal">Journal</button>
         <span class="spacer"></span>
-        <button id="btnClearConsole" class="ghost small">clear</button>
+        <button id="btnClearConsole" class="ghost small">Clear</button>
       </div>
       <div class="tab-body" data-group="bottom" data-tab="console">
         <pre id="console" class="console mono">Commands Claude runs (skill tools, searches) and their raw output appear here.</pre>
@@ -100,7 +100,7 @@
             <input name="fees" type="number" step="any" placeholder="Fees">
             <input name="setup" placeholder="Setup">
             <input name="notes" placeholder="Notes" class="grow">
-            <button class="primary">Log</button>
+            <button class="primary">Log Trade</button>
           </form>
           <div id="journalStats" class="stats"></div>
           <div class="table-wrap"><table id="journalTable"><thead><tr>
@@ -126,7 +126,7 @@
         <label class="switch"><input type="checkbox" id="apEnabled"> <b>Autopilot</b></label>
         <span id="apNote" class="dim small"></span>
         <span class="spacer"></span>
-        <button id="btnNotify" class="ghost small" title="Get a browser notification when a brief is ready">🔔 notify me</button>
+        <button id="btnNotify" class="ghost small" title="Get a browser notification when a brief is ready"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span>Notify Me</span></button>
       </div>
       <div id="apSlots" class="ap-slots"></div>
       <div id="briefList" class="brief-list"><div class="dim small">Loading briefs…</div></div>
@@ -143,7 +143,7 @@
         <div class="chat-actions">
           <label class="small"><input type="checkbox" id="ctxToggle" checked> include chart context</label>
           <span class="spacer"></span>
-          <button type="button" id="btnNewChat" class="ghost small" title="Start a fresh Claude session">new session</button>
+          <button type="button" id="btnNewChat" class="ghost small" title="Start a fresh Claude session">New Session</button>
           <button id="btnSend" class="primary">Send</button>
         </div>
       </form>
@@ -165,13 +165,13 @@
       </div>
       <div id="riskOut" class="risk-out"></div>
       <div class="row gap">
-        <button id="btnUseLast" class="ghost small">entry = last</button>
-        <button id="btnDrawPlan" class="primary small">Draw on chart</button>
-        <button id="btnClearPlan" class="ghost small">clear lines</button>
-        <button id="btnAskSize" class="ghost small">ask Claude to verify</button>
-        <button id="btnPaperPlan" class="primary small">paper-trade this plan</button>
+        <button id="btnUseLast" class="ghost small">Use Last Price</button>
+        <button id="btnDrawPlan" class="ghost small">Draw on Chart</button>
+        <button id="btnClearPlan" class="ghost small">Clear Lines</button>
+        <button id="btnAskSize" class="ghost small">Ask Claude to Verify</button>
+        <button id="btnPaperPlan" class="primary small">Paper-Trade This Plan</button>
       </div>
-      <h4>trader/config.json <span class="dim tiny">(edit in Settings ⚙)</span></h4>
+      <h4>trader/config.json <span class="dim tiny">(edit in Settings)</span></h4>
       <pre id="configView" class="config mono dim">not loaded</pre>
     </div>
 
@@ -193,7 +193,7 @@
         <option value="alpaca_sip">Alpaca SIP: real-time, all exchanges (Algo Trader Plus plan)</option>
         <option value="yahoo">Yahoo Finance: delayed, no key needed</option>
       </select></label>
-    <div class="row gap"><button type="button" id="btnTestData" class="ghost small">Test Alpaca connection</button><span id="dataTestOut" class="small dim"></span></div>
+    <div class="row gap"><button type="button" id="btnTestData" class="ghost small">Test Alpaca Connection</button><span id="dataTestOut" class="small dim"></span></div>
     <label>Max spend per Copilot session (USD)<input name="session_budget_usd" type="number" step="0.5" min="0.5" max="100"></label>
     <fieldset id="costBox"><legend>Claude usage &amp; cost</legend>
       <div id="usageOut" class="usage-out small dim">loading…</div>
@@ -207,7 +207,7 @@
     <label>trader/config.json — paste your file; Claude's skills read it inside the sandbox
       <textarea name="trader_config" rows="12" class="mono" spellcheck="false" placeholder='{ "paper": true, "sec_user_agent": "Your Name you@example.com" }'></textarea></label>
     <div id="settingsErr" class="err-text"></div>
-    <div class="row gap end"><button type="button" id="btnLogout" class="ghost" style="margin-right:auto">Log out</button><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
+    <div class="row gap end"><button type="button" id="btnLogout" class="ghost" style="margin-right:auto">Log Out</button><button type="button" id="btnSettingsCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
   </form>
 </dialog>
 
@@ -216,9 +216,9 @@
     <h3>Full market scan — filters</h3>
     <div class="presets"><span class="dim small">Presets:</span>
       <button type="button" class="ghost small" data-preset="balanced">Balanced</button>
-      <button type="button" class="ghost small" data-preset="largecap">Large-cap momentum</button>
-      <button type="button" class="ghost small" data-preset="midcap">Mid-cap movers</button>
-      <button type="button" class="ghost small" data-preset="smallcap">Small-cap gappers</button>
+      <button type="button" class="ghost small" data-preset="largecap">Large-Cap Momentum</button>
+      <button type="button" class="ghost small" data-preset="midcap">Mid-Cap Movers</button>
+      <button type="button" class="ghost small" data-preset="smallcap">Small-Cap Gappers</button>
     </div>
     <div class="f-grid">
       <label>Market cap min<select name="min_market_cap">
@@ -257,7 +257,7 @@
       <button type="button" id="btnFiltersReset" class="ghost" style="margin-right:auto">Reset</button>
       <button type="button" id="btnFiltersCancel" class="ghost">Cancel</button>
       <button type="submit" value="save" class="ghost">Save</button>
-      <button type="submit" value="run" class="primary">Save &amp; run scan</button>
+      <button type="submit" value="run" class="primary">Save &amp; Run Scan</button>
     </div>
   </form>
 </dialog>
@@ -281,7 +281,7 @@
     </div>
     <div id="ticketPreview" class="risk-out"></div>
     <div id="ticketErr" class="err-text"></div>
-    <div class="row gap end"><button type="button" id="btnTicketCancel" class="ghost">Cancel</button><button class="primary" id="btnTicketSubmit">Place paper order</button></div>
+    <div class="row gap end"><button type="button" id="btnTicketCancel" class="ghost">Cancel</button><button class="primary" id="btnTicketSubmit">Place Paper Order</button></div>
   </form>
 </dialog>
 
@@ -325,7 +325,7 @@
     </fieldset>
     <fieldset><legend>Reset account</legend>
       <div class="row gap"><label>Starting cash ($)<input name="starting_cash" type="number" step="100" min="100"></label>
-      <button type="button" id="btnPaperReset" class="ghost">Reset with this amount…</button><span class="dim small">deletes all paper orders, positions and history</span></div>
+      <button type="button" id="btnPaperReset" class="ghost">Reset with This Amount…</button><span class="dim small">deletes all paper orders, positions and history</span></div>
     </fieldset>
     <div id="paperSetErr" class="err-text"></div>
     <div class="row gap end"><button type="button" id="btnPaperSetCancel" class="ghost">Cancel</button><button class="primary">Save</button></div>
@@ -339,7 +339,7 @@
       <div class="f-grid">
         <label>Current password<input name="current" type="password" autocomplete="current-password"></label>
         <label>New password (10+ characters)<input name="next" type="password" autocomplete="new-password"></label>
-        <label>&nbsp;<button type="button" id="btnPwChange" class="ghost">Change password</button></label>
+        <label>&nbsp;<button type="button" id="btnPwChange" class="ghost">Change Password</button></label>
       </div>
     </fieldset>
     <fieldset id="usersBox" class="hidden"><legend>Users (admin)</legend>
@@ -349,10 +349,10 @@
         <label>Password (10+ characters)<input id="nuPw" type="password" autocomplete="new-password"></label>
         <label class="check"><input id="nuAi" type="checkbox"> Can use Claude (scans, Copilot) — costs money</label>
       </div>
-      <button type="button" id="btnAddUser" class="primary small">Add user</button>
+      <button type="button" id="btnAddUser" class="primary small">Add User</button>
     </fieldset>
     <div id="meErr" class="err-text"></div>
-    <div class="row gap end"><button type="button" id="btnMeLogout" class="ghost" style="margin-right:auto">Log out</button><button type="button" id="btnMeClose" class="primary">Close</button></div>
+    <div class="row gap end"><button type="button" id="btnMeLogout" class="ghost" style="margin-right:auto">Log Out</button><button type="button" id="btnMeClose" class="primary">Close</button></div>
   </form>
 </dialog>
 
@@ -362,7 +362,7 @@
     <label>Username<input id="loginUser" autocomplete="username" placeholder="admin" autocapitalize="none" spellcheck="false"></label>
     <label>Password<input id="loginPw" type="password" autocomplete="current-password" required></label>
     <div id="loginErr" class="err-text"></div>
-    <button class="primary">Log in</button>
+    <button class="primary">Log In</button>
   </form>
 </dialog>
 

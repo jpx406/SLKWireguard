@@ -46,7 +46,7 @@ async function loadUsers(list) {
     const role = el("select"); role.append(new Option("user", "user"), new Option("admin", "admin")); role.value = u.role;
     role.onchange = () => userCall("PUT", u.id, { role: role.value });
     const roleTd = el("td"); roleTd.append(role);
-    const act = el("td"), pw = el("button", "ghost small", "reset password"), del = el("button", "ghost small", "delete");
+    const act = el("td"), pw = el("button", "ghost small", "Reset Password"), del = el("button", "ghost small", "Delete");
     pw.onclick = () => { const p = prompt(`New password for ${u.id} (10+ characters):`); if (p) userCall("PUT", u.id, { password: p }); };
     del.onclick = () => { if (confirm(`Delete user ${u.id}? Their paper account stays in the database but they can no longer log in.`)) userCall("DELETE", u.id); };
     act.append(pw, del);
@@ -121,7 +121,7 @@ function syncTicket() {
     if (v.exit_mode === "hold" && !v.stop && !v.target) out.append(el("span", "warn", "Hold mode with no stop-loss or take-profit: the position stays open until you close it."));
     else if (v.exit_mode === "hold") out.append(el("span", "note", "Held overnight until the stop or target is hit (it can gap past them at the next open)."));
   } else out.append(el("span", "warn", f.sizeBy.value === "risk" && !v.stop ? "Risk sizing needs a stop-loss." : "Enter a price and size."));
-  $("#btnTicketSubmit").textContent = `Place paper ${v.side === "long" ? "buy" : "short"}${v.qty ? ` · ${v.qty} ${v.symbol}` : ""}`;
+  $("#btnTicketSubmit").textContent = `Place Paper ${v.side === "long" ? "Buy" : "Short"}${v.qty ? ` · ${v.qty} ${v.symbol}` : ""}`;
 }
 $("#ticketForm").addEventListener("input", (e) => { if (e.target.name === "symbol") { clearTimeout(state.tkT); state.tkT = setTimeout(refreshTicketPrice, 500); } syncTicket(); });
 $("#ticketForm").addEventListener("change", syncTicket);
@@ -218,9 +218,9 @@ function renderPaper(d) {
   pick.append(new Option("My account", ""), ...others.map((u) => new Option(`${u} (view only)`, u)));
   pick.value = ro ? a.user : ""; pick.onchange = () => viewPaper(pick.value);
   if (others.length) acts.append(pick);
-  if (ro) { const back = el("button", "primary small", "← My account"); back.onclick = () => viewPaper(null); acts.append(back); }
+  if (ro) { const back = iconLabel(el("button", "primary small"), "back", "Back to My Account"); back.onclick = () => viewPaper(null); acts.append(back); }
   else {
-    const nb = el("button", "primary small", "+ New order"), sb = el("button", "ghost small", "⚙ Settings & auto-trade");
+    const nb = iconLabel(el("button", "primary small"), "plus", "New Order"), sb = iconLabel(el("button", "ghost small"), "gear", "Settings & Auto-Trade");
     nb.onclick = () => openTicket({ symbol: state.symbol }); sb.onclick = openPaperSettings;
     acts.append(nb, sb);
   }
@@ -261,14 +261,17 @@ function renderPaper(d) {
       td(money(p.unrealized), `num ${pnlCls(p.unrealized)}`), td(p.unrealized_pct == null ? "—" : `${fmt(p.unrealized_pct)}%`, `num ${pnlCls(p.unrealized_pct)}`),
       td(fmt(p.stop), "num down"), td(fmt(p.target), "num up"));
     // Exit mode toggle: end of day <-> hold until stop/target.
-    const mode = p.exit_mode || (d.settings.auto_flat ? "eod" : "hold"), exTd = el("td"), ex = el("button", `ghost small exit-${mode}`, mode === "eod" ? "End of day" : "Hold to stop/target");
-    ex.title = "Click to switch"; ex.onclick = async () => {
+    const mode = p.exit_mode || (d.settings.auto_flat ? "eod" : "hold"), exTd = el("td"), ex = el("button", `ghost small exit-${mode}`, mode === "eod" ? "End of Day" : "Hold to Stop/Target");
+    ex.title = "Click to switch";
+    ex.setAttribute("aria-label", `${p.symbol} exit: ${mode === "eod" ? "close at end of day" : "hold until stop or target"}. Activate to switch.`); ex.onclick = async () => {
       try { await api(`/api/paper/positions/${p.id}`, { method: "PUT", body: JSON.stringify({ exit_mode: mode === "eod" ? "hold" : "eod" }) }); loadPaper(); } catch (e) { showBanner(e.message); }
     };
-    if (ro) exTd.append(el("span", `small exit-${mode}`, mode === "eod" ? "End of day" : "Hold to stop/target")); else exTd.append(ex);
+    if (ro) exTd.append(el("span", `small exit-${mode}`, mode === "eod" ? "End of Day" : "Hold to Stop/Target")); else exTd.append(ex);
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
-    const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at next open" : p.side === "long" ? "Sell now" : "Cover now"), edit = el("button", "ghost small", "edit");
+    const act = el("td"), close = el("button", "primary small", p.close_req ? "Sells at Next Open" : p.side === "long" ? "Sell Now" : "Cover Now"), edit = el("button", "ghost small", "Edit");
     close.disabled = !!p.close_req;
+    close.setAttribute("aria-label", `${p.side === "long" ? "Sell" : "Cover"} ${p.qty} ${p.symbol} now`);
+    edit.setAttribute("aria-label", `Edit stop-loss and take-profit for ${p.symbol}`);
     if (p.close_req) close.title = "Requested while the market was closed; executes at the first trade of the next session (07:00 New York).";
     close.onclick = async () => {
       const shut = marketState().s === "closed";
@@ -295,7 +298,7 @@ function renderPaper(d) {
       td(o.reason || (o.fill_price ? `filled @ ${fmt(o.fill_price)}` : ago(o.created_at)), "dim small"));
     const act = el("td");
     if (o.status === "open" && !ro) {
-      const c = el("button", "ghost small", "cancel");
+      const c = el("button", "ghost small", "Cancel Order"); c.setAttribute("aria-label", `Cancel ${o.side === "long" ? "buy" : "short"} order for ${o.qty} ${o.symbol}`);
       c.onclick = async () => { try { await api(`/api/paper/orders/${o.id}`, { method: "DELETE" }); loadPaper(); } catch (e) { showBanner(e.message); } };
       act.append(c);
     }

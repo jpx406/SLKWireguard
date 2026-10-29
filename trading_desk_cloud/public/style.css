@@ -5,7 +5,9 @@
   --line: #222a37;
   --text: #d6dbe4;
   --dim: #7d8797;
-  --accent: #3b82f6;
+  --accent: #3b82f6;      /* lines, focus ring, links on dark panels */
+  --accent-fill: #2563eb; /* filled buttons: white text at 5.2:1 */
+  --field-line: #4a5568;  /* outlines of inputs and selects (2.3:1 against the field) */
   --up: #22c55e;
   --down: #ef4444;
   --warn: #f59e0b;
@@ -34,23 +36,35 @@ input, select, textarea {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 8px; font: inherit; outline: none; min-width: 0;
 }
+input, select, textarea { border-color: var(--field-line); }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+/* Keyboard focus is always visible (mouse clicks don't show it). */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.w-row:focus-visible, tr[tabindex]:focus-visible { outline-offset: -2px; }
+/* Line icons used in buttons (one set, same stroke weight everywhere). */
+.ic { width: 14px; height: 14px; flex: none; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ic.solid { fill: currentColor; stroke: none; }
+button .ic + span, button .ic + * { margin-left: 5px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 button {
   font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 10px; cursor: pointer;
 }
 button:hover { border-color: #3a475c; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; font-weight: 600; }
 button.primary:disabled { opacity: .5; cursor: wait; }
 button.ghost { background: transparent; }
 button.small { padding: 3px 8px; font-size: 12px; }
-.icon-btn { background: transparent; border: none; font-size: 18px; padding: 2px 6px; }
+.icon-btn { background: transparent; border: none; padding: 4px 6px; color: var(--text); display: inline-flex; align-items: center; }
+.icon-btn .ic { width: 18px; height: 18px; }
 
 /* top bar */
 .topbar { height: 46px; display: flex; align-items: center; gap: 18px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .brand { font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
 .logo { color: var(--up); }
-.badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: .5px; }
+.badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: .3px; }
+button.badge { font-family: inherit; line-height: inherit; cursor: pointer; }
 .badge.paper { background: rgba(34,197,94,.15); color: var(--up); border: 1px solid rgba(34,197,94,.4); }
 .badge.live { background: rgba(239,68,68,.18); color: var(--down); border: 1px solid var(--down); animation: pulse 1.6s infinite; }
 .badge.muted { background: var(--panel-2); color: var(--dim); border: 1px solid var(--line); }
@@ -69,6 +83,7 @@ button.small { padding: 3px 8px; font-size: 12px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .panel-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); font-weight: 600; }
 .panel-head input { width: 80px; padding: 3px 6px; font-size: 12px; text-transform: uppercase; }
+.panel-head input::placeholder { text-transform: none; } /* typed symbols are uppercase; the hint stays "+ Add" */
 .center { display: grid; grid-template-rows: minmax(0, 1fr) 250px; gap: 6px; min-height: 0; min-width: 0; }
 
 /* watchlist */
@@ -80,7 +95,7 @@ button.small { padding: 3px 8px; font-size: 12px; }
 .w-px { text-align: right; font-family: var(--mono); }
 .w-chg { grid-column: 2; text-align: right; font-family: var(--mono); font-size: 11px; }
 .w-del { position: absolute; left: 62px; top: 6px; display: none; background: none; border: none; color: var(--dim); padding: 0 4px; }
-.w-row:hover .w-del { display: inline; }
+.w-row:hover .w-del, .w-row:focus-within .w-del { display: inline; }
 .up { color: var(--up); } .down { color: var(--down); }
 
 /* chart */
@@ -362,3 +377,20 @@ dialog.ticket-dlg { width: min(720px, 95vw); }
 .brief.skipped { padding: 6px 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 #costBox label.check { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 6px 0; }
 #costBox label.check input { width: auto; margin-top: 2px; }
+
+/* Respect Reduce Motion: no pulsing or animated transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* Phone width: keep the top bar and the main tab row inside the screen (no sideways scroll). */
+@media (max-width: 700px) {
+  .topbar { gap: 10px; padding: 0 max(10px, env(safe-area-inset-right, 0px)) 0 max(10px, env(safe-area-inset-left, 0px)); min-width: 0; }
+  .brand { font-size: 13px; }
+  .top-right { gap: 6px; min-width: 0; }
+  .top-right > .dim.small, #skillsCount { display: none; } /* Claude label and skill count: the dot keeps the status */
+  #meName { display: inline-block; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  #modeBadge { white-space: nowrap; }
+  .center-tabs { flex-wrap: wrap; row-gap: 4px; }
+  .center-tabs .spacer { display: none; }
+}

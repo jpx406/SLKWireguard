@@ -179,9 +179,9 @@ function renderTradeChart(host, pick, time, { height = 320 } = {}) {
   const layer = createPlanLayer(c, cs, box, {
     shift: shiftT,
     actions: (a, p) => {
-      const t = document.createElement("button"); t.className = "primary small"; t.textContent = p.side === "long" ? "📝 Paper buy" : "📝 Paper short";
+      const t = document.createElement("button"); t.className = "primary small"; t.textContent = p.side === "long" ? "Paper Buy" : "Paper Short";
       t.onclick = (e) => { e.stopPropagation(); openTicketFromPick(pick); };
-      const o = document.createElement("button"); o.className = "ghost small"; o.textContent = "open on main chart";
+      const o = document.createElement("button"); o.className = "ghost small"; o.textContent = "Open on Main Chart";
       o.onclick = (e) => { e.stopPropagation(); showPlanOnMain(pick, time); };
       a.append(t, o);
     },
