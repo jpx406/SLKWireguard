@@ -39,7 +39,9 @@ const BASE_HOSTS = [
 // Python packages installed in the sandbox besides the skills' own requirements (plain names only: the API
 // refuses URL specs, so the TradingAgents wheel is installed by the deep-analysis prompt at the start of a run).
 // ta-patterns: 300 candlestick/chart pattern detectors with no look-ahead, for the swing scan.
-const EXTRA_PIP = ["ta-patterns>=1.2.1"];
+// ta-lib: the reference technical-analysis library (150+ indicators, 61 candlestick patterns, C speed);
+//   its 0.8 wheels bundle the C library, so it installs without a compiler.
+const EXTRA_PIP = ["ta-patterns>=1.2.1", "ta-lib>=0.8.3"];
 
 const SYSTEM = `You are the trading copilot behind "Trading Desk", a day-trading cockpit used by a trader in Riyadh (Asia/Riyadh, UTC+3) who trades US equities.
 

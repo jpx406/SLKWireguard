@@ -64,10 +64,18 @@ function createSignalEngine(opts = {}) {
         const dir = dirOf(h.pattern);
         if (dir === "neutral" && h.pattern !== "doji") continue;
         if (h.contextFit != null && h.contextFit < minFit) continue;
+        // Trend gate (as in MotiveWave's "require correct trend context"): a bullish reversal only after a
+        // downtrend or sideways tape, a bearish one only after an uptrend or sideways; never against the trend.
+        if (sensitivity !== "all" && h.trendContext && ((dir === "bullish" && h.trendContext === "uptrend") || (dir === "bearish" && h.trendContext === "downtrend"))) continue;
         const endIdx = h.index + (h.match?.length || 1) - 1;
         const bar = done[endIdx]; if (!bar) continue;
         const key = `${bar.time}|${h.pattern}`;
         if (seen.has(key)) continue;
+        // No repeat of the same pattern on a run of same-colour candles (an engulfing chain marks once).
+        if (sensitivity !== "all" && endIdx > 0) {
+          const prev = done[endIdx - 1], same = (b) => (b.close >= b.open) === (bar.close >= bar.open);
+          if (same(prev) && seen.has(`${prev.time}|${h.pattern}`)) continue;
+        }
         const sig = { key, time: bar.time, price: bar.close, pattern: h.pattern, label: SIGNAL_LABELS[h.pattern] || h.pattern, dir,
           fit: h.contextFit ?? null, trend: h.trendContext || null, bars: h.match?.length || 1 };
         seen.set(key, sig); fresh.push(sig);
