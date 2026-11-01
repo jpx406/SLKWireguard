@@ -193,7 +193,8 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **Badges:** a rating from the last 5 days shows next to the symbol in the Market Board and briefs, so the intraday pick and the deep view sit side by side.
 * **Autopilot:** Admin Settings › *After each full scan, run Deep Analysis on its top N picks*. Off by default.
 * **Cost:** one run is about 15 model calls (5-15 minutes). It gets three times the normal session budget (at least $3) and counts toward the daily cap. Admin Settings › *Model and effort per task* has a *Deep Analysis* row (the quick-think analysts can run on Sonnet 5.5 to halve the cost).
-* **Not included:** TradingAgents' decision-log memory and backtests. The sandbox is fresh each run, so each analysis stands alone.
+* **Combined with the desk:** each run gets your paper account (cash and open positions) as TradingAgents' portfolio, so its trader and risk desk size against what you actually hold; and the decision log it writes is kept by the desk and given back to the next run, so past calls get settled against real prices and their lessons feed later analyses.
+* **Not included:** TradingAgents' backtests (run those from its own CLI if you want them).
 
 ## Monitor and chart windows
 

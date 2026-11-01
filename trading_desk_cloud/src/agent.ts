@@ -51,7 +51,15 @@ export function configContext(rawConfig: string): string {
 }
 
 /** Create a session for this conversation; returns its id. */
-export async function createSession(env: Env, budgetUsd: number, engine: EngineId = "default", opts: { vaultIds?: string[] } = {}) {
+/** Upload a small text file for one session; returns its file id (the caller deletes it when done). */
+export async function uploadText(env: Env, name: string, text: string, type = "text/plain") {
+  const f = await client(env).files.upload({ file: await toFile(new Blob([text], { type }), name, { type }) });
+  return f.id;
+}
+export async function deleteFile(env: Env, fileId: string) { await client(env).files.delete(fileId).catch(() => {}); }
+
+export async function createSession(env: Env, budgetUsd: number, engine: EngineId = "default",
+  opts: { vaultIds?: string[]; resources?: { file_id: string; mount_path: string }[] } = {}) {
   const fileId = await getSetting<string | null>(env.DB, "config_file_id", null);
   const model = ENGINES[engine]?.model;
   const session = await client(env).beta.sessions.create({
@@ -60,7 +68,8 @@ export async function createSession(env: Env, budgetUsd: number, engine: EngineI
     agent: model ? { type: "agent_with_overrides", id: env.AGENT_ID, model: { id: model.id, effort: model.effort } } : env.AGENT_ID,
     environment_id: env.ENVIRONMENT_ID,
     title: `Trading Desk ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
-    resources: fileId ? [{ type: "file", file_id: fileId, mount_path: CONFIG_MOUNT }] : [],
+    resources: [...(fileId ? [{ type: "file" as const, file_id: fileId, mount_path: CONFIG_MOUNT }] : []),
+      ...(opts.resources ?? []).map((r) => ({ type: "file" as const, ...r }))],
     budget: { type: "limit", max_list_cost: { amount: String(Math.round(budgetUsd * 100)), currency: "USD" } },
   });
   return session.id;
