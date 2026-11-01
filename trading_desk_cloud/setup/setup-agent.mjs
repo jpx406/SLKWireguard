@@ -33,13 +33,13 @@ const BASE_HOSTS = [
   "bea.gov", "*.bea.gov", "treasury.gov", "*.treasury.gov", "cboe.com", "*.cboe.com", "tradingeconomics.com", "*.tradingeconomics.com",
   // Deep Analysis (TradingAgents): its data vendors, the release wheel, and Claude itself (called from inside the sandbox).
   "api.anthropic.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
-  "data.sec.gov", "efts.sec.gov", "api.stlouisfed.org", "api.stocktwits.com", "reddit.com", "*.reddit.com", "gamma-api.polymarket.com",
+  "data.sec.gov", "efts.sec.gov", "api.stlouisfed.org", "api.stocktwits.com", "gamma-api.polymarket.com",
+  // (reddit.com blocks Anthropic's crawler and cannot be allowed; TradingAgents' sentiment analyst then uses StockTwits and news.)
 ];
-// Python packages installed in the sandbox besides the skills' own requirements.
-// tradingagents: TauricResearch's multi-agent analysis (MIT), pinned to a release wheel.
+// Python packages installed in the sandbox besides the skills' own requirements (plain names only: the API
+// refuses URL specs, so the TradingAgents wheel is installed by the deep-analysis prompt at the start of a run).
 // ta-patterns: 300 candlestick/chart pattern detectors with no look-ahead, for the swing scan.
-const TA_WHEEL = "https://github.com/TauricResearch/TradingAgents/releases/download/v0.7.1/tradingagents-0.7.1-py3-none-any.whl";
-const EXTRA_PIP = [`tradingagents @ ${TA_WHEEL}`, "ta-patterns>=1.2.1"];
+const EXTRA_PIP = ["ta-patterns>=1.2.1"];
 
 const SYSTEM = `You are the trading copilot behind "Trading Desk", a day-trading cockpit used by a trader in Riyadh (Asia/Riyadh, UTC+3) who trades US equities.
 
@@ -164,13 +164,19 @@ async function main() {
     if (environmentId) { await client.beta.environments.update(environmentId, { config: cfg }); console.log(`\nEnvironment updated: ${environmentId}`); }
     else { const env = await client.beta.environments.create({ name: "trading-desk", description: "Sandbox for the Trading Desk agent", config: cfg }); environmentId = env.id; console.log(`\nEnvironment created: ${environmentId}`); }
   };
-  try { await applyEnv(envConfig); } catch (e) {
-    // A wheel URL may be refused by the package list: fall back to the plain packages; the deep-analysis
-    // prompt then installs the wheel with pip at the start of a run.
-    if (!/package|pip/i.test(String(/** @type {any} */ (e)?.message || e))) throw e;
-    console.warn(`  ! environment refused the package list (${/** @type {any} */ (e)?.message}); retrying without the TradingAgents wheel`);
-    envConfig = envConfigWith([...pip].filter((p) => !p.startsWith("tradingagents")).sort());
-    await applyEnv(envConfig);
+  // The API refuses some entries (a package spec it does not accept, a host that blocks Anthropic's crawler):
+  // drop what it names and try again, so one bad entry does not stop the setup.
+  for (let attempt = 0; ; attempt++) {
+    try { await applyEnv(envConfig); break; } catch (e) {
+      const msg = String(/** @type {any} */ (e)?.message || e);
+      const badPkg = msg.match(/Invalid pip package name: '([^']+)'/)?.[1];
+      const badHost = msg.match(/`allowed_hosts` entry "([^"]+)"/)?.[1];
+      if (attempt > 20 || (!badPkg && !badHost)) throw e;
+      if (badPkg) { pip.delete(badPkg); console.warn(`  ! package refused, skipped: ${badPkg}`); }
+      if (badHost) { hosts.delete(badHost); console.warn(`  ! host refused (blocks Anthropic), skipped: ${badHost}`); }
+      const nw = networking.type === "limited" ? { ...networking, allowed_hosts: [...hosts].sort() } : networking;
+      envConfig = /** @type {const} */ ({ type: "cloud", networking: nw, ...(pip.size ? { packages: { pip: [...pip].sort() } } : {}) });
+    }
   }
   const pipShown = envConfig.packages?.pip ?? [];
   console.log(`  networking: ${networking.type}${networking.allowed_hosts ? ` (${networking.allowed_hosts.length} hosts)` : ""}${pipShown.length ? `, pip: ${pipShown.join(" ")}` : ""}`);
