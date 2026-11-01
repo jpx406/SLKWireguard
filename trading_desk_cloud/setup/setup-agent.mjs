@@ -192,7 +192,8 @@ async function main() {
   }
   const cred = /** @type {const} */ ({
     type: "environment_variable", secret_name: "ANTHROPIC_API_KEY", secret_value: apiKey,
-    networking: { type: "limited", allowed_hosts: ["api.anthropic.com"] }, injection_location: { header: true, body: false },
+    networking: { type: "limited", allowed_hosts: ["api.anthropic.com"] },
+    // (injection_location is in the SDK types but the API refuses it; the default substitutes the value in headers.)
   });
   if (state.credential_id) {
     try { await client.beta.vaults.credentials.update(vaultId, state.credential_id, { type: "environment_variable", secret_value: apiKey }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
