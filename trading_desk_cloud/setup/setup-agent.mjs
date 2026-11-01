@@ -184,24 +184,26 @@ async function main() {
 
   // Vault: the API key the sandbox uses when TradingAgents calls Claude (Deep Analysis). The value is substituted
   // into requests to api.anthropic.com at the network edge; the sandbox itself only sees a placeholder.
+  const saveState = () => fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   let vaultId = state.vault_id;
   if (!vaultId) {
     const v = await client.beta.vaults.create({ display_name: "trading-desk" });
-    vaultId = v.id; state.vault_id = vaultId;
+    vaultId = v.id; state.vault_id = vaultId; saveState(); // saved at once, so a later failure does not create another vault
     console.log(`Vault created: ${vaultId}`);
   }
-  const cred = /** @type {const} */ ({
+  // The credential's fields go under "auth" (as the API documents it); injection_location is left out, which
+  // enables both header and body substitution.
+  const auth = /** @type {const} */ ({
     type: "environment_variable", secret_name: "ANTHROPIC_API_KEY", secret_value: apiKey,
     networking: { type: "limited", allowed_hosts: ["api.anthropic.com"] },
-    // (injection_location is in the SDK types but the API refuses it; the default substitutes the value in headers.)
   });
   if (state.credential_id) {
-    try { await client.beta.vaults.credentials.update(vaultId, state.credential_id, { type: "environment_variable", secret_value: apiKey }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
+    try { await client.beta.vaults.credentials.update(vaultId, state.credential_id, { auth: { type: "environment_variable", secret_value: apiKey } }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
     catch (e) { if (/** @type {any} */ (e)?.status !== 404) throw e; state.credential_id = null; }
   }
   if (!state.credential_id) {
-    const c = await client.beta.vaults.credentials.create(vaultId, cred);
-    state.credential_id = c.id;
+    const c = await client.beta.vaults.credentials.create(vaultId, { display_name: "Anthropic API key for TradingAgents", auth });
+    state.credential_id = c.id; saveState();
     console.log(`Vault credential ANTHROPIC_API_KEY created (${c.id}) for api.anthropic.com`);
   }
 
