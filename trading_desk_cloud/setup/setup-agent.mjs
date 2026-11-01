@@ -198,7 +198,7 @@ async function main() {
     networking: { type: "limited", allowed_hosts: ["api.anthropic.com"] },
   });
   if (state.credential_id) {
-    try { await client.beta.vaults.credentials.update(vaultId, state.credential_id, { auth: { type: "environment_variable", secret_value: apiKey } }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
+    try { await client.beta.vaults.credentials.update(state.credential_id, { vault_id: vaultId, auth: { type: "environment_variable", secret_value: apiKey } }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
     catch (e) { if (/** @type {any} */ (e)?.status !== 404) throw e; state.credential_id = null; }
   }
   if (!state.credential_id) {
