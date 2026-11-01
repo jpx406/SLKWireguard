@@ -51,10 +51,11 @@ export function configContext(rawConfig: string): string {
 }
 
 /** Create a session for this conversation; returns its id. */
-export async function createSession(env: Env, budgetUsd: number, engine: EngineId = "default") {
+export async function createSession(env: Env, budgetUsd: number, engine: EngineId = "default", opts: { vaultIds?: string[] } = {}) {
   const fileId = await getSetting<string | null>(env.DB, "config_file_id", null);
   const model = ENGINES[engine]?.model;
   const session = await client(env).beta.sessions.create({
+    ...(opts.vaultIds?.length ? { vault_ids: opts.vaultIds } : {}),
     // A non-default engine overrides only the model and effort for this session; the agent itself is unchanged.
     agent: model ? { type: "agent_with_overrides", id: env.AGENT_ID, model: { id: model.id, effort: model.effort } } : env.AGENT_ID,
     environment_id: env.ENVIRONMENT_ID,

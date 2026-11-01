@@ -588,3 +588,37 @@ body { display: flex; flex-direction: column; overflow: hidden; }
   .session-note { font-size: .846rem; padding: 5px 8px; }
   .topbar .badge { font-size: max(11px, .75rem); }
 }
+
+/* ================================================================ candle signals, chart windows, Monitor grid */
+.sig-feed { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex: none; align-items: center; }
+.sig-feed.hidden { display: none; }
+.sig-chip { display: inline-flex; gap: 6px; align-items: center; font-size: 0.846rem; padding: 3px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); min-height: 24px; }
+.sig-chip.bullish b { color: var(--up); } .sig-chip.bearish b { color: var(--down); } .sig-chip.neutral b { color: var(--dim); }
+.chart-body .sig-feed { max-height: 72px; overflow: auto; background: var(--panel); }
+.w-pop { left: auto; right: 28px; }
+.w-row:hover .w-pop, .w-row:focus-within .w-pop { display: inline; }
+@media (pointer: coarse) { .w-pop { display: none !important; } }
+
+/* pop-out window */
+body.chart-window { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.cw-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; flex: none; }
+.cw-chart { flex: 1; min-height: 0; position: relative; background: var(--panel); }
+.cw-switch { font-size: 0.923rem; gap: 4px; }
+body.chart-window .sig-feed { background: var(--panel); max-height: 64px; overflow: auto; }
+
+/* Monitor grid */
+.mon-grid { --cols: 2; --rows: 2; flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(180px, 1fr); gap: 6px; padding: 6px; overflow: auto; }
+.mon-tile { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.mon-head { display: flex; align-items: center; gap: 8px; padding: 2px 8px; border-bottom: 1px solid var(--line); font-size: 0.923rem; flex: none; }
+.mon-head .icon-btn { min-height: 24px; min-width: 24px; padding: 2px; }
+.mon-head .icon-btn .ic { width: 14px; height: 14px; }
+.mon-chart { flex: 1; min-height: 160px; position: relative; }
+@media (max-width: 700px) { .mon-grid { grid-template-columns: 1fr; grid-auto-rows: 240px; } }
+
+/* Deep Analysis ratings and swing tags */
+.rating { display: inline-block; font-weight: 700; font-size: 0.923rem; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel-2); margin-left: 6px; vertical-align: middle; }
+.rating.small { font-size: 0.769rem; padding: 1px 6px; }
+.rating.up { color: var(--up); border-color: rgba(34,197,94,.4); } .rating.down { color: var(--down); border-color: rgba(239,68,68,.4); }
+.pill.swing { background: rgba(192,132,252,.15); color: var(--ema20); margin-left: 6px; vertical-align: middle; }
+#deepForm { gap: 6px; display: inline-flex; align-items: center; }
+#deepSym { width: 110px; }

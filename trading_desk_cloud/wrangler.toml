@@ -23,6 +23,7 @@ database_id = "REPLACE_WITH_D1_DATABASE_ID"
 # Filled in by setup/setup-agent.mjs (agent + environment ids are not secrets).
 AGENT_ID = ""
 ENVIRONMENT_ID = ""
+VAULT_ID = ""
 # From Cloudflare Zero Trust -> Access -> Applications -> your app.
 ACCESS_TEAM_DOMAIN = ""   # e.g. "nesr.cloudflareaccess.com"
 ACCESS_AUD = ""           # the application's "Application Audience (AUD) Tag"

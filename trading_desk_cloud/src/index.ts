@@ -5,6 +5,7 @@ import { autoTradeNewBriefs, hasAccount, leaderboard, cancelOrder, closePosition
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
+import { finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -36,7 +37,7 @@ async function setupMarket(env: Env) {
 }
 
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
-const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/];
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/];
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
@@ -171,9 +172,14 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       await setSetting(env.DB, "daily_cap_usd", Math.round(c * 100) / 100);
     }
     if ("reuse_research" in patch) await setSetting(env.DB, "reuse_research", patch.reuse_research !== false);
+    if ("deep_top_n" in patch) {
+      const n = Number(patch.deep_top_n);
+      if (!(n >= 0 && n <= 10)) return bad("Deep-analyze top picks: 0 (off) to 10.");
+      await setSetting(env.DB, "deep_top_n", Math.round(n));
+    }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
-      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat"]);
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep"]);
       await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
     }
     if ("trader_config" in patch) {
@@ -187,10 +193,30 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json(await getSettings(env.DB));
   }
 
+  // ---- Deep Analysis (TradingAgents in the sandbox)
+  if (path === "/deep" && m === "GET") {
+    const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
+    if (agentReady) await finalizeDeep(env);
+    return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_top_n: (await getSettings(env.DB)).deep_top_n });
+  }
+  if (path === "/deep/run" && m === "POST") {
+    if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);
+    const b = await body<{ symbol?: string }>(req);
+    const r = await startDeep(env, String(b.symbol ?? ""), who.user);
+    return r.error ? bad(r.error) : json({ id: r.id });
+  }
+  const dm = path.match(/^\/deep\/([a-z0-9]{6,32})$/);
+  if (dm && m === "GET") {
+    const r = await env.DB.prepare("SELECT * FROM deep_runs WHERE id = ?").bind(dm[1]).first<Record<string, unknown>>();
+    if (!r) return bad("Not found", 404);
+    return json({ ...r, data: r.data ? JSON.parse(String(r.data)) : null });
+  }
+  if (path === "/ratings" && m === "GET") return json(await latestRatings(env.DB));
+
   if (path === "/usage" && m === "GET") {
     if (who.role !== "admin") return bad("Only the admin can see Claude spending.", 403);
     const s = await getSettings(env.DB);
-    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, reuse_research: s.reuse_research, engines: s.engines,
+    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_top_n: s.deep_top_n, reuse_research: s.reuse_research, engines: s.engines,
       engine_options: Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label })), slots: SLOTS.map(({ id, label }) => ({ id, label })) });
   }
 

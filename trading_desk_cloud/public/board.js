@@ -86,7 +86,13 @@ function picksTable(picks, { compact = false, time = null } = {}) {
   thead.append(hr); table.append(thead, tbody); wrap.append(table);
   const cell = (p, key) => {
     const v = p[key];
-    if (key === "symbol") { const td = el("td", "sym"); td.append(el("b", null, String(v || "?").toUpperCase())); if (p.name && !compact) td.append(el("div", "dim tiny", p.name)); return td; }
+    if (key === "symbol") {
+      const td = el("td", "sym"); td.append(el("b", null, String(v || "?").toUpperCase()));
+      if (p.horizon === "swing") td.append(el("span", "pill swing", "swing"));
+      const dr = typeof state !== "undefined" && state.deep?.ratings?.[String(v || "").toUpperCase()];
+      if (dr && typeof ratingBadge === "function") td.append(ratingBadge(dr.rating));
+      if (p.name && !compact) td.append(el("div", "dim tiny", p.name)); return td;
+    }
     if (key === "bias") return el("td", biasCls(v), String(v || "—"));
     if (key === "score") { const td = el("td", "score"); const bar = el("span", "scorebar"); bar.style.width = `${Math.max(0, Math.min(100, nv(v) ?? 0))}%`; td.append(bar, el("span", null, v ?? "—")); return td; }
     if (key === "premarket_change_pct") return el("td", `num ${signCls(v)}`, pct(v));
@@ -142,7 +148,9 @@ function pickDetail(p, compact = false, holder = null) {
   ask.onclick = (e) => { e.stopPropagation(); showTab("side", "copilot"); sendChat(`Re-check this idea with my trader-* skills using live data and tell me if it is still valid: ${JSON.stringify(p)}`, `Re-check ${p.symbol}`); };
   const pt = el("button", "primary small", /short/i.test(p.bias || "") ? "Paper Short" : "Paper Buy");
   pt.onclick = (e) => { e.stopPropagation(); openTicketFromPick(p); };
-  acts.append(pt, c, pl, ask); right.append(acts);
+  const dp = el("button", "ghost small", "Deep Analysis"); dp.title = "Run TradingAgents on this symbol (5-15 minutes, about 15 model calls)";
+  dp.onclick = (e) => { e.stopPropagation(); runDeep(p.symbol); };
+  acts.append(pt, c, pl, ask, dp); right.append(acts);
   box.append(left, right); wrapAll.append(box);
   return wrapAll;
 }

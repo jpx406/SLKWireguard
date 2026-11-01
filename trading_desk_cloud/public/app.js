@@ -17,6 +17,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
+  popout: '<path d="M14 4h6v6M20 4l-8 8"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
 };
 /** An inline SVG icon (decorative: the button's text or aria-label names the action). */
 function icon(name) {
@@ -246,6 +247,9 @@ function prevDayLevels(data) {
   const prev = keys.filter((k) => k < today).pop();
   return prev ? days.get(prev) : null;
 }
+/* Candle signals (signals.js) on the main chart. The engine forgets its signals when the symbol or bar size changes. */
+const sigEngine = createSignalEngine({ intervalSec: 300, shift });
+const sigTime = (t) => { const d = new Date(t * 1000); return intraday() ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString(); };
 function drawIndicators() {
   const d = state.candles, on = state.ind;
   vwapS.setData(on.vwap && intraday() ? vwap(d) : []);
@@ -276,8 +280,11 @@ async function loadChart(keepView = false) {
       applyRangeView(data);
     }
     state.candles = data;
-    if (state.mainPlan && state.mainPlan.symbol === sym) mainLayer.set(state.mainPlan, data, paperMarkers(sym, data, shift));
-    else candleS.setMarkers(paperMarkers(sym, data, shift));
+    const fresh = state.ind.signals ? sigEngine.update(data) : [];
+    const extra = [...paperMarkers(sym, data, shift), ...(state.ind.signals ? sigEngine.markers() : [])].sort((a, b) => a.time - b.time);
+    if (state.mainPlan && state.mainPlan.symbol === sym) mainLayer.set(state.mainPlan, data, extra);
+    else candleS.setMarkers(extra);
+    if (state.ind.signals) { renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt }); if (fresh.length && state.sigNotify) notifySignals(sym, fresh, data.at(-1)?.time ?? 0); }
     drawIndicators(); updateLegend();
     $("#chartMsg").textContent = "";
     chartEmpty(data.length ? null : emptyChartText(sym));
@@ -307,7 +314,7 @@ chart.subscribeCrosshairMove(updateLegend);
 function setSymbol(sym) {
   sym = sym.trim().toUpperCase(); if (!sym) return;
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
-  state.symbol = sym; $("#symInput").value = sym; state.candles = [];
+  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset();
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]);
 }
 
@@ -319,6 +326,9 @@ function renderWatchlist() {
     const row = el("div", `w-row${sym === state.symbol ? " active" : ""}`);
     row.append(el("span", "w-sym", sym), el("span", "w-px", fmt(q.last)), el("span", "w-chg " + cls, q.change_pct == null ? "" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`));
     row.setAttribute("aria-label", `${sym}${q.last == null ? "" : `, ${fmt(q.last)}`}${q.change_pct == null ? "" : `, ${q.change_pct > 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent`}`);
+    const pop = el("button", "w-del w-pop"); pop.innerHTML = icon("popout"); pop.title = `Open ${sym} in its own window`; pop.setAttribute("aria-label", `Open ${sym} in its own window`);
+    pop.onclick = (e) => { e.stopPropagation(); openChartWindow(sym); };
+    row.append(pop);
     const del = el("button", "w-del"); del.innerHTML = icon("x"); del.title = `Remove ${sym}`; del.setAttribute("aria-label", `Remove ${sym} from watchlist`);
     del.onclick = (e) => { e.stopPropagation(); saveSettings({ watchlist: state.settings.watchlist.filter((s) => s !== sym) }); };
     // On iPhone the watchlist is its own screen: choosing a symbol pushes to its chart.
@@ -347,7 +357,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["chart", "board", "paper", "journal", "more"];
+const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "deep", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
@@ -449,6 +459,46 @@ function initA11y() {
   });
 }
 initA11y();
+
+/* ------------------------------------------------------------------ Monitor: a grid of live charts */
+state.mon = { charts: [], signals: [] };
+function monitorSymbols() {
+  const typed = $("#monSyms").value.toUpperCase().split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  return typed.length ? typed : state.settings.watchlist;
+}
+function renderMonitor() {
+  const grid = $("#monGrid"), layout = $("#monLayout").value, [cols, rows] = layout.split("x").map(Number);
+  for (const c of state.mon.charts) c.dispose(); state.mon.charts = []; state.mon.signals = []; grid.innerHTML = "";
+  grid.style.setProperty("--cols", cols); grid.style.setProperty("--rows", rows);
+  const syms = monitorSymbols().slice(0, cols * rows);
+  if (!syms.length) { grid.append(el("div", "bd-empty", "Add symbols to your watchlist, or type some above, to monitor them here.")); return; }
+  for (const sym of syms) {
+    const tile = el("div", "mon-tile"), head = el("div", "mon-head"), box = el("div", "mon-chart");
+    const name = el("b", "sym", sym), px = el("span", "mono", "—"), pop = el("button", "icon-btn"); pop.innerHTML = icon("popout"); pop.title = `Open ${sym} in its own window`; pop.setAttribute("aria-label", `Open ${sym} in its own window`);
+    pop.onclick = () => openChartWindow(sym);
+    name.style.cursor = "pointer"; name.title = "Open on the main chart"; name.onclick = () => { setSymbol(sym); navigate("chart"); };
+    head.append(name, px, el("span", "spacer"), pop); tile.append(head, box); grid.append(tile);
+    const mc = createMiniChart(box, {
+      symbol: sym, interval: $("#monInterval").value, range: "1D", fontSize: 10, signals: $("#monSignals").checked,
+      onQuote: ({ last }) => { px.textContent = fmt(last); },
+      onSignal: (fresh, { symbol: s2, latestBar, all }) => {
+        state.mon.signals = state.mon.signals.filter((x) => x.symbol !== s2).concat(all.map((x) => ({ ...x, symbol: s2, label: `${s2} ${x.label}` })));
+        state.mon.signals.sort((x, y) => y.time - x.time);
+        renderSignalFeed($("#monFeed"), state.mon.signals, { fmtTime: sigTime, fmtPrice: fmt, limit: 12, onPick: (sg) => { setSymbol(sg.symbol); navigate("chart"); } });
+        if (fresh.length && state.sigNotify) notifySignals(s2, fresh, latestBar);
+      },
+    });
+    state.mon.charts.push(mc);
+  }
+}
+$("#monApply").onclick = renderMonitor;
+$("#monLayout").onchange = renderMonitor; $("#monInterval").onchange = renderMonitor;
+$("#monSignals").onchange = (e) => { for (const c of state.mon.charts) c.setSignals(e.target.checked); };
+$("#monPopAll").onclick = () => { monitorSymbols().forEach((sym, i) => openChartWindow(sym, { index: i })); };
+document.addEventListener("section", (e) => {
+  if (e.detail === "monitor") { if (!state.mon.charts.length) renderMonitor(); }
+  else if (state.mon.charts.length && !sectionVisible("monitor")) { for (const c of state.mon.charts) c.dispose(); state.mon.charts = []; }
+});
 
 /* ------------------------------------------------------------------ Claude copilot */
 function deskContext() {
@@ -582,7 +632,7 @@ $("#btnClearPlan").onclick = () => { state.mainPlan = null; mainLayer.clear(); }
 $("#btnDrawPlan").onclick = () => {
   const p = calcRisk(); if (!p) return;
   state.mainPlan = makePlan({ symbol: state.symbol, side: p.side, entry: p.entry, stop: p.stop, targets: p.targets, setup: `${p.shares} shares (Risk tab)` }, null);
-  mainLayer.set(state.mainPlan, state.candles, paperMarkers(state.symbol, state.candles, shift));
+  mainLayer.set(state.mainPlan, state.candles, [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : [])]);
 };
 $("#btnAskSize").onclick = () => {
   const p = calcRisk(); if (!p) return; showTab("side", "copilot");
@@ -710,7 +760,7 @@ $("#settingsForm").onsubmit = async (e) => {
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
     await saveSettings({ session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
-      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, reuse_research: f.reuse_research.checked, engines } : {}) });
+      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_top_n: +f.deep_top_n.value || 0, reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
@@ -737,7 +787,8 @@ async function loadUsage() {
   } else out.append(el("div", null, "No Claude sessions recorded yet."));
   f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
   const grid = $("#engineGrid"); grid.innerHTML = "";
-  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"]]) {
+  f.deep_top_n.value = u.deep_top_n || 0;
+  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"]]) {
     const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
     for (const o of u.engine_options) sel.append(new Option(o.label, o.id));
     sel.value = u.engines?.[id] || "default"; lb.append(sel); grid.append(lb);
@@ -924,6 +975,7 @@ $("#apEnabled").onchange = (e) => api("/api/autopilot", { method: "PUT", body: J
 function syncNotifyButtons() {
   let perm = "unsupported";
   try { perm = Notification.permission; } catch { /* unsupported */ }
+  state.sigNotify = perm === "granted"; // candle signals notify too, with the same permission
   const [ic, txt] = perm === "granted" ? ["bell", "Notifications On"] : perm === "denied" ? ["bell-off", "Notifications Blocked"] : perm === "unsupported" ? ["bell-off", "Not Supported"] : ["bell", "Notify Me"];
   iconLabel($("#btnNotify"), ic, txt);
   const pb = $("#btnPrefNotify"); pb.textContent = perm === "granted" ? "On" : perm === "denied" ? "Blocked in Browser Settings" : perm === "unsupported" ? "Not Supported" : "Turn On"; pb.disabled = perm !== "default";
@@ -939,7 +991,7 @@ $("#addSymForm").onsubmit = (e) => {
 };
 $$("#intervals button").forEach((b) => (b.onclick = () => {
   if (b.disabled) return;
-  state.interval = b.dataset.i; syncRangeButtons(); state.candles = []; loadChart(); renderWorkflows();
+  state.interval = b.dataset.i; syncRangeButtons(); state.candles = []; sigEngine.setInterval(INTERVAL_SEC[state.interval] || 300); sigEngine.reset(); loadChart(); renderWorkflows();
 }));
 $$("#ranges button").forEach((b) => (b.onclick = () => {
   state.range = b.dataset.r;
@@ -947,11 +999,28 @@ $$("#ranges button").forEach((b) => (b.onclick = () => {
   syncRangeButtons(); state.candles = []; loadChart(); renderWorkflows();
 }));
 syncRangeButtons();
-$$("#indicators button").forEach((b) => (b.onclick = () => { state.ind[b.dataset.ind] = !state.ind[b.dataset.ind]; b.classList.toggle("on"); drawIndicators(); }));
+$$("#indicators button").forEach((b) => (b.onclick = () => {
+  state.ind[b.dataset.ind] = !state.ind[b.dataset.ind]; b.classList.toggle("on");
+  if (b.dataset.ind === "signals") {
+    $("#sigFeed").classList.toggle("hidden", !state.ind.signals);
+    try { localStorage.setItem("td.signals", state.ind.signals ? "1" : "0"); } catch { /* ok */ }
+    if (state.ind.signals) sigEngine.update(state.candles);
+    const extra = [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : [])].sort((x, y) => x.time - y.time);
+    if (state.mainPlan && state.mainPlan.symbol === state.symbol) mainLayer.set(state.mainPlan, state.candles, extra); else candleS.setMarkers(extra);
+    renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt });
+    return;
+  }
+  drawIndicators();
+}));
+// Signals: remembered per device, off by default on the main chart.
+try { if (localStorage.getItem("td.signals") === "1") { state.ind.signals = true; $('#indicators [data-ind="signals"]').classList.add("on"); $("#sigFeed").classList.remove("hidden"); } } catch { /* ok */ }
+$("#btnPopChart").onclick = () => openChartWindow(state.symbol);
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#symInput").select(); }
 });
 
+// A pop-out chart window's "Paper Trade" lands here when the desk was closed: /?paper=SYM
+const landing = new URLSearchParams(location.search).get("paper");
 (async function init() {
   marked.setOptions({ gfm: true, breaks: true });
   tickClock(); setInterval(tickClock, 1000);
@@ -966,6 +1035,7 @@ document.addEventListener("keydown", (e) => {
   restoreSession();
   renderWatchlist(); renderWorkflows(); loadChart();
   const results = await Promise.allSettled([loadStatus(), loadSkills(), loadGuide(), loadJournal(), refreshQuotes(), loadBriefs()]);
+  if (landing && /^[A-Z0-9.\-]{1,15}$/i.test(landing)) { history.replaceState(null, "", "/"); setSymbol(landing); setTimeout(() => openTicket({ symbol: landing.toUpperCase() }), 800); }
   const failed = results.find((r) => r.status === "rejected");
   if (failed) showBanner(failed.reason?.message || String(failed.reason));
   renderWorkflows();

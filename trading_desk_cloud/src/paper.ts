@@ -342,7 +342,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
 }
 
 // --------------------------------------------------------------------------------------- auto-trading
-type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; stop?: number; targets?: number[]; size_shares?: number; setup?: string };
+type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; stop?: number; targets?: number[]; size_shares?: number; setup?: string; horizon?: string };
 
 /** Place paper orders from finished briefs for every account with auto-trade on (once per brief). */
 export async function autoTradeNewBriefs(db: D1Database) {
@@ -354,16 +354,20 @@ export async function autoTradeNewBriefs(db: D1Database) {
   } catch { return; }
   if (!briefs.length) return;
   for (const b of briefs) await db.prepare("UPDATE briefs SET auto_done = 1 WHERE id = ?").bind(b.id).run();
-  if (!isTradingDay(ny) || ny.minutes >= sessionTimes(ny.date).close - 30) return; // too late to open day trades
+  if (!isTradingDay(ny)) return;
+  // Day-trade briefs are too late to act on in the last 30 minutes; swing setups (held for days) are not.
+  const lateForDay = ny.minutes >= sessionTimes(ny.date).close - 30;
   const accounts = (await db.prepare("SELECT * FROM paper_accounts").all<Account>()).results
     .map((a) => ({ ...a, s: sanitizePaperSettings(JSON.parse(a.settings || "{}")) })).filter((a) => a.s.auto_trade);
   for (const b of briefs) {
     let picks: Pick[] = [];
     try { picks = (JSON.parse(b.data || "{}")?.picks ?? []) as Pick[]; } catch { continue; }
+    if (lateForDay) picks = picks.filter((p) => p.horizon === "swing");
+    if (!picks.length) continue;
     for (const a of accounts) {
-      // Each account's own triggers: which scans, which time window.
+      // Each account's own triggers: which scans, which time window (swing picks ignore the intraday window).
       if (a.s.auto_slots.length && !a.s.auto_slots.includes(b.slot)) continue;
-      if (ny.minutes < toMin(a.s.auto_start) || ny.minutes >= toMin(a.s.auto_end)) continue;
+      if (b.slot !== "swing" && (ny.minutes < toMin(a.s.auto_start) || ny.minutes >= toMin(a.s.auto_end))) continue;
       await autoTradeAccount(db, a, picks, b);
     }
   }
@@ -400,7 +404,8 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     // Entry = most to pay: fills now if the market is at or below it (long), else waits for a pullback to it.
     // Skip the pick when the price is already through the stop-loss or past the take-profit.
     if (side === "long" ? last <= stop || (target !== null && last >= target) : last >= stop || (target !== null && last <= target)) continue;
-    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300) });
+    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300),
+      exit_mode: p.horizon === "swing" ? "hold" : null }); // a swing pick is held through the stop or target, whatever the account default
     if (!r.error) { busy.add(symbol); slots--; tradesLeft--; }
   }
 }

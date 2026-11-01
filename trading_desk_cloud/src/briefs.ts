@@ -7,12 +7,13 @@ import { capBlocks, isEngine, recordSpend } from "./cost";
 import { getSetting, getSettings } from "./db";
 import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
+import { deepTopPicks, finalizeDeep } from "./deep";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
 }
 
-export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review";
+export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review" | "swing";
 type Slot = { id: SlotId; label: string; et: string; defaultOn: boolean; prompt: string };
 
 // Structured result every brief ends with; the UI turns it into tables and charts.
@@ -39,6 +40,7 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
  "avoid": [{"symbol":"XYZ","reason":"low float halt risk"}],
  "skills_run": [{"skill":"trader-scan","status":"ok|failed|skipped","note":""}]
 }
+Picks may carry "horizon": "day" (default, flat by the close) or "swing" (held 2-10 sessions; the paper desk then holds it until the stop or target).
 Rank picks best first (max 10), one entry per symbol, sizes within /workspace/trader/config.json.`;
 
 export const SLOTS: Slot[] = [
@@ -61,6 +63,8 @@ Report which skills you ran and whether each one worked. Then a short written br
     `Midday check: use my trader-* skills to find the cleanest afternoon setups (trend continuation, VWAP reclaims, range breaks) among the day's movers and my watchlist, with full plans per /workspace/trader/config.json.` },
   { id: "power", label: "Power hour", et: "15:00", defaultOn: false, prompt:
     `Power hour: use my trader-* skills to find setups for the last hour (closing strength or weakness, end-of-day breakouts), with full plans per /workspace/trader/config.json. Remind me to be flat before the close if my rules require it.` },
+  { id: "swing", label: "Swing setups (2-10 day holds)", et: "16:40", defaultOn: false, prompt:
+    `The US session just closed. Use my trader-* skills on DAILY and WEEKLY bars to find the best SWING setups for the next 2-10 sessions across the whole US market (not only my watchlist): volatility-contraction and flag breakouts near highs, pullbacks to the rising 10/21-day EMA in strong trends, bases breaking out on volume, selling-exhaustion hammers at support, and post-earnings drift. Prefer names with a catalyst, relative strength versus SPY and average volume over 1M shares. The Python package ta_patterns is installed in your sandbox (300 candlestick and chart patterns, no look-ahead): use it on each candidate's daily OHLC to confirm the pattern. For every pick give a full plan: entry (buy-stop above the trigger or limit at support), stop (below the pattern low or the 21-day EMA), targets in R, how many sessions to allow, and what invalidates it. Set "horizon": "swing" on every pick and set the exit_plan to hold through the stop or targets. Also list the market regime and the 3 sectors with the best relative strength this week.` },
   { id: "review", label: "End-of-day review", et: "16:15", defaultOn: false, prompt:
     `End-of-day review with my trader-* skills: how today's pre-market picks actually played out (trigger hit? target or stop?), the day's biggest movers I missed and why, and 3 lessons for tomorrow.` },
 ];
@@ -139,6 +143,7 @@ export async function ensureBriefSchema(db: D1Database) {
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN params TEXT").run(); } catch { /* already there */ }
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN auto_done INTEGER").run(); } catch { /* already there */ }
   try { await db.prepare("ALTER TABLE briefs ADD COLUMN engine TEXT").run(); } catch { /* already there */ }
+  try { await db.prepare("ALTER TABLE briefs ADD COLUMN deep_done INTEGER").run(); } catch { /* already there */ }
   briefSchemaReady = true;
 }
 
@@ -285,6 +290,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
   try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }
+  try { await finalizeDeep(env); await deepTopPicks(env); } catch (e) { console.error("deep analysis", e); }
   const ny = nyNow(now);
   const ap = await getAutopilot(env.DB);
   if (!ap.enabled || !isTradingDay(ny)) return;

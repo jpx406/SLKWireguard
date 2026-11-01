@@ -183,6 +183,35 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **Text size follows the device:** on iPhone and iPad, body text is 15 pt and follows your Text Size setting (Dynamic Type). **Preferences → Text size** makes it one step smaller (13 pt) or larger (17 pt).
 * **Sizes on a Mac:** body text is 13 pt and controls are at least 28 pt, both following Apple's guidelines.
 
+## Deep Analysis (TradingAgents)
+
+[TradingAgents](https://github.com/TauricResearch/TradingAgents) (Tauric Research, MIT) is a multi-agent analysis of one ticker: four analysts (market, news, fundamentals, sentiment), a bull-vs-bear debate, a trader, a risk desk and a portfolio manager, ending in a 5-tier rating (Buy / Overweight / Hold / Underweight / Sell). It is a slower, multi-day second opinion; your trader-* skills stay the intraday desk.
+
+* **Where it runs:** inside the same Claude sandbox as your skills. `setup/setup-agent.mjs` installs the `tradingagents` 0.7.1 wheel (and `ta-patterns`), allows its data sources (Yahoo, SEC EDGAR, StockTwits, Reddit, FRED, Polymarket) and stores your Anthropic key in a Managed Agents **vault** so TradingAgents can call Claude from the sandbox. The key is substituted into requests to api.anthropic.com at the network edge; the sandbox never sees it. Re-run the setup script after updating: it prints the `VAULT_ID` into wrangler.toml, then deploy.
+* **Menu:** **Deep Analysis** in the sidebar (More › Deep Analysis on iPhone). Type a symbol and click *Run Deep Analysis*, or click **Deep Analysis** on a recommendation in the Market Board.
+* **Result:** rating, confidence, summary, bull and bear case, the trader's entry / stop / targets / horizon, risks, and the full report with every agent's section. **Paper Buy** on a run prefills the ticket with the trader's plan and holds it (not end-of-day).
+* **Badges:** a rating from the last 5 days shows next to the symbol in the Market Board and briefs, so the intraday pick and the deep view sit side by side.
+* **Autopilot:** Admin Settings › *After each full scan, run Deep Analysis on its top N picks*. Off by default.
+* **Cost:** one run is about 15 model calls (5-15 minutes). It gets three times the normal session budget (at least $3) and counts toward the daily cap. Admin Settings › *Model and effort per task* has a *Deep Analysis* row (the quick-think analysts can run on Sonnet 5.5 to halve the cost).
+* **Not included:** TradingAgents' decision-log memory and backtests. The sandbox is fresh each run, so each analysis stands alone.
+
+## Monitor and chart windows
+
+* **Monitor** (sidebar): a grid of live charts (2 × 2 up to 4 × 3) of your watchlist or any symbols you type, each with VWAP/EMAs and candle signals, and one combined signal feed. Click a symbol name to open it on the main chart.
+* **Chart windows:** **Window** on the chart toolbar, the window icon on a watchlist row, or *Open as Windows* in Monitor opens `chart.html?symbol=…` in its own browser window, so you can tile several charts across your screens. Each window has its own range, bar size, indicators, a **Signals** switch and a **Notify** switch, shows your paper fills, and *Paper Trade* sends the symbol back to the desk. Browsers allow one pop-up per click; for *Open as Windows* allow pop-ups for this site when asked.
+
+## Candle signals
+
+* **Switch:** *Signals* on the main chart (remembered on this device), on every Monitor tile, and in every chart window.
+* **What it detects:** the open-source `candlestick` library (MIT, 18 patterns / 29 variants: hammers, engulfing, kickers, piercing line, dark cloud, morning and evening stars, three white soldiers, three black crows, tweezers, marubozu…) with trend context, so a hammer after a downtrend scores higher than one in an uptrend (the *fit %* in the feed). Harami and doji are too frequent to be useful and are left out.
+* **No repainting:** only completed bars are scanned, so a signal never appears and then vanishes while a bar is still forming.
+* **On the chart:** green arrows below bars for bullish patterns, red arrows above for bearish; the last few are labelled. The feed under the chart lists them newest first.
+* **Notifications:** with browser notifications on (Preferences), a new signal on the latest bar notifies you, on the main chart and in Monitor; chart windows have their own *Notify* switch.
+
+## Swing setups
+
+The **Swing setups (2-10 day holds)** brief (Autopilot, off by default, 16:40 New York) scans daily and weekly bars for breakouts, pullbacks, bases and exhaustion hammers, confirms them with `ta_patterns` (300 candlestick and chart patterns, no look-ahead) in the sandbox, and tags each pick `swing`. Auto-trade takes swing picks after the close and holds them through the stop or target instead of closing at end of day.
+
 ## Users
 
 * **Admin:** log in with username **admin** and the `LOGIN_PASSWORD` secret. To change it, run `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`. This logs everyone out.

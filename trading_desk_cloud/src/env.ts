@@ -4,6 +4,7 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   AGENT_ID: string;
   ENVIRONMENT_ID: string;
+  VAULT_ID?: string; // vault holding the ANTHROPIC_API_KEY credential the sandbox uses for Deep Analysis (TradingAgents)
   LOGIN_PASSWORD?: string; // secret; when set, the app uses its own password login instead of Cloudflare Access
   ACCESS_TEAM_DOMAIN: string; // e.g. nesr.cloudflareaccess.com
   ACCESS_AUD: string; // Application Audience (AUD) tag from the Access application

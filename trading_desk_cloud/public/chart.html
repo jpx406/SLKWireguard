@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chart</title>
+<script>try { var a = localStorage.getItem("td.appearance"); if (a === "light" || a === "dark") document.documentElement.dataset.theme = a;
+  var t = localStorage.getItem("td.textsize"); if (t === "small" || t === "large") document.documentElement.dataset.text = t; } catch (e) {}</script>
+<meta name="color-scheme" content="dark light">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/vendor/candlestick-3.0.0.min.js"></script>
+</head>
+<body class="chart-window">
+<header class="cw-bar">
+  <form id="cwSym" class="inline"><input id="cwSymInput" class="sym-input mono" value="SPY" maxlength="15" aria-label="Symbol"></form>
+  <div class="quote-line"><span id="cwLast" class="mono big">—</span><span id="cwChg" class="mono small"></span></div>
+  <div class="seg" id="cwRanges" role="group" aria-label="Time range"><button data-r="1D" class="on">1D</button><button data-r="5D">5D</button><button data-r="1M">1M</button><button data-r="3M">3M</button><button data-r="1Y">1Y</button></div>
+  <div class="seg" id="cwIntervals" role="group" aria-label="Bar size"><button data-i="1m">1m</button><button data-i="5m" class="on">5m</button><button data-i="15m">15m</button><button data-i="60m">1h</button><button data-i="1d">D</button></div>
+  <div class="seg" id="cwInd" role="group" aria-label="Indicators"><button data-ind="vwap" class="on">VWAP</button><button data-ind="ema9" class="on">EMA9</button><button data-ind="ema20" class="on">EMA20</button></div>
+  <label class="switch cw-switch" title="Candlestick signals on completed bars (hammer, engulfing, stars, soldiers…)"><input type="checkbox" id="cwSignals" checked> Signals</label>
+  <label class="switch cw-switch" title="Browser notification when a new signal prints on the latest bar"><input type="checkbox" id="cwNotify"> Notify</label>
+  <span class="spacer"></span>
+  <button type="button" id="cwPaper" class="primary small" title="Paper-trade this symbol in the main desk">Paper Trade</button>
+</header>
+<div id="cwChart" class="cw-chart" role="img" aria-label="Price chart"></div>
+<div id="cwFeed" class="sig-feed" aria-live="polite"></div>
+<script src="/plan.js"></script>
+<script src="/signals.js"></script>
+<script src="/chartwin.js"></script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s), $$ = (s) => [...document.querySelectorAll(s)];
+  const q = new URLSearchParams(location.search);
+  const symbol = (q.get("symbol") || "SPY").toUpperCase();
+  document.title = `${symbol} · Chart`;
+  $("#cwSymInput").value = symbol;
+  // The paper account, so your own fills show on the chart (plan.js reads window.state.paper).
+  window.state = { paper: null };
+  const loadPaper = () => fetch("/api/paper").then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) state.paper = d; }).catch(() => {});
+  loadPaper(); setInterval(loadPaper, 60000);
+  let prevClose = null;
+  const mc = createMiniChart($("#cwChart"), {
+    symbol, fontSize: 11, signals: true,
+    onQuote: ({ last, bars }) => {
+      $("#cwLast").textContent = mcFmt(last);
+      document.title = `${mc.symbol} ${mcFmt(last)} · Chart`;
+    },
+    onSignal: (fresh, { symbol: sym, latestBar, all }) => {
+      renderSignalFeed($("#cwFeed"), all, { fmtTime: mcTime, fmtPrice: mcFmt });
+      if ($("#cwNotify").checked) notifySignals(sym, fresh, latestBar);
+    },
+    onError: (e) => { $("#cwFeed").textContent = e.message; },
+  });
+  // Day change from the quotes endpoint (prev close), refreshed with the bars.
+  async function quote() {
+    try { const [r] = await (await fetch(`/api/quotes?symbols=${encodeURIComponent(mc.symbol)}`)).json(); if (!r || r.error) return;
+      const c = $("#cwChg"); c.className = `mono small ${r.change_pct > 0 ? "up" : r.change_pct < 0 ? "down" : ""}`;
+      c.textContent = r.change_pct == null ? "" : `${r.change_pct > 0 ? "+" : ""}${mcFmt(r.change_pct)}%`; } catch { /* later */ }
+  }
+  quote(); setInterval(quote, 20000);
+  $("#cwSym").onsubmit = (e) => { e.preventDefault(); mc.setSymbol($("#cwSymInput").value); $("#cwSymInput").value = mc.symbol; history.replaceState(null, "", `?symbol=${mc.symbol}`); quote(); };
+  const sync = () => {
+    $$("#cwRanges button").forEach((b) => b.classList.toggle("on", b.dataset.r === mc.range));
+    $$("#cwIntervals button").forEach((b) => { b.disabled = !MC_RANGES[mc.range].allow.includes(b.dataset.i); b.classList.toggle("on", b.dataset.i === mc.interval); });
+  };
+  $$("#cwRanges button").forEach((b) => (b.onclick = () => { mc.setRange(b.dataset.r); sync(); }));
+  $$("#cwIntervals button").forEach((b) => (b.onclick = () => { mc.setInterval(b.dataset.i); sync(); }));
+  $$("#cwInd button").forEach((b) => (b.onclick = () => b.classList.toggle("on", mc.toggleIndicator(b.dataset.ind))));
+  $("#cwSignals").onchange = (e) => mc.setSignals(e.target.checked);
+  $("#cwNotify").onchange = async (e) => { if (e.target.checked) { try { if ((await Notification.requestPermission()) !== "granted") e.target.checked = false; } catch { e.target.checked = false; } } };
+  $("#cwPaper").onclick = () => { if (window.opener && !window.opener.closed) { try { window.opener.focus(); window.opener.openTicket({ symbol: mc.symbol }); return; } catch { /* fall through */ } } location.href = `/?paper=${mc.symbol}`; };
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => mc.retheme());
+  addEventListener("storage", (e) => { if (e.key === "td.appearance") { const v = e.newValue; if (v === "light" || v === "dark") document.documentElement.dataset.theme = v; else delete document.documentElement.dataset.theme; mc.retheme(); } });
+  sync();
+})();
+</script>
+</body>
+</html>

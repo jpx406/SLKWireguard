@@ -31,7 +31,15 @@ const BASE_HOSTS = [
   "bloomberg.com", "*.bloomberg.com", "benzinga.com", "*.benzinga.com", "investing.com", "*.investing.com",
   "seekingalpha.com", "*.seekingalpha.com", "federalreserve.gov", "*.federalreserve.gov", "bls.gov", "*.bls.gov",
   "bea.gov", "*.bea.gov", "treasury.gov", "*.treasury.gov", "cboe.com", "*.cboe.com", "tradingeconomics.com", "*.tradingeconomics.com",
+  // Deep Analysis (TradingAgents): its data vendors, the release wheel, and Claude itself (called from inside the sandbox).
+  "api.anthropic.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
+  "data.sec.gov", "efts.sec.gov", "api.stlouisfed.org", "api.stocktwits.com", "reddit.com", "*.reddit.com", "gamma-api.polymarket.com",
 ];
+// Python packages installed in the sandbox besides the skills' own requirements.
+// tradingagents: TauricResearch's multi-agent analysis (MIT), pinned to a release wheel.
+// ta-patterns: 300 candlestick/chart pattern detectors with no look-ahead, for the swing scan.
+const TA_WHEEL = "https://github.com/TauricResearch/TradingAgents/releases/download/v0.7.1/tradingagents-0.7.1-py3-none-any.whl";
+const EXTRA_PIP = [`tradingagents @ ${TA_WHEEL}`, "ta-patterns>=1.2.1"];
 
 const SYSTEM = `You are the trading copilot behind "Trading Desk", a day-trading cockpit used by a trader in Riyadh (Asia/Riyadh, UTC+3) who trades US equities.
 
@@ -147,19 +155,48 @@ async function main() {
   const networking = network === "unrestricted"
     ? /** @type {const} */ ({ type: "unrestricted" })
     : /** @type {const} */ ({ type: "limited", allow_package_managers: true, allowed_hosts: [...hosts].sort() });
-  const envConfig = /** @type {const} */ ({ type: "cloud", networking, ...(pip.size ? { packages: { pip: [...pip].sort() } } : {}) });
+  EXTRA_PIP.forEach((p) => pip.add(p));
+  const envConfigWith = (pipList) => /** @type {const} */ ({ type: "cloud", networking, ...(pipList.length ? { packages: { pip: pipList } } : {}) });
+  let envConfig = envConfigWith([...pip].sort());
 
   let environmentId = state.environment_id;
-  if (environmentId) {
-    await client.beta.environments.update(environmentId, { config: envConfig });
-    console.log(`\nEnvironment updated: ${environmentId}`);
-  } else {
-    const env = await client.beta.environments.create({ name: "trading-desk", description: "Sandbox for the Trading Desk agent", config: envConfig });
-    environmentId = env.id;
-    console.log(`\nEnvironment created: ${environmentId}`);
+  const applyEnv = async (cfg) => {
+    if (environmentId) { await client.beta.environments.update(environmentId, { config: cfg }); console.log(`\nEnvironment updated: ${environmentId}`); }
+    else { const env = await client.beta.environments.create({ name: "trading-desk", description: "Sandbox for the Trading Desk agent", config: cfg }); environmentId = env.id; console.log(`\nEnvironment created: ${environmentId}`); }
+  };
+  try { await applyEnv(envConfig); } catch (e) {
+    // A wheel URL may be refused by the package list: fall back to the plain packages; the deep-analysis
+    // prompt then installs the wheel with pip at the start of a run.
+    if (!/package|pip/i.test(String(/** @type {any} */ (e)?.message || e))) throw e;
+    console.warn(`  ! environment refused the package list (${/** @type {any} */ (e)?.message}); retrying without the TradingAgents wheel`);
+    envConfig = envConfigWith([...pip].filter((p) => !p.startsWith("tradingagents")).sort());
+    await applyEnv(envConfig);
   }
-  console.log(`  networking: ${networking.type}${networking.allowed_hosts ? ` (${networking.allowed_hosts.length} hosts)` : ""}${pip.size ? `, pip: ${[...pip].join(" ")}` : ""}`);
+  const pipShown = envConfig.packages?.pip ?? [];
+  console.log(`  networking: ${networking.type}${networking.allowed_hosts ? ` (${networking.allowed_hosts.length} hosts)` : ""}${pipShown.length ? `, pip: ${pipShown.join(" ")}` : ""}`);
   state.environment_id = environmentId;
+
+  // Vault: the API key the sandbox uses when TradingAgents calls Claude (Deep Analysis). The value is substituted
+  // into requests to api.anthropic.com at the network edge; the sandbox itself only sees a placeholder.
+  let vaultId = state.vault_id;
+  if (!vaultId) {
+    const v = await client.beta.vaults.create({ display_name: "trading-desk" });
+    vaultId = v.id; state.vault_id = vaultId;
+    console.log(`Vault created: ${vaultId}`);
+  }
+  const cred = /** @type {const} */ ({
+    type: "environment_variable", secret_name: "ANTHROPIC_API_KEY", secret_value: apiKey,
+    networking: { type: "limited", allowed_hosts: ["api.anthropic.com"] }, injection_location: { header: true, body: false },
+  });
+  if (state.credential_id) {
+    try { await client.beta.vaults.credentials.update(vaultId, state.credential_id, { type: "environment_variable", secret_value: apiKey }); console.log("Vault credential ANTHROPIC_API_KEY updated"); }
+    catch (e) { if (/** @type {any} */ (e)?.status !== 404) throw e; state.credential_id = null; }
+  }
+  if (!state.credential_id) {
+    const c = await client.beta.vaults.credentials.create(vaultId, cred);
+    state.credential_id = c.id;
+    console.log(`Vault credential ANTHROPIC_API_KEY created (${c.id}) for api.anthropic.com`);
+  }
 
   // Agent
   /** @type {import("@anthropic-ai/sdk/resources/beta/agents/agents").AgentCreateParams} */
@@ -190,9 +227,10 @@ async function main() {
   if (fs.existsSync(WRANGLER)) {
     const toml = fs.readFileSync(WRANGLER, "utf8")
       .replace(/^AGENT_ID = .*$/m, `AGENT_ID = "${agentId}"`)
-      .replace(/^ENVIRONMENT_ID = .*$/m, `ENVIRONMENT_ID = "${environmentId}"`);
+      .replace(/^ENVIRONMENT_ID = .*$/m, `ENVIRONMENT_ID = "${environmentId}"`)
+      .replace(/^VAULT_ID = .*$/m, `VAULT_ID = "${vaultId}"`);
     fs.writeFileSync(WRANGLER, toml);
-    console.log("wrangler.toml updated with AGENT_ID and ENVIRONMENT_ID.");
+    console.log("wrangler.toml updated with AGENT_ID, ENVIRONMENT_ID and VAULT_ID.");
   }
   console.log("\nDone. Re-run this script any time you change a skill. Then: npx wrangler deploy");
   rl.close();
