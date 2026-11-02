@@ -1,6 +1,6 @@
 "use strict";
 /* Deep Analysis section: TradingAgents runs (one ticker, four analysts, bull/bear debate, trader, risk desk,
-   portfolio manager) started from here, from a recommendation, or by the autopilot after a full scan. */
+   portfolio manager) started from here, from a recommendation, or by the autopilot after any brief (score threshold). */
 
 const RATING_CLS = { Buy: "up", Overweight: "up", Hold: "", Underweight: "down", Sell: "down" };
 state.deep = { runs: [], ratings: {}, open: null, ready: false };
@@ -16,7 +16,7 @@ async function loadDeep() {
   try { d = await api("/api/deep"); } catch (e) { $("#deep").innerHTML = ""; $("#deep").append(el("div", "msg err", e.message)); return; }
   state.deep.runs = d.runs; state.deep.ratings = d.ratings || {}; state.deep.ready = d.ready;
   $("#deepNote").textContent = !d.ready ? (d.vault ? "Agent not configured." : "Needs setup: run setup/setup-agent.mjs again to add the sandbox credential (VAULT_ID).")
-    : d.deep_top_n ? `Autopilot: top ${d.deep_top_n} of each full scan` : "On demand";
+    : d.deep_min_score ? `Autopilot: every pick scoring ≥ ${d.deep_min_score} after any brief (max ${d.deep_max_per_brief} per brief)` : "On demand";
   renderDeep();
   if (d.runs.some((r) => r.status === "running" || r.status === "starting")) { clearTimeout(state.deep.timer); state.deep.timer = setTimeout(loadDeep, 30000); }
 }

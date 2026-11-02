@@ -5,7 +5,7 @@ import { autoTradeNewBriefs, hasAccount, leaderboard, cancelOrder, closePosition
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
-import { finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
+import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -172,10 +172,15 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       await setSetting(env.DB, "daily_cap_usd", Math.round(c * 100) / 100);
     }
     if ("reuse_research" in patch) await setSetting(env.DB, "reuse_research", patch.reuse_research !== false);
-    if ("deep_top_n" in patch) {
-      const n = Number(patch.deep_top_n);
-      if (!(n >= 0 && n <= 10)) return bad("Deep-analyze top picks: 0 (off) to 10.");
-      await setSetting(env.DB, "deep_top_n", Math.round(n));
+    if ("deep_min_score" in patch) {
+      const n = Number(patch.deep_min_score);
+      if (!(n >= 0 && n <= 100)) return bad("Deep-analysis score threshold: 0 (off) to 100.");
+      await setSetting(env.DB, "deep_min_score", Math.round(n));
+    }
+    if ("deep_max_per_brief" in patch) {
+      const n = Number(patch.deep_max_per_brief);
+      if (!(n >= 1 && n <= 20)) return bad("Deep analyses per brief: 1 to 20.");
+      await setSetting(env.DB, "deep_max_per_brief", Math.round(n));
     }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
@@ -196,8 +201,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   // ---- Deep Analysis (TradingAgents in the sandbox)
   if (path === "/deep" && m === "GET") {
     const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
-    if (agentReady) await finalizeDeep(env);
-    return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_top_n: (await getSettings(env.DB)).deep_top_n });
+    if (agentReady) { await finalizeDeep(env); await deepAfterBriefs(env); }
+    const ds = await getSettings(env.DB);
+    return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_min_score: ds.deep_min_score, deep_max_per_brief: ds.deep_max_per_brief });
   }
   if (path === "/deep/run" && m === "POST") {
     if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);
@@ -216,7 +222,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   if (path === "/usage" && m === "GET") {
     if (who.role !== "admin") return bad("Only the admin can see Claude spending.", 403);
     const s = await getSettings(env.DB);
-    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_top_n: s.deep_top_n, reuse_research: s.reuse_research, engines: s.engines,
+    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_min_score: s.deep_min_score, deep_max_per_brief: s.deep_max_per_brief, reuse_research: s.reuse_research, engines: s.engines,
       engine_options: Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label })), slots: SLOTS.map(({ id, label }) => ({ id, label })) });
   }
 

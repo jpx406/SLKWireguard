@@ -7,7 +7,7 @@ import { capBlocks, isEngine, recordSpend } from "./cost";
 import { getSetting, getSettings } from "./db";
 import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
-import { deepTopPicks, finalizeDeep } from "./deep";
+import { deepAfterBriefs, finalizeDeep } from "./deep";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
@@ -290,7 +290,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
   try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }
-  try { await finalizeDeep(env); await deepTopPicks(env); } catch (e) { console.error("deep analysis", e); }
+  try { await finalizeDeep(env); await deepAfterBriefs(env); } catch (e) { console.error("deep analysis", e); }
   const ny = nyNow(now);
   const ap = await getAutopilot(env.DB);
   if (!ap.enabled || !isTradingDay(ny)) return;

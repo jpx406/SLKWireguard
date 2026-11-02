@@ -190,25 +190,31 @@ export async function finalizeDeep(env: Env) {
   }
 }
 
-/** After a finished full scan: deep-analyze its top N picks (once per brief). */
-export async function deepTopPicks(env: Env) {
+/** After ANY finished brief (autopilot or Run Now): deep-analyze every pick scoring at least deep_min_score,
+ *  best first, at most deep_max_per_brief per brief, once per symbol per day. */
+export async function deepAfterBriefs(env: Env) {
   await ensureDeep(env.DB);
   const s = await getSettings(env.DB);
-  const n = Math.max(0, Math.min(10, Number(s.deep_top_n) || 0));
-  if (!n || !env.VAULT_ID) return;
+  const min = Math.max(0, Math.min(100, Number(s.deep_min_score) || 0)), cap = Math.max(1, Math.min(20, Number(s.deep_max_per_brief) || 5));
   const ny = nyNow();
   let briefs: { id: string; data: string | null }[] = [];
-  try { briefs = (await env.DB.prepare("SELECT id, data FROM briefs WHERE status = 'done' AND slot = 'fullscan' AND day = ? AND (deep_done IS NULL OR deep_done = 0)").bind(ny.date).all<{ id: string; data: string | null }>()).results; }
+  try { briefs = (await env.DB.prepare("SELECT id, data FROM briefs WHERE status = 'done' AND day = ? AND (deep_done IS NULL OR deep_done = 0)").bind(ny.date).all<{ id: string; data: string | null }>()).results; }
   catch { return; }
   for (const b of briefs) {
     await env.DB.prepare("UPDATE briefs SET deep_done = 1 WHERE id = ?").bind(b.id).run();
+    if (!min || !env.VAULT_ID) continue;
     let picks: { symbol?: string; score?: number }[] = [];
     try { picks = JSON.parse(b.data || "{}")?.picks ?? []; } catch { continue; }
-    const top = [...picks].sort((x, y) => (Number(y.score) || 0) - (Number(x.score) || 0)).slice(0, n);
-    for (const p of top) {
+    const chosen = [...picks].filter((p) => (Number(p.score) || 0) >= min).sort((x, y) => (Number(y.score) || 0) - (Number(x.score) || 0));
+    let started = 0;
+    for (const p of chosen) {
+      if (started >= cap) break;
       const sym = String(p.symbol || "").toUpperCase(); if (!sym) continue;
       const today = await env.DB.prepare("SELECT id FROM deep_runs WHERE symbol = ? AND day = ? AND status != 'error'").bind(sym, ny.date).first();
-      if (!today) await startDeep(env, sym, null, b.id);
+      if (today) continue;
+      const r = await startDeep(env, sym, null, b.id);
+      if (r.id) started++;
+      if (r.error) break; // the daily cap or a setup problem: stop for this brief
     }
   }
 }

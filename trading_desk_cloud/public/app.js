@@ -760,7 +760,7 @@ $("#settingsForm").onsubmit = async (e) => {
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
     await saveSettings({ session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
-      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_top_n: +f.deep_top_n.value || 0, reuse_research: f.reuse_research.checked, engines } : {}) });
+      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_min_score: +f.deep_min_score.value || 0, deep_max_per_brief: +f.deep_max_per_brief.value || 5, reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
@@ -787,7 +787,7 @@ async function loadUsage() {
   } else out.append(el("div", null, "No Claude sessions recorded yet."));
   f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
   const grid = $("#engineGrid"); grid.innerHTML = "";
-  f.deep_top_n.value = u.deep_top_n || 0;
+  f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5;
   for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"]]) {
     const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
     for (const o of u.engine_options) sel.append(new Option(o.label, o.id));

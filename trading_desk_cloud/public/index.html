@@ -278,7 +278,8 @@
       <div id="usageOut" class="usage-out small dim">loading…</div>
       <label class="check"><input name="reuse_research" type="checkbox"> Later briefs reuse the morning research (refresh prices, levels, volume and news instead of re-running every skill)</label>
       <label>Daily spending cap, USD (0 = no cap; new scans and chats stop for the day once reached)<input name="daily_cap_usd" type="number" step="1" min="0"></label>
-      <label>After each full scan, run Deep Analysis (TradingAgents) on its top N picks (0 = off; each run is about 15 model calls)<input name="deep_top_n" type="number" step="1" min="0" max="10"></label>
+      <label>After any finished brief (autopilot or Run Now), run Deep Analysis (TradingAgents) on every pick scoring at least this (0 = off; each run is about 15 model calls)<input name="deep_min_score" type="number" step="1" min="0" max="100"></label>
+      <label>At most this many automatic Deep Analyses per brief, best score first (1-20)<input name="deep_max_per_brief" type="number" step="1" min="1" max="20"></label>
       <details><summary class="small">Model and effort per task (optional; lower cost may lower quality)</summary>
         <p class="tiny dim">"Agent default" keeps today's quality. Medium effort or Sonnet cost less; try one task at a time and compare the briefs before keeping it.</p>
         <div id="engineGrid" class="f-grid"></div>

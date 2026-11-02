@@ -23,7 +23,8 @@ export const DEFAULT_SETTINGS = {
   daily_cap_usd: 0,                        // stop starting Claude sessions once today's spend reaches this (0 = no cap)
   reuse_research: true,                    // later briefs start from the day's earlier plan instead of redoing it
   engines: {} as Record<string, string>,   // per brief slot (and "chat", "deep"): engine id; missing = "default"
-  deep_top_n: 0,                           // after each full scan, run Deep Analysis (TradingAgents) on its top N picks (0 = off)
+  deep_min_score: 65,                      // after ANY finished brief, run Deep Analysis on every pick scoring at least this (0 = off)
+  deep_max_per_brief: 5,                   // ...but at most this many runs per brief (cost guard)
 };
 export type Settings = typeof DEFAULT_SETTINGS;
 
