@@ -8,6 +8,7 @@ import { getSetting, getSettings } from "./db";
 import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
 import { deepAfterBriefs, finalizeDeep } from "./deep";
+import { runChartAuto } from "./autochart";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
@@ -287,6 +288,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   await ensureBriefSchema(env.DB);
   // Paper trading: fill/close against the latest 1-minute bars, then auto-trade any newly finished brief.
   try { await runEngine(env.DB); } catch (e) { console.error("paper engine", e); }
+  try { await runChartAuto(env.DB); } catch (e) { console.error("chart autopilot", e); }
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
   try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }

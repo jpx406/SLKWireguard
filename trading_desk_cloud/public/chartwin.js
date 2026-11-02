@@ -53,6 +53,9 @@ function createMiniChart(host, opts = {}) {
   const line = (c) => chart.addLineSeries({ color: c, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
   const vwapS = line(mcCss("--vwap")), ema9S = line(mcCss("--ema9")), ema20S = line(mcCss("--ema20"));
   const engine = createSignalEngine({ intervalSec: INTERVAL_SEC[st.interval], shift: mcShift, minFit: opts.minFit ?? 0.35 });
+  // Plan monitor: entry / expected exit / exit detection for this symbol (see planmon.js).
+  const mon = opts.plan === false ? null : createPlanMonitor({ series: candles, shift: mcShift, onEvent: (ev) => { markers(); opts.onPlanEvent?.(ev); }, onStatus: (text, cls, plan) => opts.onPlanStatus?.(text, cls, plan) });
+  if (mon) mon.setSymbol(st.symbol);
   const intraday = () => st.interval !== "1d";
 
   function view(data) {
@@ -69,7 +72,7 @@ function createMiniChart(host, opts = {}) {
   function markers() {
     const paper = typeof paperMarkers === "function" ? paperMarkers(st.symbol, st.candles, mcShift) : [];
     const sig = st.signals ? engine.markers() : [];
-    candles.setMarkers([...paper, ...sig].sort((a, b) => a.time - b.time));
+    candles.setMarkers([...paper, ...sig, ...(mon ? mon.markers() : [])].sort((a, b) => a.time - b.time));
   }
   async function load(keep = false) {
     if (st.disposed) return;
@@ -83,6 +86,7 @@ function createMiniChart(host, opts = {}) {
       else { candles.setData(data.map(bar)); vol.setData(data.map(vb)); view(data); }
       st.candles = data; indicators();
       const fresh = st.signals ? engine.update(data) : [];
+      if (mon) mon.update(data, engine.list());
       markers();
       const last = data[data.length - 1];
       opts.onQuote?.({ symbol: sym, last: last?.close, bars: data.length, empty: !data.length });
@@ -94,9 +98,10 @@ function createMiniChart(host, opts = {}) {
   st.timer = setInterval(tick, opts.refreshMs || 20000);
   load();
   return {
-    chart, series: candles, engine,
+    chart, series: candles, engine, monitor: mon,
     get symbol() { return st.symbol; }, get interval() { return st.interval; }, get range() { return st.range; }, get ind() { return st.ind; }, get signals() { return st.signals; },
-    setSymbol(s) { s = String(s || "").trim().toUpperCase(); if (!s || s === st.symbol) return; st.symbol = s; st.candles = []; engine.reset(); load(); },
+    setSymbol(s) { s = String(s || "").trim().toUpperCase(); if (!s || s === st.symbol) return; st.symbol = s; st.candles = []; engine.reset(); if (mon) mon.setSymbol(s); load(); },
+    setModels(m) { engine.setModels(m); engine.update(st.candles); markers(); opts.onSignal?.([], { symbol: st.symbol, latestBar: st.candles.at(-1)?.time ?? 0, all: st.signals ? engine.list() : [] }); },
     setRange(r) { if (!MC_RANGES[r]) return; st.range = r; if (!MC_RANGES[r].allow.includes(st.interval)) this.setInterval(MC_RANGES[r].def); else load(); },
     setInterval(iv) { if (!INTERVAL_SEC[iv]) return; st.interval = iv; engine.setInterval(INTERVAL_SEC[iv]); engine.reset(); st.candles = []; load(); },
     toggleIndicator(k) { st.ind[k] = !st.ind[k]; indicators(); return st.ind[k]; },
@@ -107,7 +112,7 @@ function createMiniChart(host, opts = {}) {
       candles.applyOptions({ upColor: mcCss("--up"), downColor: mcCss("--down"), wickUpColor: mcCss("--up"), wickDownColor: mcCss("--down") });
       vwapS.applyOptions({ color: mcCss("--vwap") }); ema9S.applyOptions({ color: mcCss("--ema9") }); ema20S.applyOptions({ color: mcCss("--ema20") }); markers();
     },
-    dispose() { st.disposed = true; clearInterval(st.timer); chart.remove(); },
+    dispose() { st.disposed = true; clearInterval(st.timer); if (mon) mon.dispose(); chart.remove(); },
   };
 }
 

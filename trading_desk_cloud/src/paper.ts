@@ -136,7 +136,7 @@ export const lastPrice = latestPrice;
 // --------------------------------------------------------------------------------------- orders
 export type OrderInput = {
   symbol: string; side: Side; type: OrderType; price?: number | null; qty?: number | null; amount_usd?: number | null;
-  stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto"; brief_id?: string | null;
+  stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto" | "chart"; brief_id?: string | null;
   exit_mode?: ExitMode | null;
 };
 
@@ -259,6 +259,7 @@ export async function resetAccount(db: D1Database, user: string, startingCash: n
     db.prepare("DELETE FROM paper_positions WHERE user = ?").bind(user),
     db.prepare("UPDATE paper_accounts SET starting_cash = ?, cash = ? WHERE user = ?").bind(startingCash, startingCash, user),
   ]);
+  try { await db.prepare("DELETE FROM paper_auto WHERE user = ?").bind(user).run(); } catch { /* no chart autopilots yet */ }
 }
 
 // --------------------------------------------------------------------------------------- engine
@@ -283,7 +284,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     if (o.day < ny.date || (o.day === ny.date && ny.minutes >= sessionTimes(o.day).postEnd)) {
       await db.prepare("UPDATE paper_orders SET status = 'expired', reason = 'day order expired' WHERE id = ? AND status = 'open'").bind(o.id).run(); continue;
     }
-    if (o.source === "auto" && t > o.created_at + s.auto_valid_min * 60) {
+    if ((o.source === "auto" || o.source === "chart") && t > o.created_at + s.auto_valid_min * 60) {
       await db.prepare("UPDATE paper_orders SET status = 'expired', reason = 'auto entry not triggered in time' WHERE id = ? AND status = 'open'").bind(o.id).run(); continue;
     }
     const bs = (bars.get(o.symbol) || []).filter((b) => b.time >= o.last_checked);

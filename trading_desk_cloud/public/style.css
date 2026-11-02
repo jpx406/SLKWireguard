@@ -622,3 +622,25 @@ body.chart-window .sig-feed { background: var(--panel); max-height: 64px; overfl
 .pill.swing { background: rgba(192,132,252,.15); color: var(--ema20); margin-left: 6px; vertical-align: middle; }
 #deepForm { gap: 6px; display: inline-flex; align-items: center; }
 #deepSym { width: 110px; }
+
+/* ---- plan monitor bar, signal models and the per-chart Auto control */
+.plan-bar { padding: 4px 10px; border-top: 1px solid var(--line); background: var(--panel); flex: none; min-height: 0; }
+.plan-bar:empty { display: none; }
+.plan-bar.accent { color: var(--accent); font-weight: 600; } .plan-bar.up { color: var(--up); } .plan-bar.down { color: var(--down); } .plan-bar.wait { color: var(--text); }
+.sig-chip .stars { color: #f59e0b; letter-spacing: -1px; }
+.sig-chip.s3 { border-color: #f59e0b; }
+.sig-models, .auto-ctl { position: relative; display: inline-block; }
+.sig-models > summary, .auto-ctl > summary { list-style: none; cursor: pointer; font-size: 0.846rem; padding: 4px 10px; min-height: 28px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); }
+.sig-models > summary::-webkit-details-marker, .auto-ctl > summary::-webkit-details-marker { display: none; }
+.sig-models-box, .auto-box { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 260px; max-width: 92vw; background: var(--overlay, var(--panel)); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.auto-box { min-width: 300px; }
+.auto-box label { display: flex; flex-direction: column; gap: 2px; }
+.auto-box input, .auto-box select { width: 100%; }
+.auto-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+.auto-ctl.on .auto-dot { background: var(--accent); } .auto-ctl.live .auto-dot { background: var(--up); box-shadow: 0 0 0 3px rgba(34,197,94,.25); }
+.auto-ctl.on > summary { border-color: var(--accent); }
+.mon-plan { padding: 2px 8px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mon-plan.accent { color: var(--accent); } .mon-plan.up { color: var(--up); } .mon-plan.down { color: var(--down); }
+.tiny { font-size: 0.769rem; }
+body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
+@media (max-width: 700px) { .sig-models-box, .auto-box { left: auto; right: 0; } }

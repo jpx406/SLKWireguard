@@ -192,6 +192,7 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **Result:** rating, confidence, summary, bull and bear case, the trader's entry / stop / targets / horizon, risks, and the full report with every agent's section. **Paper Buy** on a run prefills the ticket with the trader's plan and holds it (not end-of-day).
 * **Badges:** a rating from the last 5 days shows next to the symbol in the Market Board and briefs, so the intraday pick and the deep view sit side by side.
 * **Autopilot:** after ANY finished brief (a scheduled slot or Run Now), every pick scoring at least Admin Settings › *Deep Analysis score threshold* (default 65) gets a Deep Analysis automatically, best score first, at most *per brief* runs (default 5), once per symbol per day, and only while the daily cap allows. Set the threshold to 0 to turn it off.
+* **After a run:** the rating badge appears on the board and in the watchlist, the trader's entry/stop/targets become the chart's plan (plan monitor, chart autopilot) when there is no fresher recommendation, and *Paper Buy* on the Deep Analysis page places a held trade.
 * **Cost:** one run is about 15 model calls (5-15 minutes). It gets three times the normal session budget (at least $3) and counts toward the daily cap. Admin Settings › *Model and effort per task* has a *Deep Analysis* row (the quick-think analysts can run on Sonnet 5.5 to halve the cost).
 * **Combined with the desk:** each run gets your paper account (cash and open positions) as TradingAgents' portfolio, so its trader and risk desk size against what you actually hold; and the decision log it writes is kept by the desk and given back to the next run, so past calls get settled against real prices and their lessons feed later analyses.
 * **Not included:** TradingAgents' backtests (run those from its own CLI if you want them).
@@ -199,16 +200,41 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 ## Monitor and chart windows
 
 * **Monitor** (sidebar): a grid of live charts (2 × 2 up to 4 × 3) of your watchlist or any symbols you type, each with VWAP/EMAs and candle signals, and one combined signal feed. Click a symbol name to open it on the main chart.
+* Each tile also shows the plan monitor line (entry / expected exit) for its symbol.
 * **Chart windows:** **Window** on the chart toolbar, the window icon on a watchlist row, or *Open as Windows* in Monitor opens `chart.html?symbol=…` in its own browser window, so you can tile several charts across your screens. Each window has its own range, bar size, indicators, a **Signals** switch and a **Notify** switch, shows your paper fills, and *Paper Trade* sends the symbol back to the desk. Browsers allow one pop-up per click; for *Open as Windows* allow pop-ups for this site when asked.
 
 ## Candle signals
 
 * **Switch:** *Signals* on the main chart (remembered on this device), on every Monitor tile, and in every chart window.
-* **What it detects:** the open-source `candlestick` library (MIT, 18 patterns / 29 variants: hammers, engulfing, kickers, piercing line, dark cloud, morning and evening stars, three white soldiers, three black crows, tweezers, marubozu…) with trend context. A bullish reversal is only shown after a downtrend or sideways tape and a bearish one only after an uptrend or sideways (never against the trend), the same pattern is not re-marked on a run of same-colour candles, and the *fit %* in the feed says how well the preceding trend matches the pattern. Harami and doji are too frequent to be useful and are left out. On random test data these rules cut the signals by about two thirds.
+* **Models** (the *Models* button next to Signals, remembered on this device):
+  * *Classic patterns*: the open-source `candlestick` library (MIT, 18 patterns / 29 variants: hammers, engulfing, kickers, piercing line, dark cloud, morning and evening stars, three white soldiers, three black crows, tweezers, marubozu…) with trend context.
+  * *Extended patterns*: `candles.js`, TA-Lib CDL* rules written for the browser and the Worker: bullish/bearish belt hold, dragonfly and gravestone doji, abandoned baby, three inside up/down, three outside up/down (merged into the engulfing it confirms, shown as ✓), rising and falling three methods, inside-bar breakouts.
+  * *Trend gate* (MotiveWave rule): a reversal must fit the preceding trend. *Volume confirmation*: a 1.3× volume spike adds a star.
+  * **Strength** 1-3 stars (★ = trend fits, ★★ = trend fits and volume spike): bigger arrows and stars in the feed. Two-star signals are the ones the chart autopilot acts on.
+* **What it detects:** both models run on completed bars with trend context. A bullish reversal is only shown after a downtrend or sideways tape and a bearish one only after an uptrend or sideways (never against the trend), the same pattern is not re-marked on a run of same-colour candles, and the *fit %* in the feed says how well the preceding trend matches the pattern. Harami and doji are too frequent to be useful and are left out. On random test data these rules cut the signals by about two thirds.
 * **In the sandbox:** TA-Lib (61 CDL* functions, -100..100 strength) and ta-patterns are installed for the swing scan and Deep Analysis; the chart signals stay in the browser so they are instant and free.
 * **No repainting:** only completed bars are scanned, so a signal never appears and then vanishes while a bar is still forming.
 * **On the chart:** green arrows below bars for bullish patterns, red arrows above for bearish; the last few are labelled. The feed under the chart lists them newest first.
 * **Notifications:** with browser notifications on (Preferences), a new signal on the latest bar notifies you, on the main chart and in Monitor; chart windows have their own *Notify* switch.
+
+## Plan monitor: entry, expected exit, exit detection
+
+Every chart (main chart, Monitor tiles, chart windows) watches the symbol's **plan**: your open paper position or working order, else today's latest recommendation for the symbol from any brief, else the latest Deep Analysis (5 days) with an entry and stop. The plan's levels are drawn (BUY/SHORT entry, STOP, T1/T2) and a status line under the chart says what is happening:
+
+* **Waiting for entry** – how far the price is from the entry. When a bar reaches it, an **ENTRY** marker is drawn and you are notified ("entry point reached").
+* **In trade** – the expected exit (stop and targets) and the current R multiple. When a bar hits the stop or the first target, an **EXIT** marker is drawn and you are notified. A two-star strong reversal pattern against the trade (for example a Bear Engulfing ★ while long) draws an **EXIT signal** marker and notifies you too.
+* The main chart uses the notification permission from Preferences; chart windows have their own *Notify* switch.
+
+## Automatic buy and sell per chart (paper)
+
+The **Auto** button on every chart (main chart toolbar, chart windows; the Paper trading page lists them under *Chart autopilot*) lets an amount of paper money trade that one symbol by itself. It runs in the Worker every minute while a session is open, so it keeps working with the browser closed:
+
+* **Money to use:** the dollars for this chart (at least $50, never more than your paper cash). Size = money ÷ entry price.
+* **Enter on:** the plan (buys at the recommendation's or Deep Analysis's entry, with its stop and T1; a Deep Analysis trade is held overnight), a strong two-star candle signal on the last completed 5-minute bar (stop just beyond the pattern's low or high, target 2R), or either.
+* **Exits:** the stop or target through the paper engine, a strong reversal signal against the trade (intraday trades; held multi-day trades keep to their levels), end of day for intraday plans, or *Sell Now* on the Paper page.
+* **Guards:** one trade per symbol at a time, at most 4 entries per symbol per day, a 30-minute pause after an exit, the account's long/short preference, and paper cash. *Stop* keeps the row (and any open trade) and stops new entries; *Remove* deletes it. Reset account removes them all.
+
+Paper only: nothing here can place a real order.
 
 ## Swing setups
 

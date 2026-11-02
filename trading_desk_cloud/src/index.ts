@@ -6,6 +6,7 @@ import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, trad
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
 import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
+import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -128,6 +129,18 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     await env.DB.prepare("UPDATE paper_accounts SET settings = ? WHERE user = ?").bind(JSON.stringify(next), who.user).run();
     return json(next);
   }
+  // Chart autopilot: an amount of paper money that trades one symbol automatically (entries from the plan or a
+  // strong candle signal, exits at the stop / target or on a reversal signal).
+  if (path === "/paper/auto" && m === "GET") return json(await listAuto(env.DB, who.user));
+  if (path === "/paper/auto" && m === "PUT") {
+    const r = await setAuto(env.DB, who.user, await body<{ symbol: unknown; amount_usd?: unknown; rule?: unknown; enabled?: unknown }>(req));
+    return r.error ? bad(r.error) : json({ ...r, rows: await listAuto(env.DB, who.user) });
+  }
+  const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
+  if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // The plan a chart watches for this symbol (your position / order, today's recommendation, or a Deep Analysis).
+  const plm = path.match(/^\/plan\/([A-Za-z0-9.\-^=]{1,15})$/);
+  if (plm && m === "GET") return json({ symbol: plm[1].toUpperCase(), plan: await planFor(env.DB, who.user, plm[1].toUpperCase()) });
   if (path === "/paper/reset" && m === "POST") {
     const cash = Number((await body<{ starting_cash?: unknown }>(req)).starting_cash);
     if (!(cash >= 100 && cash <= 100_000_000)) return bad("Starting cash must be between $100 and $100,000,000.");

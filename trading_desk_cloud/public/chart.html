@@ -10,7 +10,6 @@
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="stylesheet" href="/style.css">
 <script src="/vendor/lightweight-charts.standalone.production.js"></script>
-<script src="/vendor/candlestick-3.0.0.min.js"></script>
 </head>
 <body class="chart-window">
 <header class="cw-bar">
@@ -20,14 +19,20 @@
   <div class="seg" id="cwIntervals" role="group" aria-label="Bar size"><button data-i="1m">1m</button><button data-i="5m" class="on">5m</button><button data-i="15m">15m</button><button data-i="60m">1h</button><button data-i="1d">D</button></div>
   <div class="seg" id="cwInd" role="group" aria-label="Indicators"><button data-ind="vwap" class="on">VWAP</button><button data-ind="ema9" class="on">EMA9</button><button data-ind="ema20" class="on">EMA20</button></div>
   <label class="switch cw-switch" title="Candlestick signals on completed bars (hammer, engulfing, stars, soldiers…)"><input type="checkbox" id="cwSignals" checked> Signals</label>
-  <label class="switch cw-switch" title="Browser notification when a new signal prints on the latest bar"><input type="checkbox" id="cwNotify"> Notify</label>
+  <label class="switch cw-switch" title="Browser notification for new signals and plan events (entry, exit)"><input type="checkbox" id="cwNotify"> Notify</label>
+  <span id="cwModels"></span>
+  <span id="cwAuto"></span>
   <span class="spacer"></span>
   <button type="button" id="cwPaper" class="primary small" title="Paper-trade this symbol in the main desk">Paper Trade</button>
 </header>
 <div id="cwChart" class="cw-chart" role="img" aria-label="Price chart"></div>
+<div id="cwPlan" class="plan-bar dim small" aria-live="polite">Loading plan…</div>
 <div id="cwFeed" class="sig-feed" aria-live="polite"></div>
 <script src="/plan.js"></script>
+<script src="/vendor/candlestick-3.0.0.min.js"></script>
+<script src="/candles.js"></script>
 <script src="/signals.js"></script>
+<script src="/planmon.js"></script>
 <script src="/chartwin.js"></script>
 <script>
 (() => {
@@ -51,6 +56,8 @@
       renderSignalFeed($("#cwFeed"), all, { fmtTime: mcTime, fmtPrice: mcFmt });
       if ($("#cwNotify").checked) notifySignals(sym, fresh, latestBar);
     },
+    onPlanStatus: (text, cls) => { const p = $("#cwPlan"); p.textContent = text; p.className = `plan-bar small ${cls || ""}`; },
+    onPlanEvent: (ev) => { const p = $("#cwPlan"); p.textContent = ev.text; p.className = `plan-bar small ${ev.kind === "entry" ? "accent" : ev.kind === "target" ? "up" : "down"}`; if ($("#cwNotify").checked) notifyPlanEvent(ev); },
     onError: (e) => { $("#cwFeed").textContent = e.message; },
   });
   // Day change from the quotes endpoint (prev close), refreshed with the bars.
@@ -60,7 +67,9 @@
       c.textContent = r.change_pct == null ? "" : `${r.change_pct > 0 ? "+" : ""}${mcFmt(r.change_pct)}%`; } catch { /* later */ }
   }
   quote(); setInterval(quote, 20000);
-  $("#cwSym").onsubmit = (e) => { e.preventDefault(); mc.setSymbol($("#cwSymInput").value); $("#cwSymInput").value = mc.symbol; history.replaceState(null, "", `?symbol=${mc.symbol}`); quote(); };
+  const autoCtl = createAutoControl(() => mc.symbol, { compact: true }); $("#cwAuto").append(autoCtl);
+  $("#cwModels").append(sigModelsControl((m) => mc.setModels(m)));
+  $("#cwSym").onsubmit = (e) => { e.preventDefault(); mc.setSymbol($("#cwSymInput").value); $("#cwSymInput").value = mc.symbol; history.replaceState(null, "", `?symbol=${mc.symbol}`); quote(); autoCtl.refresh(); };
   const sync = () => {
     $$("#cwRanges button").forEach((b) => b.classList.toggle("on", b.dataset.r === mc.range));
     $$("#cwIntervals button").forEach((b) => { b.disabled = !MC_RANGES[mc.range].allow.includes(b.dataset.i); b.classList.toggle("on", b.dataset.i === mc.interval); });

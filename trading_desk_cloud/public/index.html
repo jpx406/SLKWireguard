@@ -84,12 +84,15 @@
           <button data-ind="vwap" class="on">VWAP</button><button data-ind="ema9" class="on">EMA9</button>
           <button data-ind="ema20" class="on">EMA20</button><button data-ind="levels" class="on">PDH/PDL</button><button data-ind="signals" title="Candlestick signals on completed bars">Signals</button>
         </div>
+        <span id="sigModels"></span>
+        <span id="chartAuto"></span>
         <button type="button" id="btnPopChart" class="ghost small" title="Open this chart in its own window"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 4h6v6M20 4l-8 8"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg><span>Window</span></button>
         </div>
         <span id="chartMsg" class="dim small"></span>
       </div>
       <div id="chart" class="chart" role="img" aria-label="Price chart"></div>
       <div id="legend" class="legend mono"></div>
+      <div id="planBar" class="plan-bar dim small" aria-live="polite"></div>
       <div id="sigFeed" class="sig-feed hidden" aria-live="polite"></div>
     </div>
     <div class="pane board" data-section="board" aria-label="Market Board">
@@ -448,7 +451,9 @@
 </dialog>
 
 <script src="/plan.js"></script>
+<script src="/candles.js"></script>
 <script src="/signals.js"></script>
+<script src="/planmon.js"></script>
 <script src="/chartwin.js"></script>
 <script src="/board.js"></script>
 <script src="/app.js"></script>

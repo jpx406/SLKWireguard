@@ -165,7 +165,25 @@ async function loadPaper() {
     $("#paper").innerHTML = ""; $("#paper").append(el("div", "msg err", e.message)); return;
   }
   if (!d.read_only) state.paper = d; // the ticket, settings and chart markers always use my own account
+  if (!d.read_only) { try { state.paperAuto = await api("/api/paper/auto"); } catch { state.paperAuto = []; } }
   renderPaper(d);
+}
+/** The per-chart autopilots (an amount of paper money trading one symbol automatically). */
+function chartAutoSection() {
+  const rows = state.paperAuto || [];
+  const sec = section(`Chart autopilot (${rows.filter((r) => r.enabled).length} on)`, el("span", "dim small", "  set per chart with the Auto button · entries from the plan or a 2-star candle signal · exits at stop / target or on a reversal signal"));
+  if (!rows.length) { sec.append(el("div", "dim small", "No chart autopilots yet. Open a chart and click Auto to let an amount of paper money trade that symbol automatically.")); return sec; }
+  sec.append(table(["Symbol", "Money", "Enter on", "State", "Today", "Last", "", ""], rows.map((r) => {
+    const tr = el("tr"); const sym = td(r.symbol, "sym"); sym.style.cursor = "pointer"; sym.onclick = () => { setSymbol(r.symbol); showTab("center", "chart"); };
+    const st = !r.enabled ? "stopped" : r.position ? `in trade (${r.position.side} ${r.position.qty} @ ${fmt(r.position.entry)})` : r.order ? `entry order ${fmt(r.order.price)}` : "watching";
+    tr.append(sym, td(money(r.amount_usd), "num"), td({ both: "plan or signal", plan: "plan only", signal: "signals only" }[r.rule] || r.rule),
+      td(st, r.position ? "up" : r.enabled ? "" : "dim"), td(`${r.entries_today}/4`, "num"), td(r.last_note || "—", "dim small"));
+    const a1 = el("td"), a2 = el("td");
+    const tg = el("button", "ghost small", r.enabled ? "Stop" : "Start"); tg.onclick = async () => { try { await api("/api/paper/auto", { method: "PUT", body: JSON.stringify({ symbol: r.symbol, enabled: !r.enabled }) }); loadPaper(); } catch (e) { showBanner(e.message); } };
+    const rm = el("button", "ghost small", "Remove"); rm.onclick = async () => { try { await api(`/api/paper/auto/${r.symbol}`, { method: "DELETE" }); loadPaper(); } catch (e) { showBanner(e.message); } };
+    a1.append(tg); a2.append(rm); tr.append(a1, a2); return tr;
+  })));
+  return sec;
 }
 function viewPaper(user) { state.paperView = user && user !== state.me?.user ? user : null; state.paperBoardAt = 0; loadPaper(); }
 
@@ -295,6 +313,7 @@ function renderPaper(d) {
     tr.append(act); return tr;
   })) : el("div", "dim small", ro ? "No open positions." : "No open positions. Place one with New Order, or use Paper Buy on a recommendation in the Market Board."));
   host.append(ps);
+  if (!ro) host.append(chartAutoSection());
 
   // Orders
   const working = d.orders.filter((o) => o.status === "open"), recent = d.orders.filter((o) => o.status !== "open").slice(0, 20);

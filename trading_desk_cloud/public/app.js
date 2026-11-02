@@ -164,7 +164,7 @@ const mainLayer = createPlanLayer(chart, candleS, $("#chart"), {
   actions: (a, p) => {
     const t = el("button", "primary small", p.side === "long" ? "Paper Buy" : "Paper Short");
     t.onclick = () => openTicketFromPick({ ...p.raw, symbol: p.symbol, bias: p.side, entry: p.entry, stop: p.stop, targets: p.targets });
-    const x = iconLabel(el("button", "ghost small"), "x", "Clear Plan"); x.onclick = () => { state.mainPlan = null; mainLayer.clear(); };
+    const x = iconLabel(el("button", "ghost small"), "x", "Clear Plan"); x.onclick = () => { state.mainPlan = null; mainLayer.clear(); mainMon.redraw(); redrawMarkers(); };
     a.append(t, x);
   },
 });
@@ -249,6 +249,15 @@ function prevDayLevels(data) {
 }
 /* Candle signals (signals.js) on the main chart. The engine forgets its signals when the symbol or bar size changes. */
 const sigEngine = createSignalEngine({ intervalSec: 300, shift });
+// Plan monitor on the main chart (entry / expected exit / exit detection). When a plan is drawn with the full
+// risk/reward overlay (mainLayer) the monitor keeps its own level lines off to avoid doubles.
+const mainMon = createPlanMonitor({ series: candleS, shift, drawLines: () => !(state.mainPlan && state.mainPlan.symbol === state.symbol),
+  onStatus: (text, cls) => { const p = $("#planBar"); p.textContent = text; p.className = `plan-bar small ${cls || ""}`; },
+  onEvent: (ev) => { const p = $("#planBar"); p.textContent = ev.text; p.className = `plan-bar small ${ev.kind === "entry" ? "accent" : ev.kind === "target" ? "up" : "down"}`; if (state.sigNotify) notifyPlanEvent(ev); redrawMarkers(); } });
+function redrawMarkers() {
+  const extra = [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : []), ...mainMon.markers()].sort((x, y) => x.time - y.time);
+  if (state.mainPlan && state.mainPlan.symbol === state.symbol) mainLayer.set(state.mainPlan, state.candles, extra); else candleS.setMarkers(extra);
+}
 const sigTime = (t) => { const d = new Date(t * 1000); return intraday() ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleDateString(); };
 function drawIndicators() {
   const d = state.candles, on = state.ind;
@@ -281,9 +290,8 @@ async function loadChart(keepView = false) {
     }
     state.candles = data;
     const fresh = state.ind.signals ? sigEngine.update(data) : [];
-    const extra = [...paperMarkers(sym, data, shift), ...(state.ind.signals ? sigEngine.markers() : [])].sort((a, b) => a.time - b.time);
-    if (state.mainPlan && state.mainPlan.symbol === sym) mainLayer.set(state.mainPlan, data, extra);
-    else candleS.setMarkers(extra);
+    mainMon.update(data, sigEngine.list());
+    redrawMarkers();
     if (state.ind.signals) { renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt }); if (fresh.length && state.sigNotify) notifySignals(sym, fresh, data.at(-1)?.time ?? 0); }
     drawIndicators(); updateLegend();
     $("#chartMsg").textContent = "";
@@ -314,8 +322,8 @@ chart.subscribeCrosshairMove(updateLegend);
 function setSymbol(sym) {
   sym = sym.trim().toUpperCase(); if (!sym) return;
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
-  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset();
-  renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]);
+  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = "";
+  renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]); state.autoCtl?.refresh();
 }
 
 /* ------------------------------------------------------------------ watchlist & quotes */
@@ -477,10 +485,13 @@ function renderMonitor() {
     const name = el("b", "sym", sym), px = el("span", "mono", "—"), pop = el("button", "icon-btn"); pop.innerHTML = icon("popout"); pop.title = `Open ${sym} in its own window`; pop.setAttribute("aria-label", `Open ${sym} in its own window`);
     pop.onclick = () => openChartWindow(sym);
     name.style.cursor = "pointer"; name.title = "Open on the main chart"; name.onclick = () => { setSymbol(sym); navigate("chart"); };
-    head.append(name, px, el("span", "spacer"), pop); tile.append(head, box); grid.append(tile);
+    const pl = el("div", "mon-plan dim tiny");
+    head.append(name, px, el("span", "spacer"), pop); tile.append(head, box, pl); grid.append(tile);
     const mc = createMiniChart(box, {
       symbol: sym, interval: $("#monInterval").value, range: "1D", fontSize: 10, signals: $("#monSignals").checked,
       onQuote: ({ last }) => { px.textContent = fmt(last); },
+      onPlanStatus: (text, cls) => { pl.textContent = text; pl.className = `mon-plan tiny ${cls || ""}`; },
+      onPlanEvent: (ev) => { pl.textContent = ev.text; pl.className = `mon-plan tiny ${ev.kind === "entry" ? "accent" : ev.kind === "target" ? "up" : "down"}`; if (state.sigNotify) notifyPlanEvent(ev); },
       onSignal: (fresh, { symbol: s2, latestBar, all }) => {
         state.mon.signals = state.mon.signals.filter((x) => x.symbol !== s2).concat(all.map((x) => ({ ...x, symbol: s2, label: `${s2} ${x.label}` })));
         state.mon.signals.sort((x, y) => y.time - x.time);
@@ -628,11 +639,11 @@ function calcRisk() {
 }
 $$("#rAcct,#rPct,#rEntry,#rStop,#rMaxPos,#rSide").forEach((i) => (i.oninput = calcRisk));
 $("#btnUseLast").onclick = () => { const q = state.quotes[state.symbol]; if (q?.last) { $("#rEntry").value = q.last.toFixed(2); calcRisk(); } };
-$("#btnClearPlan").onclick = () => { state.mainPlan = null; mainLayer.clear(); };
+$("#btnClearPlan").onclick = () => { state.mainPlan = null; mainLayer.clear(); mainMon.redraw(); redrawMarkers(); };
 $("#btnDrawPlan").onclick = () => {
   const p = calcRisk(); if (!p) return;
   state.mainPlan = makePlan({ symbol: state.symbol, side: p.side, entry: p.entry, stop: p.stop, targets: p.targets, setup: `${p.shares} shares (Risk tab)` }, null);
-  mainLayer.set(state.mainPlan, state.candles, [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : [])]);
+  mainMon.redraw(); redrawMarkers();
 };
 $("#btnAskSize").onclick = () => {
   const p = calcRisk(); if (!p) return; showTab("side", "copilot");
@@ -1005,8 +1016,7 @@ $$("#indicators button").forEach((b) => (b.onclick = () => {
     $("#sigFeed").classList.toggle("hidden", !state.ind.signals);
     try { localStorage.setItem("td.signals", state.ind.signals ? "1" : "0"); } catch { /* ok */ }
     if (state.ind.signals) sigEngine.update(state.candles);
-    const extra = [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : [])].sort((x, y) => x.time - y.time);
-    if (state.mainPlan && state.mainPlan.symbol === state.symbol) mainLayer.set(state.mainPlan, state.candles, extra); else candleS.setMarkers(extra);
+    redrawMarkers();
     renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt });
     return;
   }
@@ -1015,6 +1025,10 @@ $$("#indicators button").forEach((b) => (b.onclick = () => {
 // Signals: remembered per device, off by default on the main chart.
 try { if (localStorage.getItem("td.signals") === "1") { state.ind.signals = true; $('#indicators [data-ind="signals"]').classList.add("on"); $("#sigFeed").classList.remove("hidden"); } } catch { /* ok */ }
 $("#btnPopChart").onclick = () => openChartWindow(state.symbol);
+// Detection models (shared with the Monitor grid) and the per-chart automatic paper trading control.
+$("#sigModels").append(sigModelsControl((m) => { sigEngine.setModels(m); sigEngine.update(state.candles); redrawMarkers(); renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt }); for (const c of state.mon.charts) c.setModels(m); }));
+state.autoCtl = createAutoControl(() => state.symbol); $("#chartAuto").append(state.autoCtl);
+mainMon.setSymbol(state.symbol);
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#symInput").select(); }
 });
