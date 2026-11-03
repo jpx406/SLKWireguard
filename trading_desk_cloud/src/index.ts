@@ -138,6 +138,24 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // Winners / copy desk: the latest "winners" brief with the ratings and chart autopilots of its picks.
+  if (path === "/winners" && m === "GET") {
+    await ensureBriefSchema(env.DB);
+    const { results } = await env.DB.prepare("SELECT * FROM briefs WHERE slot = 'winners' ORDER BY created_at DESC LIMIT 8").all<Record<string, unknown>>();
+    const parse = (v: unknown, dflt: unknown) => { try { return typeof v === "string" ? JSON.parse(v) : dflt; } catch { return dflt; } };
+    const briefs = results.map((r) => ({ ...r, picks: parse(r.picks, []), data: parse(r.data, null) }));
+    const auto = await listAuto(env.DB, who.user);
+    return json({ briefs, ratings: await latestRatings(env.DB), auto: Object.fromEntries(auto.map((a) => [a.symbol, a])), slot: SLOTS.find((s) => s.id === "winners") });
+  }
+  // Put an amount of paper money on several winners at once (chart autopilot, entries from the plan or a candle signal).
+  if (path === "/winners/auto" && m === "POST") {
+    const b = await body<{ symbols?: unknown; amount_usd?: unknown; rule?: unknown }>(req);
+    const syms = (Array.isArray(b.symbols) ? b.symbols : []).map((s) => String(s).toUpperCase()).filter((s) => SYMBOL_RE.test(s)).slice(0, 20);
+    if (!syms.length) return bad("Pick at least one symbol.");
+    const out: Record<string, unknown> = {};
+    for (const s of syms) out[s] = await setAuto(env.DB, who.user, { symbol: s, amount_usd: b.amount_usd, rule: b.rule ?? "both", enabled: true });
+    return json({ results: out, rows: await listAuto(env.DB, who.user) });
+  }
   // The plan a chart watches for this symbol (your position / order, today's recommendation, or a Deep Analysis).
   const plm = path.match(/^\/plan\/([A-Za-z0-9.\-^=]{1,15})$/);
   if (plm && m === "GET") return json({ symbol: plm[1].toUpperCase(), plan: await planFor(env.DB, who.user, plm[1].toUpperCase()) });

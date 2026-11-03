@@ -14,7 +14,7 @@ export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
 }
 
-export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review" | "swing";
+export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review" | "swing" | "winners";
 type Slot = { id: SlotId; label: string; et: string; defaultOn: boolean; prompt: string };
 
 // Structured result every brief ends with; the UI turns it into tables and charts.
@@ -42,6 +42,7 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
  "skills_run": [{"skill":"trader-scan","status":"ok|failed|skipped","note":""}]
 }
 Picks may carry "horizon": "day" (default, flat by the close) or "swing" (held 2-10 sessions; the paper desk then holds it until the stop or target).
+A pick may carry "sources": [{"type":"insider|congress|fund|social|copytrader","who":"name","action":"buy|sell","date":"YYYY-MM-DD","size":"$1.2M","note":"3 insiders in 10 days"}] when it comes from following other traders.
 Rank picks best first (max 10), one entry per symbol, sizes within /workspace/trader/config.json.`;
 
 export const SLOTS: Slot[] = [
@@ -66,6 +67,15 @@ Report which skills you ran and whether each one worked. Then a short written br
     `Power hour: use my trader-* skills to find setups for the last hour (closing strength or weakness, end-of-day breakouts), with full plans per /workspace/trader/config.json. Remind me to be flat before the close if my rules require it.` },
   { id: "swing", label: "Swing setups (2-10 day holds)", et: "16:40", defaultOn: false, prompt:
     `The US session just closed. Use my trader-* skills on DAILY and WEEKLY bars to find the best SWING setups for the next 2-10 sessions across the whole US market (not only my watchlist): volatility-contraction and flag breakouts near highs, pullbacks to the rising 10/21-day EMA in strong trends, bases breaking out on volume, selling-exhaustion hammers at support, and post-earnings drift. Prefer names with a catalyst, relative strength versus SPY and average volume over 1M shares. The Python packages ta_patterns (300 candlestick and chart patterns, no look-ahead) and talib (TA-Lib: 61 CDL* candlestick functions returning -100..100, plus ATR, ADX, RSI, Bollinger Bands) are installed in your sandbox: use them on each candidate's daily OHLC to confirm the pattern, measure ATR for the stop, and check ADX for trend strength. For every pick give a full plan: entry (buy-stop above the trigger or limit at support), stop (below the pattern low or the 21-day EMA), targets in R, how many sessions to allow, and what invalidates it. Set "horizon": "swing" on every pick and set the exit_plan to hold through the stop or targets. Also list the market regime and the 3 sectors with the best relative strength this week.` },
+  { id: "winners", label: "Winners / copy desk (follow proven buyers)", et: "08:40", defaultOn: false, prompt:
+    `WINNERS / COPY DESK. Find the stocks that proven winners are buying right now, then turn the best into trade plans. Work the sources in this order and keep going when one is down (say so under skills_run):
+1. INSIDER CLUSTER BUYS (strongest evidence): open-market purchases by officers and directors, several insiders in the same stock within 30 days, big relative to their pay. Read http://openinsider.com/latest-cluster-buys and http://openinsider.com/latest-insider-buying (plain HTML tables), and confirm the biggest ones on SEC EDGAR Form 4 (full-text search at efts.sec.gov, user agent from sec_user_agent in /workspace/trader/config.json).
+2. CONGRESS: new buys in the last 2 weeks from members with a good record. Run /trader-pelosi new (House PTRs) and read https://www.capitoltrades.com/trades (both chambers; note the lag between trade date and filing). Weigh buys that several members made, large sizes, and sector committees.
+3. SUPERINVESTORS / FUNDS: https://www.dataroma.com/m/rt.php (real-time superinvestor activity) and https://www.dataroma.com/m/g/portfolio_b.php?q=q (top buys last quarter). Run /trader-copycat diff for 3-4 of the best long-term records (Berkshire Hathaway, Pershing Square, Appaloosa, Duquesne, Baupost, Greenlight) to catch new positions and big adds. 13F data is 45+ days old: use it for conviction, not timing.
+4. COPY-TRADING LEADERBOARDS AND SOCIAL: the StockTwits trending list (https://api.stocktwits.com/api/2/trending/symbols.json) for crowd interest, and if reachable the eToro public leaderboard (https://www.etoro.com/discover/people, or https://www.etoro.com/sapi/rankings/rankings?Period=OneYearAgo&page=1&pageSize=20&sort=-gain&Verified=true&MaxDailyRiskScore=6&HasAvatar=true&Gain=1&CopyBlock=false&IsFund=false) for what the top verified gainers hold. Social interest is a timing signal only, never a reason by itself.
+5. MERGE: one row per symbol. Conviction = how many independent source types agree (insider cluster counts double), recency, size, and whether the buyer has a good record. Drop illiquid names (average volume under 500k shares or price under $3) and anything with an earnings date inside the next 2 sessions unless the setup is specifically for it.
+6. PLAN each of the best 8-12 with /trader-entry and /trader-exit on today's chart: "horizon":"day" when there is momentum and relative volume today (entry on the intraday trigger, flat by the close), otherwise "horizon":"swing" (entry at support or on the breakout, stop under the structure, targets in R, hold through them). Size with /trader-risk per /workspace/trader/config.json. Score 0-100 on conviction AND setup quality together.
+Fill "sources" on every pick. Also add at the top level of the JSON "winners": {"insider":[...], "congress":[...], "funds":[...], "social":[...]} with the raw rows you used ({"symbol","who","action","date","size","note"}), so the desk can show the feed even for names you did not plan. Then a short written briefing, then the JSON.` },
   { id: "review", label: "End-of-day review", et: "16:15", defaultOn: false, prompt:
     `End-of-day review with my trader-* skills: how today's pre-market picks actually played out (trigger hit? target or stop?), the day's biggest movers I missed and why, and 3 lessons for tomorrow.` },
 ];

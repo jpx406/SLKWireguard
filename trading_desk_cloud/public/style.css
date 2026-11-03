@@ -644,3 +644,11 @@ body.chart-window .sig-feed { background: var(--panel); max-height: 64px; overfl
 .tiny { font-size: 0.769rem; }
 body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
 @media (max-width: 700px) { .sig-models-box, .auto-box { left: auto; right: 0; } }
+
+/* ---- Winners / copy desk */
+.chip.src { font-size: 0.769rem; margin: 1px 3px 1px 0; white-space: nowrap; display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.chip.src.insider { border-color: var(--up); } .chip.src.congress { border-color: #a78bfa; } .chip.src.fund, .chip.src.funds { border-color: var(--accent); } .chip.src.social { border-color: #f59e0b; } .chip.src.copytrader { border-color: #22d3ee; }
+.pill.day { background: var(--panel-2); color: var(--dim); border: 1px solid var(--line); }
+.win-table td.wrap { max-width: 260px; }
+.win-detail td { padding-top: 0; }
+.win-grid { margin-top: 10px; }

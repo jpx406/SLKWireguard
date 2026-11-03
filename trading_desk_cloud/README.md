@@ -217,6 +217,24 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **On the chart:** green arrows below bars for bullish patterns, red arrows above for bearish; the last few are labelled. The feed under the chart lists them newest first.
 * **Notifications:** with browser notifications on (Preferences), a new signal on the latest bar notifies you, on the main chart and in Monitor; chart windows have their own *Notify* switch.
 
+## Winners / copy desk (follow proven buyers)
+
+**Winners** in the sidebar (More › Winners on iPhone) is a copy-trading desk built on public disclosures instead of a paid copy-trading app. The *Winners / copy desk* routine (Autopilot, off by default, 08:40 New York; or **Run Now**) has the agent read, in order of evidence:
+
+1. **Insider cluster buys** (OpenInsider, confirmed on SEC EDGAR Form 4): several officers or directors buying their own stock within 30 days. The best-documented edge in the academic literature.
+2. **Congress**: new buys from the House Clerk's periodic transaction reports (`/trader-pelosi`) and Capitol Trades (both chambers). Evidence for copying after the filing lag is weak, so these count as conviction, not timing.
+3. **Superinvestors and funds**: Dataroma real-time activity and top buys, plus `/trader-copycat diff` on a few long-term records (Berkshire, Pershing Square, Appaloosa, Duquesne, Baupost, Greenlight). 13F data is 45+ days old.
+4. **Copy-trading leaderboards and social**: the eToro public leaderboard when reachable (what the top verified gainers hold) and StockTwits trending for timing only.
+
+It merges everything into one list (conviction = independent source types agreeing, recency, size, the buyer's record), drops illiquid names, and plans each pick as a **day** trade (momentum today, flat by the close) or a **swing** (entry at support or breakout, held through stop or targets). The page shows the plans with their *Followed by* chips and the raw feed per source, and from there:
+
+* picks scoring 65 or more go to **Deep Analysis** automatically (the normal threshold rule); a *Deep* button runs it on any other pick;
+* tick picks, set *$ each*, and **Auto-trade selected** puts that paper money on every one through the chart autopilot: entries at the plan's entry or on a two-star candle signal, exits at the stop, the target or a reversal signal.
+
+Why not a copy-trading app: dub, Autopilot, eToro and Invo copy other people's accounts in real time but offer no API, and Invo is mostly crypto. The desk uses the same disclosures those apps are built on, for free, and keeps everything on paper.
+
+**Setup:** run `setup/setup-agent.mjs` again once after updating so the sandbox may reach openinsider.com, capitoltrades.com, dataroma.com, quiverquant.com, disclosures-clerk.house.gov, efdsearch.senate.gov and etoro.com (hosts the API refuses are dropped automatically). `sec_user_agent` in the trading rules must have your real name and email for EDGAR.
+
 ## Plan monitor: entry, expected exit, exit detection
 
 Every chart (main chart, Monitor tiles, chart windows) watches the symbol's **plan**: your open paper position or working order, else today's latest recommendation for the symbol from any brief, else the latest Deep Analysis (5 days) with an entry and stop. The plan's levels are drawn (BUY/SHORT entry, STOP, T1/T2) and a status line under the chart says what is happening:

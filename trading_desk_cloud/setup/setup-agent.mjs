@@ -34,6 +34,9 @@ const BASE_HOSTS = [
   // Deep Analysis (TradingAgents): its data vendors, the release wheel, and Claude itself (called from inside the sandbox).
   "api.anthropic.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com",
   "data.sec.gov", "efts.sec.gov", "api.stlouisfed.org", "api.stocktwits.com", "gamma-api.polymarket.com",
+  // Winners / copy desk: insider cluster buys, congressional trades, superinvestor filings, copy-trading leaderboards.
+  "openinsider.com", "www.openinsider.com", "capitoltrades.com", "www.capitoltrades.com", "dataroma.com", "www.dataroma.com",
+  "quiverquant.com", "www.quiverquant.com", "disclosures-clerk.house.gov", "efdsearch.senate.gov", "etoro.com", "www.etoro.com",
   // (reddit.com blocks Anthropic's crawler and cannot be allowed; TradingAgents' sentiment analyst then uses StockTwits and news.)
 ];
 // Python packages installed in the sandbox besides the skills' own requirements (plain names only: the API
