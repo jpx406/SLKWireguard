@@ -142,14 +142,17 @@ function createSignalEngine(opts = {}) {
 }
 
 /** Render a signal feed (newest first) into `host`. `fmtTime` formats a unix time. */
-function renderSignalFeed(host, signals, { fmtTime, fmtPrice, limit = 8, onPick } = {}) {
+function renderSignalFeed(host, signals, { fmtTime, fmtPrice, limit = 8, onPick, stats = null } = {}) {
   host.innerHTML = "";
   if (!signals.length) { host.append(Object.assign(document.createElement("span"), { className: "dim small", textContent: "No candle signals yet on completed bars." })); return; }
   for (const s of signals.slice(0, limit)) {
     const chip = document.createElement("button"); chip.type = "button";
     chip.className = `sig-chip ${s.dir}${s.strength >= 3 ? " s3" : s.strength === 2 ? " s2" : ""}`;
     const stars = s.strength >= 3 ? "★★" : s.strength === 2 ? "★" : "";
-    chip.innerHTML = `<b>${s.dir === "bearish" ? "▼" : s.dir === "bullish" ? "▲" : "•"} ${s.label}</b>${stars ? ` <span class="stars">${stars}</span>` : ""} <span class="mono">${fmtPrice ? fmtPrice(s.price) : s.price}</span> <span class="dim">${fmtTime ? fmtTime(s.time) : ""}</span>`;
+    const st = stats?.[s.pattern];
+    const hist = st && st.n >= 15 ? `<span class="hist ${st.verdict}" title="This pattern on this chart: ${st.n} past signals, ${st.win_rate}% wins, ${st.avg_r >= 0 ? "+" : ""}${st.avg_r}R (walk-forward)">${Math.round(st.win_rate)}%</span>` : "";
+    chip.innerHTML = `<b>${s.dir === "bearish" ? "▼" : s.dir === "bullish" ? "▲" : "•"} ${s.label}</b>${stars ? ` <span class="stars">${stars}</span>` : ""}${hist} <span class="mono">${fmtPrice ? fmtPrice(s.price) : s.price}</span> <span class="dim">${fmtTime ? fmtTime(s.time) : ""}</span>`;
+    if (st?.verdict === "bad") chip.classList.add("unreliable");
     chip.title = `${s.label} (${s.dir}, ${s.model} model) on the ${s.bars}-bar pattern ending ${fmtTime ? fmtTime(s.time) : s.time}${s.trend ? `, after a ${s.trend}` : ""}.` +
       ` Strength ${s.strength}/3: ${[s.trend && ((s.dir === "bullish" && s.trend === "downtrend") || (s.dir === "bearish" && s.trend === "uptrend")) ? "trend fits" : "trend neutral", s.volume ? "volume spike" : "normal volume"].join(", ")}.`;
     if (onPick) chip.onclick = () => onPick(s);
@@ -174,6 +177,16 @@ function sigModelsControl(onChange, { models = loadSignalModels() } = {}) {
   }
   document.addEventListener("click", (e) => { if (det.open && !det.contains(e.target)) det.open = false; });
   return det;
+}
+
+/** Pattern reliability for a symbol and bar size (cached per page); resolves to {pattern: row} or null. */
+const _sigStatsCache = new Map();
+async function loadSignalStats(symbol, interval) {
+  const key = `${symbol}|${interval}`;
+  if (_sigStatsCache.has(key)) return _sigStatsCache.get(key);
+  const p = fetch(`/api/learn/patterns/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}`, { headers: { "Content-Type": "application/json" } })
+    .then((r) => (r.ok ? r.json() : null)).then((d) => (d ? Object.fromEntries(d.rows.map((x) => [x.pattern, x])) : null)).catch(() => null);
+  _sigStatsCache.set(key, p); return p;
 }
 
 /** Browser notification for new signals on the latest bar only (not the backlog on first load). */

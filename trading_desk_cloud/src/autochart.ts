@@ -6,6 +6,7 @@ import "../public/candles.js";
 import { candles, latestPrice } from "./market";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
 import { closePosition, ensurePaper, getAccount, placeOrder, type Side } from "./paper";
+import { patternAllowed } from "./learn";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -181,8 +182,11 @@ export async function runChartAuto(db: D1Database) {
       if (!placed && r.rule !== "plan") {
         const bars = await barsOf(r.symbol);
         const hits = lastBarSignals(bars, 2).filter((h) => h.strong && (acct.s.auto_side === "both" || (acct.s.auto_side === "long") === (h.dir === "bullish")));
-        if (hits.length) {
-          const h = hits.sort((a, b) => b.strength - a.strength)[0], last = bars.at(-1)!;
+        // Patterns this symbol has proven unreliable (pattern_stats, walk-forward) are skipped.
+        const allowed: Hit[] = [];
+        for (const h of hits) { const a = await patternAllowed(db, r.symbol, h.pattern, "5m"); if (a.ok) allowed.push(h); else await note(db, r, `Skipped ${h.label}: ${a.row?.win_rate}% wins over ${a.row?.n} past signals on this chart`); }
+        if (allowed.length) {
+          const h = allowed.sort((a, b) => b.strength - a.strength)[0], last = bars.at(-1)!;
           const patt = bars.slice(bars.length - h.bars);
           const side: Side = h.dir === "bullish" ? "long" : "short";
           const entry = last.close;

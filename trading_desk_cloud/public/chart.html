@@ -53,7 +53,7 @@
       document.title = `${mc.symbol} ${mcFmt(last)} · Chart`;
     },
     onSignal: (fresh, { symbol: sym, latestBar, all }) => {
-      renderSignalFeed($("#cwFeed"), all, { fmtTime: mcTime, fmtPrice: mcFmt });
+      loadSignalStats(sym, mc.interval).then((st) => renderSignalFeed($("#cwFeed"), all, { fmtTime: mcTime, fmtPrice: mcFmt, stats: st }));
       if ($("#cwNotify").checked) notifySignals(sym, fresh, latestBar);
     },
     onPlanStatus: (text, cls) => { const p = $("#cwPlan"); p.textContent = text; p.className = `plan-bar small ${cls || ""}`; },

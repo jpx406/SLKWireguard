@@ -254,6 +254,11 @@ const sigEngine = createSignalEngine({ intervalSec: 300, shift });
 const mainMon = createPlanMonitor({ series: candleS, shift, drawLines: () => !(state.mainPlan && state.mainPlan.symbol === state.symbol),
   onStatus: (text, cls) => { const p = $("#planBar"); p.textContent = text; p.className = `plan-bar small ${cls || ""}`; },
   onEvent: (ev) => { const p = $("#planBar"); p.textContent = ev.text; p.className = `plan-bar small ${ev.kind === "entry" ? "accent" : ev.kind === "target" ? "up" : "down"}`; if (state.sigNotify) notifyPlanEvent(ev); redrawMarkers(); } });
+/** The signal feed under the main chart, with each pattern's historical reliability on this chart once known. */
+function refreshSigFeed() {
+  renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt, stats: state.sigStats });
+  if (!state.sigStats) { const sym = state.symbol, iv = state.interval; loadSignalStats(sym, iv).then((st) => { if (st && sym === state.symbol && iv === state.interval) { state.sigStats = st; renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt, stats: st }); } }); }
+}
 function redrawMarkers() {
   const extra = [...paperMarkers(state.symbol, state.candles, shift), ...(state.ind.signals ? sigEngine.markers() : []), ...mainMon.markers()].sort((x, y) => x.time - y.time);
   if (state.mainPlan && state.mainPlan.symbol === state.symbol) mainLayer.set(state.mainPlan, state.candles, extra); else candleS.setMarkers(extra);
@@ -292,7 +297,7 @@ async function loadChart(keepView = false) {
     const fresh = state.ind.signals ? sigEngine.update(data) : [];
     mainMon.update(data, sigEngine.list());
     redrawMarkers();
-    if (state.ind.signals) { renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt }); if (fresh.length && state.sigNotify) notifySignals(sym, fresh, data.at(-1)?.time ?? 0); }
+    if (state.ind.signals) { refreshSigFeed(); if (fresh.length && state.sigNotify) notifySignals(sym, fresh, data.at(-1)?.time ?? 0); }
     drawIndicators(); updateLegend();
     $("#chartMsg").textContent = "";
     chartEmpty(data.length ? null : emptyChartText(sym));
@@ -322,7 +327,7 @@ chart.subscribeCrosshairMove(updateLegend);
 function setSymbol(sym) {
   sym = sym.trim().toUpperCase(); if (!sym) return;
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
-  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = "";
+  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = ""; state.sigStats = null;
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]); state.autoCtl?.refresh();
 }
 
@@ -365,7 +370,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "winners", "deep", "journal", "more"];
+const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "winners", "deep", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
@@ -771,7 +776,7 @@ $("#settingsForm").onsubmit = async (e) => {
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
     await saveSettings({ session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
-      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_min_score: +f.deep_min_score.value || 0, deep_max_per_brief: +f.deep_max_per_brief.value || 5, reuse_research: f.reuse_research.checked, engines } : {}) });
+      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_min_score: +f.deep_min_score.value || 0, deep_max_per_brief: +f.deep_max_per_brief.value || 5, learn_apply: f.learn_apply.checked, learn_min_n: +f.learn_min_n.value || 10, reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
@@ -798,7 +803,7 @@ async function loadUsage() {
   } else out.append(el("div", null, "No Claude sessions recorded yet."));
   f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
   const grid = $("#engineGrid"); grid.innerHTML = "";
-  f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5;
+  f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5; f.learn_apply.checked = u.learn_apply !== false; f.learn_min_n.value = u.learn_min_n ?? 10;
   for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"]]) {
     const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
     for (const o of u.engine_options) sel.append(new Option(o.label, o.id));
@@ -1002,7 +1007,7 @@ $("#addSymForm").onsubmit = (e) => {
 };
 $$("#intervals button").forEach((b) => (b.onclick = () => {
   if (b.disabled) return;
-  state.interval = b.dataset.i; syncRangeButtons(); state.candles = []; sigEngine.setInterval(INTERVAL_SEC[state.interval] || 300); sigEngine.reset(); loadChart(); renderWorkflows();
+  state.interval = b.dataset.i; syncRangeButtons(); state.candles = []; sigEngine.setInterval(INTERVAL_SEC[state.interval] || 300); sigEngine.reset(); state.sigStats = null; loadChart(); renderWorkflows();
 }));
 $$("#ranges button").forEach((b) => (b.onclick = () => {
   state.range = b.dataset.r;
@@ -1017,7 +1022,7 @@ $$("#indicators button").forEach((b) => (b.onclick = () => {
     try { localStorage.setItem("td.signals", state.ind.signals ? "1" : "0"); } catch { /* ok */ }
     if (state.ind.signals) sigEngine.update(state.candles);
     redrawMarkers();
-    renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt });
+    refreshSigFeed();
     return;
   }
   drawIndicators();
@@ -1026,7 +1031,7 @@ $$("#indicators button").forEach((b) => (b.onclick = () => {
 try { if (localStorage.getItem("td.signals") === "1") { state.ind.signals = true; $('#indicators [data-ind="signals"]').classList.add("on"); $("#sigFeed").classList.remove("hidden"); } } catch { /* ok */ }
 $("#btnPopChart").onclick = () => openChartWindow(state.symbol);
 // Detection models (shared with the Monitor grid) and the per-chart automatic paper trading control.
-$("#sigModels").append(sigModelsControl((m) => { sigEngine.setModels(m); sigEngine.update(state.candles); redrawMarkers(); renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt }); for (const c of state.mon.charts) c.setModels(m); }));
+$("#sigModels").append(sigModelsControl((m) => { sigEngine.setModels(m); sigEngine.update(state.candles); redrawMarkers(); refreshSigFeed(); for (const c of state.mon.charts) c.setModels(m); }));
 state.autoCtl = createAutoControl(() => state.symbol); $("#chartAuto").append(state.autoCtl);
 mainMon.setSymbol(state.symbol);
 document.addEventListener("keydown", (e) => {

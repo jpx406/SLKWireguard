@@ -9,6 +9,7 @@ import { autoTradeNewBriefs, runEngine } from "./paper";
 import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type ScanFilters } from "./filters";
 import { deepAfterBriefs, finalizeDeep } from "./deep";
 import { runChartAuto } from "./autochart";
+import { learnTick, playbookPrompt } from "./learn";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
@@ -211,7 +212,7 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filters
     // The full scan runs every skill, so it gets twice the normal per-session budget.
     const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd, engine as never);
     await env.DB.prepare("UPDATE briefs SET engine = ? WHERE id = ?").bind(engine, id).run();
-    const handoff = s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "";
+    const handoff = (await playbookPrompt(env.DB)) + (s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "");
     const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
     if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
     const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${handoff}${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;
@@ -299,6 +300,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   // Paper trading: fill/close against the latest 1-minute bars, then auto-trade any newly finished brief.
   try { await runEngine(env.DB); } catch (e) { console.error("paper engine", e); }
   try { await runChartAuto(env.DB); } catch (e) { console.error("chart autopilot", e); }
+  try { await learnTick(env.DB); } catch (e) { console.error("learning", e); }
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);
   try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }

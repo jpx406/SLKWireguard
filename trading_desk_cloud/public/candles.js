@@ -17,10 +17,11 @@
 
   /** Trend before bar i: slope of a simple moving average of the closes, measured in average ranges. */
   function trendBefore(b, i, period) {
-    if (i < period + 3) return "sideways";
+    const half = Math.max(2, Math.floor(period / 2));
+    if (i < period + half + 1) return "sideways"; // not enough history for both averages
     const sma = (k) => { let s = 0; for (let j = k - period + 1; j <= k; j++) s += b[j].close; return s / period; };
     let ar = 0; for (let j = i - period; j < i; j++) ar += range(b[j]); ar /= period;
-    const slope = sma(i - 1) - sma(i - 1 - Math.max(2, Math.floor(period / 2)));
+    const slope = sma(i - 1) - sma(i - 1 - half);
     return slope > 0.35 * ar ? "uptrend" : slope < -0.35 * ar ? "downtrend" : "sideways";
   }
   function volumeSpike(b, i, n = 20) {

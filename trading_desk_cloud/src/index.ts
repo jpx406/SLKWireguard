@@ -7,6 +7,7 @@ import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, 
 import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
+import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -138,6 +139,35 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // Learning loop: outcomes of every recommendation, the playbook, pattern reliability and the signal backtester.
+  if (path === "/learn" && m === "GET") {
+    const days = Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90));
+    try { await evaluatePicks(env.DB, 8); } catch { /* data hiccup */ }
+    let playbook = await getSetting<{ at: number } | null>(env.DB, "learn_playbook", null);
+    if (!playbook || Date.now() / 1000 - playbook.at > 24 * 3600) { try { playbook = await buildPlaybook(env.DB); } catch { /* later */ } }
+    const s = await getSettings(env.DB);
+    return json({ ...(await learnSummary(env.DB, days)), paper: await paperLearn(env.DB, days), playbook, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n });
+  }
+  if (path === "/learn/run" && m === "POST") {
+    if (who.role !== "admin") return bad("Admin only.", 403);
+    const r = await evaluatePicks(env.DB, 40);
+    return json({ ...r, playbook: await buildPlaybook(env.DB) });
+  }
+  const pstat = path.match(/^\/learn\/patterns\/([A-Za-z0-9.\-^=]{1,15})$/);
+  if (pstat && m === "GET") {
+    const iv = url.searchParams.get("interval") || "5m";
+    if (!INTERVALS[iv]) return bad("Unknown interval");
+    try { return json(await patternStats(env.DB, pstat[1].toUpperCase(), iv, url.searchParams.get("refresh") === "1")); } catch (e) { return bad(String((e as Error).message)); }
+  }
+  if (path === "/learn/backtest" && m === "POST") {
+    const b = await body<{ symbol?: unknown; interval?: unknown; days?: unknown; min_strength?: unknown; hold_bars?: unknown }>(req);
+    const symbol = String(b.symbol || "").toUpperCase(), iv = String(b.interval || "5m");
+    if (!SYMBOL_RE.test(symbol)) return bad("Bad symbol"); if (!INTERVALS[iv]) return bad("Unknown interval");
+    const days = Math.max(2, Math.min(730, Number(b.days) || (iv === "1d" ? 365 : 30)));
+    const bars = (await candles(symbol, iv, days)) as { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+    const done = bars.filter((x) => x.time + (iv === "1d" ? 86400 : 300) <= Date.now() / 1000);
+    return json({ symbol, interval: iv, days, ...backtestSignals(done, { minStrength: Math.max(1, Math.min(3, Number(b.min_strength) || 2)), holdBars: Math.max(2, Math.min(200, Number(b.hold_bars) || (iv === "1d" ? 10 : 24))) }) });
+  }
   // Winners / copy desk: the latest "winners" brief with the ratings and chart autopilots of its picks.
   if (path === "/winners" && m === "GET") {
     await ensureBriefSchema(env.DB);
@@ -208,6 +238,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       if (!(n >= 0 && n <= 100)) return bad("Deep-analysis score threshold: 0 (off) to 100.");
       await setSetting(env.DB, "deep_min_score", Math.round(n));
     }
+    if ("learn_apply" in patch) await setSetting(env.DB, "learn_apply", !!patch.learn_apply);
+    if ("learn_min_n" in patch) { const n = Number(patch.learn_min_n); if (!(n >= 5 && n <= 100)) return bad("Playbook minimum trades per group: 5 to 100."); await setSetting(env.DB, "learn_min_n", Math.round(n)); }
     if ("deep_max_per_brief" in patch) {
       const n = Number(patch.deep_max_per_brief);
       if (!(n >= 1 && n <= 20)) return bad("Deep analyses per brief: 1 to 20.");
@@ -253,7 +285,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   if (path === "/usage" && m === "GET") {
     if (who.role !== "admin") return bad("Only the admin can see Claude spending.", 403);
     const s = await getSettings(env.DB);
-    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_min_score: s.deep_min_score, deep_max_per_brief: s.deep_max_per_brief, reuse_research: s.reuse_research, engines: s.engines,
+    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_min_score: s.deep_min_score, deep_max_per_brief: s.deep_max_per_brief, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n, reuse_research: s.reuse_research, engines: s.engines,
       engine_options: Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label })), slots: SLOTS.map(({ id, label }) => ({ id, label })) });
   }
 

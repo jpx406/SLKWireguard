@@ -25,6 +25,8 @@ export const DEFAULT_SETTINGS = {
   engines: {} as Record<string, string>,   // per brief slot (and "chat", "deep"): engine id; missing = "default"
   deep_min_score: 65,                      // after ANY finished brief, run Deep Analysis on every pick scoring at least this (0 = off)
   deep_max_per_brief: 5,                   // ...but at most this many runs per brief (cost guard)
+  learn_apply: true,                       // scans read the playbook built from my own track record
+  learn_min_n: 10,                         // a group needs this many settled trades before the playbook mentions it
 };
 export type Settings = typeof DEFAULT_SETTINGS;
 

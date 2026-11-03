@@ -652,3 +652,10 @@ body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
 .win-table td.wrap { max-width: 260px; }
 .win-detail td { padding-top: 0; }
 .win-grid { margin-top: 10px; }
+
+/* ---- Performance / learning */
+.playbook { white-space: pre-wrap; font-family: var(--font); font-size: 0.846rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px; line-height: 1.45; }
+.sig-chip .hist { font-size: 0.72rem; padding: 0 4px; border-radius: 6px; border: 1px solid var(--line); color: var(--dim); }
+.sig-chip .hist.good { color: var(--up); border-color: var(--up); } .sig-chip .hist.bad { color: var(--down); border-color: var(--down); }
+.sig-chip.unreliable { opacity: 0.6; }
+.bd-sec h4 { margin: 10px 0 4px; font-weight: 600; }
