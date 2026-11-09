@@ -10,14 +10,14 @@ import { DEFAULT_FILTERS, enforceFilters, filtersPrompt, sanitizeFilters, type S
 import { deepAfterBriefs, finalizeDeep } from "./deep";
 import { runChartAuto } from "./autochart";
 import { learnTick, playbookPrompt } from "./learn";
-import { finalizeKronos, kronosContext } from "./kronos";
+import { evaluateForecasts, finalizeKronos, kronosContext } from "./kronos";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
 }
 
-export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review" | "swing" | "winners";
+export type SlotId = "fullscan" | "premarket" | "preopen" | "open" | "midday" | "power" | "review" | "swing" | "winners" | "cryptoscan";
 type Slot = { id: SlotId; label: string; et: string; defaultOn: boolean; prompt: string };
 
 // Structured result every brief ends with; the UI turns it into tables and charts.
@@ -79,6 +79,13 @@ Report which skills you ran and whether each one worked. Then a short written br
 5. MERGE: one row per symbol. Conviction = how many independent source types agree (insider cluster counts double), recency, size, and whether the buyer has a good record. Drop illiquid names (average volume under 500k shares or price under $3) and anything with an earnings date inside the next 2 sessions unless the setup is specifically for it.
 6. PLAN each of the best 8-12 with /trader-entry and /trader-exit on today's chart: "horizon":"day" when there is momentum and relative volume today (entry on the intraday trigger, flat by the close), otherwise "horizon":"swing" (entry at support or on the breakout, stop under the structure, targets in R, hold through them). Size with /trader-risk per /workspace/trader/config.json. Score 0-100 on conviction AND setup quality together.
 Fill "sources" on every pick. Also add at the top level of the JSON "winners": {"insider":[...], "congress":[...], "funds":[...], "social":[...]} with the raw rows you used ({"symbol","who","action","date","size","note"}), so the desk can show the feed even for names you did not plan. Then a short written briefing, then the JSON.` },
+  { id: "cryptoscan", label: "Crypto scan (24/7 pairs)", et: "08:30", defaultOn: false, prompt:
+    `CRYPTO SCAN. Crypto trades around the clock, so this scan runs every day, weekends included. Cover the crypto market with my trader-* skills and public data; all prices in USD, symbols in Yahoo notation (BTC-USD, ETH-USD, SOL-USD...).
+1. Market: total market cap, BTC dominance, 24h volume and the fear/greed tone from CoinGecko (https://api.coingecko.com/api/v3/global and https://api.coingecko.com/api/v3/search/trending; https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1&price_change_percentage=24h%2C7d for the top 50 with 24h and 7d changes). Use BTC-USD as the index: regime risk-on when BTC holds above its 20-day EMA with rising 7-day momentum, risk-off below it.
+2. Universe: my crypto watchlist, the trending coins and the top-50 movers (24h and 7d) with enough volume (24h volume above $50M). Skip coins that are not on Yahoo Finance.
+3. For each candidate: Yahoo Finance 1h and daily bars; trend (EMA 20/50), momentum, volatility (ATR), support and resistance, volume confirmation; run talib CDL* and ta_patterns on the daily bars for candlestick confirmation; note news or catalysts (listings, upgrades, unlocks, ETF flows) from CoinGecko's description or the web when reachable.
+4. Plan the best 5-8 with /trader-entry and /trader-exit: "horizon":"swing" (held through the stop or targets; there is no close), entry at support or on the breakout, stop under the structure (ATR-based), targets in R. Size with /trader-risk per /workspace/trader/config.json (crypto moves 3-5x stocks: halve the risk per trade). Longs and shorts both allowed.
+Fill "sector" with the coin's category (L1, L2, DeFi, meme, AI...). Report which sources worked, then a short written briefing, then the JSON.` },
   { id: "review", label: "End-of-day review", et: "16:15", defaultOn: false, prompt:
     `End-of-day review with my trader-* skills: how today's pre-market picks actually played out (trigger hit? target or stop?), the day's biggest movers I missed and why, and 3 lessons for tomorrow.` },
 ];
@@ -307,13 +314,14 @@ export async function runSchedule(env: Env, now = clockNow()) {
   await finalizeBriefs(env);
   try { await autoTradeNewBriefs(env.DB); } catch (e) { console.error("auto-trade", e); }
   try { await finalizeDeep(env); await deepAfterBriefs(env); } catch (e) { console.error("deep analysis", e); }
-  try { await finalizeKronos(env); } catch (e) { console.error("kronos", e); }
+  try { await finalizeKronos(env); if (nyNow(now).minutes % 15 === 0) await evaluateForecasts(env.DB); } catch (e) { console.error("kronos", e); }
   try { await finalizeStrategy(env); } catch (e) { console.error("strategy", e); }
   const ny = nyNow(now);
   const ap = await getAutopilot(env.DB);
-  if (!ap.enabled || !isTradingDay(ny)) return;
+  if (!ap.enabled) return;
   for (const slot of SLOTS) {
     if (!ap.slots?.[slot.id]) continue;
+    if (slot.id !== "cryptoscan" && !isTradingDay(ny)) continue; // crypto trades at weekends; everything else waits for a trading day
     const start = toMin(slot.et);
     if (ny.minutes < start || ny.minutes >= start + 30) continue; // 30-min window tolerates a missed tick
     const exists = await env.DB.prepare("SELECT 1 FROM briefs WHERE day = ? AND slot = ? LIMIT 1").bind(ny.date, slot.id).first();

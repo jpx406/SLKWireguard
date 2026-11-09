@@ -344,6 +344,7 @@ function setSymbol(sym) {
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
   state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = ""; state.sigStats = null; state.forecast = null; mainFc.clear(); loadMainForecast(sym);
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]); state.autoCtl?.refresh();
+  if (typeof renderDashboard === "function" && state.dash?.data && sectionVisible("dashboard")) renderDashboard(); // the Dashboard follows the selected symbol at once
 }
 
 /* ------------------------------------------------------------------ watchlist & quotes */

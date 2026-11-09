@@ -8,7 +8,7 @@ import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
-import { KRONOS_INTERVALS, finalizeKronos, latestForecasts, listKronos, startKronos } from "./kronos";
+import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
 import { summary as paperSummary } from "./paper";
@@ -188,7 +188,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   // Kronos forecasts (candlestick foundation model in the sandbox).
   if (path === "/kronos" && m === "GET") {
     if (agentReady) await finalizeKronos(env);
-    return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate });
+    try { await evaluateForecasts(env.DB, 5); } catch { /* later */ }
+    return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate, score: await forecastScore(env.DB) });
   }
   if (path === "/kronos/run" && m === "POST") {
     const b = await body<{ symbol?: unknown; interval?: unknown; pred?: unknown }>(req);
@@ -213,6 +214,19 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const q = await quotes(wl);
     const pos = (await env.DB.prepare("SELECT * FROM paper_positions WHERE user = ? AND status = 'open'").bind(who.user).all<{ symbol: string }>()).results.filter((p) => isCrypto(p.symbol));
     return json({ watchlist: wl, quotes: q, forecasts: await latestForecasts(env.DB, wl), positions: pos, fomo_link: s.fomo_link, auto: Object.fromEntries((await listAuto(env.DB, who.user)).filter((a) => isCrypto(a.symbol)).map((a) => [a.symbol, a])) });
+  }
+  if (path === "/crypto/dashboard" && m === "GET") {
+    const ps = await paperSummary(env.DB, who.user);
+    const pos = ps.positions.filter((p) => isCrypto(p.symbol)), trades = ps.trades.filter((t) => isCrypto(t.symbol));
+    const realized = trades.reduce((a, t) => a + (t.pnl ?? 0), 0), unreal = pos.reduce((a, p) => a + (p.unrealized ?? 0), 0), wins = trades.filter((t) => (t.pnl ?? 0) > 0).length;
+    let cum = 0; const curve = [...trades].sort((a, b) => (a.closed_at ?? 0) - (b.closed_at ?? 0)).map((t) => ({ day: t.day_closed || "", equity: (cum += t.pnl ?? 0) }));
+    const wl = await getSetting<string[]>(env.DB, cwKey, (await getSettings(env.DB)).crypto_watchlist);
+    const q = await quotes(wl);
+    const scan = await env.DB.prepare("SELECT id, day, label, status, created_at, data FROM briefs WHERE slot = 'cryptoscan' AND status = 'done' ORDER BY created_at DESC LIMIT 1").first<{ id: string; day: string; label: string; status: string; created_at: string; data: string | null }>();
+    let scanData: { market?: unknown; picks?: unknown[] } | null = null; try { scanData = scan?.data ? JSON.parse(scan.data) : null; } catch { scanData = null; }
+    const outcomes = (await env.DB.prepare("SELECT symbol, slot, status, r_result, day, score, side FROM pick_outcomes WHERE slot = 'cryptoscan' AND symbol != '-' ORDER BY created_at DESC LIMIT 60").all()).results;
+    return json({ positions: pos, trades: trades.slice(0, 30), realized: Math.round(realized * 100) / 100, unrealized: Math.round(unreal * 100) / 100, wins, closed: trades.length, curve, quotes: q, forecasts: await latestForecasts(env.DB, wl), forecast_score: await forecastScore(env.DB),
+      scan: scan ? { id: scan.id, day: scan.day, created_at: scan.created_at, market: scanData?.market ?? null, picks: scanData?.picks ?? [] } : null, outcomes, auto: (await listAuto(env.DB, who.user)).filter((a) => isCrypto(a.symbol)) });
   }
   if (path === "/crypto/watchlist" && m === "PUT") {
     const b = await body<{ watchlist?: unknown }>(req);

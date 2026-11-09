@@ -8,10 +8,14 @@ import { client, createSession, deleteFile, uploadText } from "./agent";
 import { capBlocks, isEngine, recordSpend } from "./cost";
 import { getSettings } from "./db";
 import { nyNow } from "./briefs";
+import { candles } from "./market";
 // The forecast script ships with the app (public/kronos_forecast.py) and rides into the sandbox as a mounted file.
 async function forecastScript(env: Env) { return (await env.ASSETS.fetch("https://assets.local/kronos_forecast.py")).text(); }
 
 export const KRONOS_REPO = "https://github.com/shiyu-coder/Kronos.git";
+// Kronos' model code (MIT) ships vendored under public/kronos_model and is mounted into the sandbox, so a run needs
+// no git clone: only torch (preinstalled by setup, else pip) and the weights from Hugging Face.
+const MODEL_FILES = ["__init__.py", "kronos.py", "module.py"];
 export const KRONOS_INTERVALS = ["5m", "15m", "60m", "1d"] as const;
 const SCRIPT_MOUNT = "/workspace/kronos_forecast.py", REPO_DIR = "/workspace/kronos";
 const DEFAULT_PRED: Record<string, number> = { "5m": 36, "15m": 32, "60m": 24, "1d": 10 };
@@ -32,16 +36,17 @@ export async function ensureKronos(db: D1Database) {
   await db.prepare(`CREATE TABLE IF NOT EXISTS kronos_runs (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, interval TEXT NOT NULL, pred_len INTEGER NOT NULL, status TEXT NOT NULL,
     session_id TEXT, user TEXT, data TEXT, cost TEXT, error TEXT, created_at TEXT DEFAULT (datetime('now')), finished_at TEXT, files TEXT)`).run();
   await db.prepare("CREATE INDEX IF NOT EXISTS kronos_runs_sym ON kronos_runs (symbol, created_at)").run();
+  for (const c of ["content TEXT", "actual_move_pct REAL", "hit INTEGER", "evaluated_at INTEGER"]) { try { await db.prepare(`ALTER TABLE kronos_runs ADD COLUMN ${c}`).run(); } catch { /* exists */ } }
   ready = true;
 }
 
 export function kronosPrompt(symbol: string, interval: string, pred: number, samples: number) {
-  return `[Kronos forecast] Produce a probabilistic candlestick forecast for ${symbol} on ${interval} bars with the Kronos foundation model, using the script mounted at ${SCRIPT_MOUNT}. Do exactly this with bash, and print only short progress lines:
-1. Repo: \`test -d ${REPO_DIR}/model || git clone --depth 1 ${KRONOS_REPO} ${REPO_DIR}\`.
-2. Dependencies: \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas" 2>/dev/null || pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu einops huggingface_hub safetensors pandas numpy\` (if the CPU index is unreachable, \`pip install --quiet torch einops huggingface_hub safetensors pandas numpy\`). Allow up to 10 minutes.
-3. Run: \`python3 ${SCRIPT_MOUNT} --symbol ${symbol} --interval ${interval} --pred ${pred} --samples ${samples} --kronos ${REPO_DIR} --out /workspace/kronos_fc.json\` (the weights NeoQuasar/Kronos-small and NeoQuasar/Kronos-Tokenizer-base download from Hugging Face on first use; later runs use the cache). If Yahoo returns too few bars, retry once after 20 seconds.
-4. Print the result: \`cat /workspace/kronos_fc.json\`.
-Then one or two sentences reading the forecast for a trader (direction, size of the move versus the band, caveats: Kronos is a statistical model of past K-lines, not news-aware). End your answer with ONE fenced \`\`\`json block containing the file's JSON exactly as printed (nothing after it). Do not place orders and do not run any other skill.`;
+  return `[Kronos forecast] Produce a probabilistic candlestick forecast for ${symbol} on ${interval} bars with the Kronos foundation model. The model code is already mounted at ${REPO_DIR}/model/ and the forecast script at ${SCRIPT_MOUNT}; nothing needs to be cloned. Do exactly this with bash, printing only short progress lines:
+1. Dependencies: \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas, tqdm" 2>/dev/null || pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu einops huggingface_hub safetensors pandas numpy tqdm\`; if that index is unreachable, \`pip install --quiet torch einops huggingface_hub safetensors pandas numpy tqdm\`. Allow up to 10 minutes; do not give up before the install finishes.
+2. Run: \`cd ${REPO_DIR} && python3 ${SCRIPT_MOUNT} --symbol ${symbol} --interval ${interval} --pred ${pred} --samples ${samples} --kronos ${REPO_DIR} --out /workspace/kronos_fc.json 2>&1 | tail -n 15\`. The weights NeoQuasar/Kronos-small and NeoQuasar/Kronos-Tokenizer-base download from huggingface.co on first use (about 115 MB; later runs use the cache). If Yahoo returned too few bars, wait 20 seconds and run once more.
+3. Print the result: \`cat /workspace/kronos_fc.json\`.
+If a step fails, print the last 30 lines of its output and say which host or package was the problem (for example "huggingface.co not allowed" or "torch not installed"), so the desk can show it.
+Then one or two sentences reading the forecast for a trader (direction, size of the move versus the band; Kronos is a statistical model of past K-lines, not news-aware). End your answer with ONE fenced \`\`\`json block containing the file's JSON exactly as printed (nothing after it). Do not place orders and do not run any other skill.`;
 }
 
 /** Start a forecast (user action, the Crypto desk, or a scan asking for one). */
@@ -63,7 +68,10 @@ export async function startKronos(env: Env, symbol: string, interval: string, pr
   try {
     const fid = await uploadText(env, "kronos_forecast.py", await forecastScript(env), "text/x-python");
     files.push(fid);
-    const sid = await createSession(env, Math.max(1, s.session_budget_usd), engine as never, { resources: [{ file_id: fid, mount_path: SCRIPT_MOUNT }] });
+    const resources = [{ file_id: fid, mount_path: SCRIPT_MOUNT }];
+    for (const f of MODEL_FILES) { const t = await (await env.ASSETS.fetch(`https://assets.local/kronos_model/${f}`)).text(); const id = await uploadText(env, f, t, "text/x-python"); files.push(id); resources.push({ file_id: id, mount_path: `${REPO_DIR}/model/${f}` }); }
+    // A first run installs torch and downloads the weights: give it twice the normal budget (at least $2).
+    const sid = await createSession(env, Math.max(2, s.session_budget_usd * 2), engine as never, { resources });
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text: kronosPrompt(symbol, interval, n, Number((s as { kronos_samples?: number }).kronos_samples) || 20) }] }] });
     await env.DB.prepare("UPDATE kronos_runs SET session_id = ?, status = 'running', files = ? WHERE id = ?").bind(sid, JSON.stringify(files), id).run();
   } catch (e) {
@@ -108,8 +116,8 @@ export async function finalizeKronos(env: Env) {
       const finish = async (status: "done" | "error", error: string | null) => {
         await recordSpend(env.DB, { session_id: r.session_id!, kind: "brief", slot: "kronos", day: nyNow().date, cost, engine: null, user: r.user });
         for (const f of (() => { try { return JSON.parse(r.files || "[]") as string[]; } catch { return []; } })()) await deleteFile(env, f);
-        await env.DB.prepare("UPDATE kronos_runs SET status = ?, data = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
-          .bind(status, fc ? JSON.stringify(fc) : null, cost, error, r.id).run();
+        await env.DB.prepare("UPDATE kronos_runs SET status = ?, data = ?, cost = ?, error = ?, content = ?, finished_at = datetime('now') WHERE id = ?")
+          .bind(status, fc ? JSON.stringify(fc) : null, cost, error, content.replace(/```json[\s\S]*?```/g, "").trim().slice(0, 3000) || null, r.id).run();
       };
       if (idleReason === "requires_action") {
         const pending = [...asks].filter((x) => !answered.has(x));
@@ -120,7 +128,7 @@ export async function finalizeKronos(env: Env) {
         const why: Record<string, string> = { budget_reached: "Stopped at the session budget.", refusal: "Claude declined this request.", retries_exhausted: "Failed after retries." };
         const err = idleReason === "end_turn" ? null : why[idleReason] ?? idleReason;
         if (fc) await finish("done", err);
-        else await finish("error", [err, ...errors, content ? "No forecast JSON in the answer (the model may have failed to download; see the agent's notes)." : "Claude finished without writing an answer."].filter(Boolean).join(" · "));
+        else await finish("error", [err, ...errors, content ? "No forecast JSON in the answer: see the agent's notes below (usually a host the sandbox may not reach, or torch not installed; run setup/setup-agent.mjs again)." : "Claude finished without writing an answer."].filter(Boolean).join(" · "));
       } else if (ageMin > 40) await finish("error", "Timed out after 40 minutes.");
     } catch (e) { console.error("kronos", r.id, e); }
   }
@@ -128,8 +136,45 @@ export async function finalizeKronos(env: Env) {
 
 export async function listKronos(db: D1Database, limit = 40) {
   await ensureKronos(db);
-  const { results } = await db.prepare("SELECT id, symbol, interval, pred_len, status, user, data, cost, error, created_at, finished_at FROM kronos_runs ORDER BY created_at DESC LIMIT ?").bind(limit).all<KronosRun>();
+  const { results } = await db.prepare("SELECT id, symbol, interval, pred_len, status, user, data, cost, error, content, actual_move_pct, hit, evaluated_at, created_at, finished_at FROM kronos_runs ORDER BY created_at DESC LIMIT ?").bind(limit)
+    .all<KronosRun & { content: string | null; actual_move_pct: number | null; hit: number | null; evaluated_at: number | null }>();
   return results.map((r) => ({ ...r, data: r.data ? (JSON.parse(r.data) as Forecast) : null }));
+}
+
+/** Score finished forecasts once their horizon has passed: did the market close above or below the last close as the
+ *  forecast said (hit), how big was the actual move, and how well calibrated the probability was (Brier). */
+export async function evaluateForecasts(db: D1Database, limit = 10) {
+  await ensureKronos(db);
+  const now = Math.floor(Date.now() / 1000);
+  // Only forecasts whose horizon has passed (last bar + horizon + one more bar), oldest first.
+  const { results } = await db.prepare(`SELECT id, symbol, interval, data FROM kronos_runs WHERE status = 'done' AND data IS NOT NULL AND evaluated_at IS NULL
+    AND json_extract(data, '$.last_time') + (json_extract(data, '$.pred_len') + 1) * json_extract(data, '$.step_sec') <= ? ORDER BY created_at LIMIT ?`).bind(now, limit).all<{ id: string; symbol: string; interval: string; data: string }>();
+  let n = 0;
+  for (const r of results) {
+    try {
+      const fc = JSON.parse(r.data) as Forecast;
+      const end = fc.last_time + fc.pred_len * fc.step_sec;
+      if (now < end + fc.step_sec) continue;
+      const bars = (await candles(r.symbol, r.interval === "1h" ? "60m" : r.interval, Math.min(59, Math.ceil((now - fc.last_time) / 86400) + 2))) as { time: number; close: number }[];
+      const at = [...bars].reverse().find((b) => b.time <= end) ?? bars.find((b) => b.time > end); // the bar at the horizon, else the first after it
+      if (!at) continue;
+      const move = ((at.close - fc.last_close) / fc.last_close) * 100;
+      const hit = (move > 0) === (fc.prob_up > 0.5) ? 1 : 0;
+      await db.prepare("UPDATE kronos_runs SET actual_move_pct = ?, hit = ?, evaluated_at = ? WHERE id = ?").bind(Math.round(move * 100) / 100, hit, now, r.id).run();
+      n++;
+    } catch { /* data hiccup: next time */ }
+  }
+  return n;
+}
+/** Track record of the forecasts: hit rate, Brier score (0 = perfect, 0.25 = coin flip), average absolute error of the expected move. */
+export async function forecastScore(db: D1Database) {
+  await ensureKronos(db);
+  const { results } = await db.prepare("SELECT data, actual_move_pct, hit FROM kronos_runs WHERE evaluated_at IS NOT NULL").all<{ data: string; actual_move_pct: number; hit: number }>();
+  if (!results.length) return { n: 0, hit_rate: null, brier: null, avg_abs_error_pct: null };
+  let brier = 0, err = 0, hits = 0;
+  for (const r of results) { const fc = JSON.parse(r.data) as Forecast; const y = r.actual_move_pct > 0 ? 1 : 0; brier += (fc.prob_up - y) ** 2; err += Math.abs(fc.exp_move_pct - r.actual_move_pct); hits += r.hit; }
+  const n = results.length;
+  return { n, hit_rate: Math.round((hits / n) * 1000) / 10, brier: Math.round((brier / n) * 1000) / 1000, avg_abs_error_pct: Math.round((err / n) * 100) / 100 };
 }
 
 /** Freshest finished forecast per symbol (any bar size) within `hours`. */

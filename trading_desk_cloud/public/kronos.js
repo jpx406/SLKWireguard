@@ -9,6 +9,7 @@ async function loadKronos() {
   let d;
   try { d = await api("/api/kronos"); } catch (e) { $("#kronos").innerHTML = ""; $("#kronos").append(el("div", "msg err", e.message)); return; }
   state.kronos.runs = d.runs; state.kronos.latest = d.latest || {}; state.kronos.ready = d.ready;
+  state.kronos.score = d.score || null;
   $("#kronosNote").textContent = d.ready ? (d.kronos_gate ? "Gate on: the chart autopilot skips signals that disagree with a fresh forecast" : "") : "Agent not configured.";
   renderKronos();
   if (d.runs.some((r) => r.status === "running" || r.status === "starting")) { clearTimeout(state.kronos.timer); state.kronos.timer = setTimeout(loadKronos, 30000); }
@@ -21,6 +22,12 @@ function probCell(p) {
 
 function renderKronos() {
   const host = $("#kronos"); host.innerHTML = "";
+  const sc = state.kronos.score;
+  const cards = el("div", "bd-indices");
+  cards.append(stat("Forecasts scored", String(sc?.n ?? 0), "", "after their horizon passed"), stat("Direction hit rate", sc?.hit_rate == null ? "—" : `${fmt(sc.hit_rate, 0)}%`, (sc?.hit_rate ?? 0) > 55 ? "up" : (sc?.n ?? 0) >= 10 && (sc?.hit_rate ?? 0) < 50 ? "down" : "", "50% = coin flip"),
+    stat("Brier score", sc?.brier == null ? "—" : fmt(sc.brier, 3), (sc?.brier ?? 1) < 0.22 ? "up" : (sc?.n ?? 0) >= 10 && (sc?.brier ?? 0) > 0.25 ? "down" : "", "0 perfect · 0.25 coin flip"), stat("Expected vs actual move", sc?.avg_abs_error_pct == null ? "—" : `${fmt(sc.avg_abs_error_pct)}%`, "", "average absolute error"));
+  host.append(cards);
+  host.append(el("p", "dim small", "Is it useful? The paper reports strong benchmark results, but there is no independent live evidence, and a small sample of futures can look overconfident (eight paths all agreeing is not a 100% probability). The cards above are the desk's own answer: every forecast is scored once its horizon has passed. Keep using it as one more opinion while the hit rate stays above 55% and the Brier score under 0.22 over 30+ forecasts; below that, turn the autopilot gate off and treat it as a curiosity."));
   host.append(el("p", "dim small", "Kronos is a decoder-only transformer pre-trained on 12 billion candlesticks from 45 exchanges (MIT licence). It tokenizes OHLCV bars and samples what the next bars could look like. Each run here draws several futures: the dashed line on the chart is their mean, the dotted lines the 10-90% band, and \"up\" is the share of futures that end above the last close. It knows nothing about news or levels, so the desk mixes it in as one more opinion: scans and Deep Analysis read the latest forecasts, and the chart autopilot can be gated by them (Admin Settings)."));
   if (!state.kronos.runs.length) { host.append(el("div", "bd-empty", "No forecasts yet. Type a symbol above (stocks or crypto such as BTC-USD) and click Forecast. The first run in a fresh sandbox also installs torch and downloads the weights (several minutes); later runs take about a minute.")); return; }
   const sec = section(`Forecasts (${state.kronos.runs.length})`, el("span", "dim small", "  click a row to show it on the chart"));
@@ -36,7 +43,8 @@ function renderKronos() {
     if (r.status === "done") { const b = el("button", "ghost small", "Show on Chart"); b.onclick = (e) => { e.stopPropagation(); showKronos(r); }; act.append(b); }
     tr.append(act);
     tr.onclick = () => { if (r.status === "done") showKronos(r); };
-    if (r.error) { const er = el("tr"); const c = el("td", "small down"); c.colSpan = 12; c.textContent = r.error; tr.after(er); er.append(c); }
+    if (r.error || (r.status === "error" && r.content)) { const er = el("tr"); const c = el("td", "small down wrap"); c.colSpan = 12; c.textContent = r.error || "Failed."; if (r.content) { const det = el("details"); const sm = el("summary", "dim small", "Agent notes"); const pre = el("pre", "small dim"); pre.style.whiteSpace = "pre-wrap"; pre.textContent = r.content; det.append(sm, pre); c.append(det); } tr.after(er); er.append(c); }
+    else if (r.evaluated_at) { const er = el("tr", "win-detail"); const c = el("td", `small ${r.hit ? "up" : "down"}`); c.colSpan = 12; c.textContent = `Scored: actual move ${r.actual_move_pct >= 0 ? "+" : ""}${fmt(r.actual_move_pct)}% → ${r.hit ? "direction right" : "direction wrong"}`; tr.after(er); er.append(c); }
     return tr;
   })));
   host.append(sec);
