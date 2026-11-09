@@ -10,6 +10,8 @@ import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { KRONOS_INTERVALS, finalizeKronos, latestForecasts, listKronos, startKronos } from "./kronos";
 import { isCrypto } from "./market";
+import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
+import { summary as paperSummary } from "./paper";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -41,7 +43,7 @@ async function setupMarket(env: Env) {
 }
 
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
-const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/];
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/, /^\/strategy\/propose$/];
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
@@ -141,8 +143,49 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
-  // Kronos forecasts (candlestick foundation model in the sandbox).
+  // Self-improving loop: failure analyzer, proposals (stats or Claude), validation, versions with approve / reject.
   const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
+  if (path === "/strategy" && m === "GET") {
+    if (agentReady) { try { await finalizeStrategy(env); } catch { /* later */ } }
+    const days = Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90));
+    const rep = await failureReport(env.DB, days);
+    return json({ failures: rep.failures, versions: await listVersions(env.DB), active: await activeRules(env.DB), days });
+  }
+  if (path === "/strategy/propose" && m === "POST") {
+    const b = await body<{ mode?: unknown }>(req);
+    const r = b.mode === "claude" ? (agentReady ? await proposeWithClaude(env, who.user) : { error: "Agent not configured." }) : await proposeFromStats(env.DB);
+    return r.error ? bad(r.error) : json(r);
+  }
+  if (path === "/strategy/validate" && m === "POST") return json(await validateRules(env.DB, sanitizeRules((await body<{ rules?: unknown }>(req)).rules)));
+  if (path === "/strategy/retire" && m === "POST") { if (who.role !== "admin") return bad("Admin only.", 403); return json(await retireActive(env.DB)); }
+  const sv = path.match(/^\/strategy\/([a-z0-9]{6,32})\/(approve|reject)$/);
+  if (sv && m === "POST") { if (who.role !== "admin") return bad("Only the admin approves strategy versions.", 403); const r = await decideVersion(env.DB, sv[1], sv[2] as "approve" | "reject"); return r.error ? bad(r.error) : json(r); }
+  // Dashboard: KPIs, strategy vs benchmark, latest plans, a parameter sweep of the signal rule.
+  if (path === "/dashboard" && m === "GET") {
+    const ps = await paperSummary(env.DB, who.user), learn = await learnSummary(env.DB, 90);
+    let bench: { day: string; pct: number }[] = [];
+    try {
+      const bars = (await candles("SPY", "1d", 400)) as { time: number; close: number }[];
+      const first = ps.curve[0]?.day; const start = bars.find((b) => new Date(b.time * 1000).toISOString().slice(0, 10) >= (first || "0000"));
+      if (start) bench = bars.filter((b) => b.time >= start.time).map((b) => ({ day: new Date(b.time * 1000).toISOString().slice(0, 10), pct: Math.round(((b.close - start.close) / start.close) * 10000) / 100 }));
+    } catch { bench = []; }
+    const eq = [{ day: ps.curve[0]?.day || nyNow().date, pct: 0 }, ...ps.curve.map((c) => ({ day: c.day, pct: Math.round(((c.equity - ps.account.starting_cash) / ps.account.starting_cash) * 10000) / 100 }))];
+    // One row per symbol (its latest plan today), best scores first.
+    const picksToday = (await env.DB.prepare(`SELECT symbol, side, setup, score, entry, stop, target, status, r_result, slot FROM pick_outcomes p WHERE day = ? AND symbol != '-'
+      AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY score DESC LIMIT 12`).bind(nyNow().date).all()).results;
+    return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
+  }
+  if (path === "/learn/sweep" && m === "POST") {
+    const b = await body<{ symbol?: unknown; interval?: unknown; days?: unknown }>(req);
+    const symbol = String(b.symbol || "").toUpperCase(), iv = String(b.interval || "5m");
+    if (!SYMBOL_RE.test(symbol)) return bad("Bad symbol"); if (!INTERVALS[iv]) return bad("Unknown interval");
+    const bars = (await candles(symbol, iv, Math.max(2, Math.min(730, Number(b.days) || (iv === "1d" ? 365 : 30))))) as { time: number; open: number; high: number; low: number; close: number; volume: number }[];
+    const done = bars.filter((x) => x.time + (iv === "1d" ? 86400 : 300) <= Date.now() / 1000);
+    const holds = iv === "1d" ? [3, 5, 10, 20] : [6, 12, 24, 48], strengths = [1, 2, 3];
+    const grid = strengths.map((st) => holds.map((h) => { const r = backtestSignals(done, { minStrength: st, holdBars: h }); return { min_strength: st, hold_bars: h, n: r.all.n, avg_r: r.all.avg_r, total_r: r.all.total_r, oos_avg_r: r.out_of_sample.avg_r, profit_factor: r.all.profit_factor }; }));
+    return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
+  }
+  // Kronos forecasts (candlestick foundation model in the sandbox).
   if (path === "/kronos" && m === "GET") {
     if (agentReady) await finalizeKronos(env);
     return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate });
@@ -297,7 +340,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
-      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos"]);
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos", "strategy"]);
       await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
     }
     if ("trader_config" in patch) {

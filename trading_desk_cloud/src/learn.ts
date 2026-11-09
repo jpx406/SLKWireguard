@@ -18,7 +18,7 @@ export type Outcome = {
   setup: string | null; score: number | null; sources: string | null; entry: number; stop: number; target: number | null;
   created_at: number; status: "pending" | "open" | "no_trigger" | "win" | "loss" | "timed" | "expired";
   fill: number | null; triggered_at: number | null; exit_at: number | null; exit_price: number | null; r_result: number | null;
-  mfe_r: number | null; mae_r: number | null; next_check: number; updated_at: number;
+  mfe_r: number | null; mae_r: number | null; next_check: number; updated_at: number; regime?: string | null;
 };
 
 const nowS = () => Math.floor(clockNow().getTime() / 1000);
@@ -33,6 +33,7 @@ export async function ensureLearn(db: D1Database) {
     side TEXT NOT NULL, horizon TEXT NOT NULL, setup TEXT, score REAL, sources TEXT, entry REAL NOT NULL, stop REAL NOT NULL, target REAL, created_at INTEGER NOT NULL,
     status TEXT NOT NULL, fill REAL, triggered_at INTEGER, exit_at INTEGER, exit_price REAL, r_result REAL, mfe_r REAL, mae_r REAL, next_check INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run();
   await db.prepare("CREATE INDEX IF NOT EXISTS pick_outcomes_status ON pick_outcomes (status, next_check)").run();
+  try { await db.prepare("ALTER TABLE pick_outcomes ADD COLUMN regime TEXT").run(); } catch { /* exists */ }
   await db.prepare(`CREATE TABLE IF NOT EXISTS pattern_stats (symbol TEXT NOT NULL, interval TEXT NOT NULL, pattern TEXT NOT NULL, dir TEXT NOT NULL,
     n INTEGER NOT NULL, wins INTEGER NOT NULL, sum_r REAL NOT NULL, n_oos INTEGER NOT NULL, wins_oos INTEGER NOT NULL, sum_r_oos REAL NOT NULL, updated_at INTEGER NOT NULL,
     PRIMARY KEY (symbol, interval, pattern))`).run();
@@ -95,8 +96,8 @@ export async function evaluatePicks(db: D1Database, limit = 12) {
       AND id NOT IN (SELECT DISTINCT brief_id FROM pick_outcomes) ORDER BY created_at DESC LIMIT 20`).all<{ id: string; slot: string; day: string; data: string | null; finished_at: string | null; created_at: string }>()).results;
   } catch { briefs = []; }
   for (const b of briefs) {
-    let picks: Record<string, unknown>[] = [];
-    try { picks = JSON.parse(b.data || "{}")?.picks ?? []; } catch { picks = []; }
+    let picks: Record<string, unknown>[] = [], regime: string | null = null;
+    try { const d = JSON.parse(b.data || "{}"); picks = d?.picks ?? []; regime = typeof d?.market?.regime === "string" ? d.market.regime.toLowerCase().slice(0, 20) : null; } catch { picks = []; }
     const at = Math.floor(Date.parse(((b.finished_at || b.created_at) as string).replace(" ", "T") + "Z") / 1000);
     let n = 0;
     for (const p of picks) {
@@ -104,10 +105,10 @@ export async function evaluatePicks(db: D1Database, limit = 12) {
       if (!symbol || entry === null || stop === null || entry === stop) continue;
       const targets = (Array.isArray(p.targets) ? p.targets : []).map(num).filter((x): x is number => x !== null);
       const id = `${b.id}-${symbol}`.slice(0, 40);
-      await db.prepare(`INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, setup, score, sources, entry, stop, target, created_at, status, next_check, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+      await db.prepare(`INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, setup, score, sources, entry, stop, target, created_at, status, next_check, updated_at, regime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
         .bind(id, b.id, b.slot, b.day, symbol, /short/i.test(String(p.bias || "")) ? "short" : "long", p.horizon === "swing" ? "swing" : "day", String(p.setup || "").slice(0, 120) || null,
-          num(p.score), Array.isArray(p.sources) ? JSON.stringify((p.sources as { type?: string }[]).map((s) => s.type).filter(Boolean)) : null, entry, stop, targets[0] ?? null, at, t, t).run();
+          num(p.score), Array.isArray(p.sources) ? JSON.stringify((p.sources as { type?: string }[]).map((s) => s.type).filter(Boolean)) : null, entry, stop, targets[0] ?? null, at, t, t, regime).run();
       n++;
     }
     if (!n) await db.prepare("INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, entry, stop, created_at, status, next_check, updated_at) VALUES (?, ?, ?, ?, '-', 'long', 'day', 0, 0, ?, 'expired', ?, ?)").bind(`${b.id}-none`, b.id, b.slot, b.day, at, t, t).run();
@@ -168,9 +169,9 @@ function groupBy(rows: Outcome[], keyOf: (o: Outcome) => string | null): Group[]
 }
 const SETUP_KINDS: [string, RegExp][] = [["gap / ORB", /gap|opening range|orb/i], ["breakout", /break ?out|base|flag|range break|new high/i], ["pullback", /pull ?back|ema|support|dip|retest/i],
   ["reversal", /revers|hammer|engulf|exhaust|bounce|fade|capitul/i], ["vwap", /vwap/i], ["earnings / news", /earnings|news|catalyst|guidance|contract/i], ["trend", /trend|continuation|momentum/i]];
-const setupKind = (s: string | null) => { if (!s) return "other"; for (const [k, re] of SETUP_KINDS) if (re.test(s)) return k; return "other"; };
-const scoreBucket = (s: number | null) => (s === null ? "no score" : s >= 80 ? "80-100" : s >= 70 ? "70-79" : s >= 60 ? "60-69" : "under 60");
-const hourOf = (ts: number) => { const ny = nyNow(new Date(ts * 1000)); const h = Math.floor(ny.minutes / 60); return `${String(h).padStart(2, "0")}:00`; };
+export const setupKind = (s: string | null) => { if (!s) return "other"; for (const [k, re] of SETUP_KINDS) if (re.test(s)) return k; return "other"; };
+export const scoreBucket = (s: number | null) => (s === null ? "no score" : s >= 80 ? "80-100" : s >= 70 ? "70-79" : s >= 60 ? "60-69" : "under 60");
+export const hourOf = (ts: number) => { const ny = nyNow(new Date(ts * 1000)); const h = Math.floor(ny.minutes / 60); return `${String(h).padStart(2, "0")}:00`; };
 
 export async function learnSummary(db: D1Database, days = 90) {
   await ensureLearn(db);
@@ -188,6 +189,7 @@ export async function learnSummary(db: D1Database, days = 90) {
     setup: groupBy(rows, (o) => setupKind(o.setup)), score: groupBy(rows, (o) => scoreBucket(o.score)), hour: groupBy(rows, (o) => hourOf(o.created_at)),
     source: groupBy(rows.flatMap((o) => { let s: string[] = []; try { s = JSON.parse(o.sources || "[]"); } catch { s = []; } return s.length ? s.map((x) => ({ ...o, _src: x })) : []; }), (o) => (o as Outcome & { _src: string })._src),
     symbol: groupBy(rows, (o) => o.symbol).filter((g) => g.n >= 3).slice(0, 15),
+    regime: groupBy(rows, (o) => o.regime || null),
   };
   const calibration = ["under 60", "60-69", "70-79", "80-100"].map((k) => groups.score.find((g) => g.key === k) ?? { key: k, n: 0, wins: 0, win_rate: null, ci_low: null, avg_r: null, profit_factor: null, sum_r: 0, no_trigger: 0, total: 0 });
   return {
@@ -221,7 +223,7 @@ export async function buildPlaybook(db: D1Database): Promise<Playbook> {
   const minN = Math.max(5, Number((s as { learn_min_n?: number }).learn_min_n) || 10);
   const sum = await learnSummary(db, 90), paper = await paperLearn(db, 90);
   const works: string[] = [], avoid: string[] = [];
-  const name: Record<string, string> = { slot: "scan", horizon: "horizon", side: "side", setup: "setup", score: "score", hour: "scan hour (NY)", source: "followed source", symbol: "symbol" };
+  const name: Record<string, string> = { slot: "scan", horizon: "horizon", side: "side", setup: "setup", score: "score", hour: "scan hour (NY)", source: "followed source", symbol: "symbol", regime: "market regime" };
   for (const [dim, gs] of Object.entries(sum.groups)) {
     for (const g of gs) {
       if (g.n < minN) continue;

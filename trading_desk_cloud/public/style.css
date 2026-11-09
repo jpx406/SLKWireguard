@@ -670,3 +670,20 @@ body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
 .cr-foot { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .cr-fc { font-size: 0.769rem; padding: 0 10px 4px; }
 @media (max-width: 700px) { .cr-grid { grid-template-columns: 1fr; } }
+
+/* ---- self-improving loop */
+.loop-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 6px 0 10px; }
+.loop-step { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel-2); display: flex; flex-direction: column; gap: 2px; position: relative; }
+.loop-step:not(:last-child)::after { content: "→"; position: absolute; right: -9px; top: 8px; color: var(--dim); font-size: 0.8rem; }
+.fail-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.msg.up { color: var(--up); }
+@media (max-width: 700px) { .loop-steps { grid-template-columns: 1fr 1fr; } .loop-step::after { display: none; } }
+/* ---- dashboard */
+.dash-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; }
+.dash-grid > section { margin: 0; }
+.dash-chart { height: 300px; position: relative; }
+.heat { display: grid; gap: 3px; font-size: 0.769rem; }
+.heat .cell { padding: 6px 4px; text-align: center; border-radius: 4px; color: #fff; min-width: 54px; }
+.heat .lbl { color: var(--dim); display: flex; align-items: center; justify-content: center; }
+.dash-kpis .bd-card { min-width: 140px; }
+@media (max-width: 1000px) { .dash-grid { grid-template-columns: 1fr; } }

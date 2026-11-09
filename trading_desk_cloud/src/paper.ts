@@ -1,6 +1,7 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
 import { candles, isCrypto, latestPrice } from "./market";
+import { activeRules, ruleBlocks } from "./strategy";
 import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
@@ -362,10 +363,14 @@ export async function autoTradeNewBriefs(db: D1Database) {
   const lateForDay = ny.minutes >= sessionTimes(ny.date).close - 30;
   const accounts = (await db.prepare("SELECT * FROM paper_accounts").all<Account>()).results
     .map((a) => ({ ...a, s: sanitizePaperSettings(JSON.parse(a.settings || "{}")) })).filter((a) => a.s.auto_trade);
+  const active = await activeRules(db);
   for (const b of briefs) {
-    let picks: Pick[] = [];
-    try { picks = (JSON.parse(b.data || "{}")?.picks ?? []) as Pick[]; } catch { continue; }
+    let picks: Pick[] = [], regime: string | null = null;
+    try { const d = JSON.parse(b.data || "{}"); picks = (d?.picks ?? []) as Pick[]; regime = typeof d?.market?.regime === "string" ? d.market.regime.toLowerCase() : null; } catch { continue; }
     if (lateForDay) picks = picks.filter((p) => p.horizon === "swing");
+    // The active strategy version (Performance › self-improving loop) filters what auto-trade may take.
+    if (active) picks = picks.filter((p) => !ruleBlocks(active.rules, { score: num(p.score), setup: p.setup ?? null, slot: b.slot, symbol: p.symbol ?? null, regime, created_at: nowS(),
+      sources: Array.isArray((p as Pick & { sources?: { type?: string }[] }).sources) ? ((p as Pick & { sources?: { type?: string }[] }).sources || []).map((x) => String(x.type || "")) : null }));
     if (!picks.length) continue;
     for (const a of accounts) {
       // Each account's own triggers: which scans, which time window (swing picks ignore the intraday window).
@@ -378,7 +383,8 @@ export async function autoTradeNewBriefs(db: D1Database) {
 
 async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string }) {
   const s = a.s, today = nyNow().date;
-  let tradesLeft = s.auto_max_trades_day - ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source = 'auto' AND day = ? AND status IN ('open', 'filled')")
+  const cap = (await activeRules(db))?.rules.max_trades_day;
+  let tradesLeft = Math.min(s.auto_max_trades_day, cap ?? Infinity) - ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source = 'auto' AND day = ? AND status IN ('open', 'filled')")
     .bind(a.user, today).first<{ n: number }>())?.n ?? 0);
   if (tradesLeft <= 0) return;
   if (s.auto_max_daily_loss > 0 && (await todayPnl(db, a.user, today)) <= -s.auto_max_daily_loss) return;

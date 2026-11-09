@@ -9,6 +9,7 @@ import { getSettings } from "./db";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
 import { closePosition, ensurePaper, getAccount, placeOrder, type Side } from "./paper";
 import { patternAllowed } from "./learn";
+import { activeRules, ruleBlocks } from "./strategy";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -137,7 +138,8 @@ export async function runChartAuto(db: D1Database) {
   await ensureAutoChart(db);
   const ny = nyNow();
   const stocksOpen = isTradingDay(ny) && inSession(nowS());
-  const gate = !!(await getSettings(db) as { kronos_gate?: boolean }).kronos_gate;
+  const active = await activeRules(db);
+  const gate = !!(await getSettings(db) as { kronos_gate?: boolean }).kronos_gate || !!active?.rules.require_kronos;
   const rows = (await db.prepare("SELECT * FROM paper_auto WHERE enabled = 1").all<AutoRow>()).results.filter((r) => stocksOpen || isCrypto(r.symbol));
   const barsCache = new Map<string, Bar[]>();
   const barsOf = async (s: string) => { if (!barsCache.has(s)) barsCache.set(s, await completedBars(s)); return barsCache.get(s)!; };
@@ -172,6 +174,8 @@ export async function runChartAuto(db: D1Database) {
       let placed: { symbol: string; side: Side; type: "limit"; price: number; qty: number; stop: number | null; target: number | null; note: string; exit_mode: "hold" | null } | null = null;
       const plan = r.rule === "signal" ? null : await planFor(db, r.user, r.symbol);
       if (plan && (plan.source === "brief" || plan.source === "deep")) {
+        const blocked = active ? ruleBlocks(active.rules, { score: plan.score ?? null, setup: plan.setup, slot: plan.source === "brief" ? undefined : null, symbol: r.symbol, created_at: nowS() }) : null;
+        if (blocked) { await note(db, r, `Plan skipped by strategy v${active!.version}: ${blocked}`); continue; }
         let last: number; try { last = await latestPrice(r.symbol); } catch { continue; }
         const t1 = plan.targets[0] ?? null, stop = plan.stop;
         // Skip once the price is already through the stop or past the first target (the setup is gone).

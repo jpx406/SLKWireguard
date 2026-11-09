@@ -52,6 +52,8 @@ function renderLearn() {
     stat("Sharpe / trade", d.sharpe_per_trade == null ? "—" : fmt(d.sharpe_per_trade, 2), "", `${d.tests} groups examined`));
   host.append(cards);
 
+  // Self-improving loop (filled by loadStrategy)
+  const sbox = el("div"); sbox.id = "strategyBox"; const ssec = section("Self-improving loop", el("span", "dim small", "  observe → analyze failures → reason → validate → update, with approval and versions")); ssec.append(sbox); host.append(ssec); loadStrategy();
   // Playbook
   const pb = section("Playbook (what the scans read before recommending)", el("span", "dim small", d.playbook ? `  rebuilt ${ago(d.playbook.at)}` : ""));
   const pre = el("pre", "playbook small"); pre.textContent = d.playbook?.text || "No playbook yet: it is built from settled trades (after the close, or with Evaluate Now).";
@@ -129,3 +131,55 @@ function backtestView(r) {
 $("#learnDays").onchange = (e) => { state.learn.days = +e.target.value; loadLearn(); };
 $("#learnRun").onclick = async () => { const b = $("#learnRun"); b.disabled = true; try { await api("/api/learn/run", { method: "POST" }); await loadLearn(); } catch (e) { showBanner(e.message); } b.disabled = false; };
 document.addEventListener("section", (e) => { if (e.detail === "learn") loadLearn(); });
+
+/* ---------------------------------------------------------------- self-improving loop (observe -> analyze -> reason -> validate -> update) */
+state.strategy = { failures: [], versions: [], active: null };
+const RULE_LABELS = { min_score: "min score", avoid_setups: "avoid setups", avoid_hours: "avoid hours (NY)", avoid_slots: "avoid scans", avoid_sources: "avoid sources", avoid_regimes: "avoid regimes", avoid_symbols: "avoid symbols", max_trades_day: "max trades/day", require_kronos: "Kronos must agree" };
+function rulesText(r) {
+  const parts = [];
+  for (const [k, v] of Object.entries(r || {})) { if (v === null || v === false || (Array.isArray(v) && !v.length)) continue; parts.push(`${RULE_LABELS[k] || k}: ${Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v}`); }
+  return parts.length ? parts.join(" · ") : "no rules (baseline)";
+}
+async function loadStrategy() {
+  try { const d = await api(`/api/strategy?days=${state.learn.days}`); state.strategy = d; } catch (e) { showBanner(e.message); return; }
+  renderStrategy();
+  if (state.strategy.versions.some((v) => v.status === "thinking")) { clearTimeout(state.strategy.timer); state.strategy.timer = setTimeout(loadStrategy, 20000); }
+}
+function renderStrategy() {
+  const host = $("#strategyBox"); if (!host) return; host.innerHTML = "";
+  const st = state.strategy, admin = state.me?.role === "admin";
+  const steps = el("div", "loop-steps");
+  for (const [k, t] of [["Observe", `${state.learn.data?.picks ?? 0} plans replayed`], ["Analyze", `${st.failures.length} failure${st.failures.length === 1 ? "" : "s"} found`], ["Reason", `${st.versions.filter((v) => v.status === "proposed" || v.status === "thinking").length} proposal${st.versions.filter((v) => v.status === "proposed").length === 1 ? "" : "s"} open`], ["Validate", "in-sample / out-of-sample"], ["Update", st.active ? `v${st.active.version} active` : "baseline active"]]) {
+    const c = el("div", "loop-step"); c.append(el("b", null, k), el("span", "dim tiny", t)); steps.append(c);
+  }
+  host.append(steps);
+  const act = el("div", "msg small " + (st.active ? "up" : "dim")); act.textContent = st.active ? `Active strategy v${st.active.version}: ${rulesText(st.active.rules)}. Scans read these rules; auto-trade and the chart autopilot skip plans that break them.` : "No active rules: everything the scans recommend is eligible. Approve a validated proposal below to start enforcing rules.";
+  if (st.active && admin) { const off = el("button", "ghost small", "Retire"); off.style.marginLeft = "8px"; off.onclick = async () => { if (await askConfirm({ title: "Retire the active rules?", message: "The desk goes back to the baseline (no rules). History is kept.", confirm: "Retire", destructive: true })) { await api("/api/strategy/retire", { method: "POST" }); loadStrategy(); } }; act.append(off); }
+  host.append(act);
+  // Failure analyzer
+  const fs = section("Failure analyzer", el("span", "dim small", "  what went wrong, with evidence"));
+  if (!st.failures.length) fs.append(el("div", "dim small", "Nothing with enough trades to call a failure yet."));
+  else for (const f of st.failures) { const row = el("div", "fail-row"); row.append(el("span", `pill ${f.severity === "high" ? "error" : f.severity === "medium" ? "running" : "done"}`, f.severity), el("b", "small", f.type.replace("_", " ")), el("span", "small", f.text)); if (f.rule) row.append(el("span", "dim tiny", `→ rule: ${rulesText(f.rule)}`)); fs.append(row); }
+  host.append(fs);
+  // Proposals and versions
+  const vs = section("Strategy versions", el("span", "dim small", "  proposals are validated on the past before you approve them"));
+  const bar = el("div", "row gap wrap");
+  const b1 = el("button", "ghost small", "Propose from statistics"); b1.onclick = async () => { b1.disabled = true; try { await api("/api/strategy/propose", { method: "POST", body: JSON.stringify({ mode: "stats" }) }); await loadStrategy(); } catch (e) { showBanner(e.message); } b1.disabled = false; };
+  const b2 = el("button", "primary small", "Ask Claude to reason"); b2.title = "Claude reads the failure report and the statistics and proposes rules (one short session)"; b2.onclick = async () => { b2.disabled = true; try { await api("/api/strategy/propose", { method: "POST", body: JSON.stringify({ mode: "claude" }) }); await loadStrategy(); } catch (e) { showBanner(e.message); } b2.disabled = false; };
+  bar.append(b1, b2); vs.append(bar);
+  if (!st.versions.length) vs.append(el("div", "dim small", "No versions yet."));
+  else vs.append(table(["v", "Status", "Source", "Rules", "Out-of-sample: baseline → with rules", "Verdict", ""], st.versions.flatMap((v) => {
+    const tr = el("tr"); const val = v.validation, o = val?.out_of_sample;
+    const cmp = o ? `${o.baseline.n} trades ${fmtR(o.baseline.avg_r)} → ${o.filtered.n} trades ${fmtR(o.filtered.avg_r)} (keeps ${o.filtered.kept_pct ?? "—"}%) · DD ${fmtR(o.baseline.max_drawdown_r)} → ${fmtR(o.filtered.max_drawdown_r)}` : v.status === "thinking" ? "Claude is reasoning…" : "—";
+    const verdict = val?.verdict || (v.status === "thinking" ? "…" : "—"), vcls = verdict === "improves" ? "up" : verdict === "worse" ? "down" : "dim";
+    tr.append(td(`v${v.version}`, "mono"), td(v.status, `pill ${v.status === "active" ? "done" : v.status === "proposed" ? "running" : v.status === "thinking" ? "running" : v.status === "error" ? "error" : ""}`), td(v.source), td(rulesText(v.rules), "wrap small"), td(cmp, "small"), td(verdict, vcls));
+    const a = el("td");
+    if (v.status === "proposed" && admin) { const ap = el("button", "primary small", "Approve"); ap.onclick = async () => { try { await api(`/api/strategy/${v.id}/approve`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; const rj = el("button", "ghost small", "Reject"); rj.onclick = async () => { try { await api(`/api/strategy/${v.id}/reject`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; a.append(ap, rj); }
+    if (v.status === "retired" && admin && !rulesEmptyUi(v.rules)) { const re = el("button", "ghost small", "Re-activate"); re.onclick = async () => { try { await api(`/api/strategy/${v.id}/approve`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; a.append(re); }
+    tr.append(a);
+    const why = v.error || v.rationale; if (!why) return [tr];
+    const sub = el("tr", "win-detail"); const c = el("td", `${v.error ? "down" : "dim"} small wrap`); c.colSpan = 7; c.textContent = why; sub.append(c); return [tr, sub];
+  })));
+  host.append(vs);
+}
+const rulesEmptyUi = (r) => !r || Object.values(r).every((v) => v === null || v === false || (Array.isArray(v) && !v.length));

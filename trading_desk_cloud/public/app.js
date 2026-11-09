@@ -385,7 +385,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
+const MAIN_SECTIONS = ["dashboard", "chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
@@ -819,7 +819,7 @@ async function loadUsage() {
   f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
   const grid = $("#engineGrid"); grid.innerHTML = "";
   f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5; f.learn_apply.checked = u.learn_apply !== false; f.learn_min_n.value = u.learn_min_n ?? 10; f.kronos_gate.checked = !!u.kronos_gate; f.kronos_samples.value = u.kronos_samples ?? 20; f.fomo_link.value = u.fomo_link || "";
-  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"], ["kronos", "Kronos forecast"]]) {
+  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"], ["kronos", "Kronos forecast"], ["strategy", "Strategy review (self-improving loop)"]]) {
     const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
     for (const o of u.engine_options) sel.append(new Option(o.label, o.id));
     sel.value = u.engines?.[id] || "default"; lb.append(sel); grid.append(lb);
