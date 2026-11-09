@@ -56,6 +56,7 @@ function createMiniChart(host, opts = {}) {
   // Plan monitor: entry / expected exit / exit detection for this symbol (see planmon.js).
   const mon = opts.plan === false ? null : createPlanMonitor({ series: candles, shift: mcShift, onEvent: (ev) => { markers(); opts.onPlanEvent?.(ev); }, onStatus: (text, cls, plan) => opts.onPlanStatus?.(text, cls, plan) });
   if (mon) mon.setSymbol(st.symbol);
+  const fcLayer = createForecastLayer(chart, mcShift);
   const intraday = () => st.interval !== "1d";
 
   function view(data) {
@@ -101,6 +102,7 @@ function createMiniChart(host, opts = {}) {
     chart, series: candles, engine, monitor: mon,
     get symbol() { return st.symbol; }, get interval() { return st.interval; }, get range() { return st.range; }, get ind() { return st.ind; }, get signals() { return st.signals; },
     setSymbol(s) { s = String(s || "").trim().toUpperCase(); if (!s || s === st.symbol) return; st.symbol = s; st.candles = []; engine.reset(); if (mon) mon.setSymbol(s); load(); },
+    setForecast(fc) { fcLayer.set(fc); },
     setModels(m) { engine.setModels(m); engine.update(st.candles); markers(); opts.onSignal?.([], { symbol: st.symbol, latestBar: st.candles.at(-1)?.time ?? 0, all: st.signals ? engine.list() : [] }); },
     setRange(r) { if (!MC_RANGES[r]) return; st.range = r; if (!MC_RANGES[r].allow.includes(st.interval)) this.setInterval(MC_RANGES[r].def); else load(); },
     setInterval(iv) { if (!INTERVAL_SEC[iv]) return; st.interval = iv; engine.setInterval(INTERVAL_SEC[iv]); engine.reset(); st.candles = []; load(); },
@@ -110,7 +112,7 @@ function createMiniChart(host, opts = {}) {
     retheme() {
       chart.applyOptions({ layout: { background: { color: mcCss("--panel") }, textColor: mcCss("--dim") }, grid: { vertLines: { color: mcCss("--grid") }, horzLines: { color: mcCss("--grid") } }, rightPriceScale: { borderColor: mcCss("--line") }, timeScale: { borderColor: mcCss("--line") } });
       candles.applyOptions({ upColor: mcCss("--up"), downColor: mcCss("--down"), wickUpColor: mcCss("--up"), wickDownColor: mcCss("--down") });
-      vwapS.applyOptions({ color: mcCss("--vwap") }); ema9S.applyOptions({ color: mcCss("--ema9") }); ema20S.applyOptions({ color: mcCss("--ema20") }); markers();
+      vwapS.applyOptions({ color: mcCss("--vwap") }); ema9S.applyOptions({ color: mcCss("--ema9") }); ema20S.applyOptions({ color: mcCss("--ema20") }); fcLayer.retheme(); markers();
     },
     dispose() { st.disposed = true; clearInterval(st.timer); if (mon) mon.dispose(); chart.remove(); },
   };

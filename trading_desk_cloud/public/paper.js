@@ -91,10 +91,11 @@ function ticketValues() {
   const type = f.type.value, side = f.side.value, entry = type === "market" ? ticketLast : n(f.price.value);
   const stop = n(f.stop.value), target = n(f.target.value), size = n(f.size.value), eq = state.paper?.account?.equity ?? 0;
   let qty = null;
+  const crypto = /-(USD|USDT|USDC|EUR|BTC|ETH)$/.test(f.symbol.value.trim().toUpperCase()), rnd = (q) => (crypto ? Math.round(q * 1e6) / 1e6 : Math.floor(q)); // crypto trades in fractions
   if (entry) {
-    if (f.sizeBy.value === "qty") qty = Math.floor(size || 0);
-    else if (f.sizeBy.value === "usd") qty = Math.floor((size || 0) / entry);
-    else if (stop) qty = Math.floor((eq * (size || 0) / 100) / Math.abs(entry - stop));
+    if (f.sizeBy.value === "qty") qty = rnd(size || 0);
+    else if (f.sizeBy.value === "usd") qty = rnd((size || 0) / entry);
+    else if (stop) qty = rnd((eq * (size || 0) / 100) / Math.abs(entry - stop));
   }
   return { symbol: f.symbol.value.trim().toUpperCase(), side, type, entry, price: type === "market" ? null : entry, stop, target, qty, note: f.note.value, exit_mode: f.exit_mode.value };
 }
@@ -111,7 +112,7 @@ function syncTicket() {
   }
   if (v.entry && v.qty) {
     const cost = v.entry * v.qty, cash = state.paper?.account?.cash ?? 0;
-    kv("Shares", fmt(v.qty, 0)); kv("Position", `${money(cost)} (${fmt((cost / Math.max(cash, 1)) * 100, 1)}% of cash)`, cost > cash ? "down" : "");
+    kv("Shares", fmt(v.qty, v.qty < 1 || v.qty % 1 ? 6 : 0)); kv("Position", `${money(cost)} (${fmt((cost / Math.max(cash, 1)) * 100, 1)}% of cash)`, cost > cash ? "down" : "");
     const sg = v.side === "long" ? 1 : -1;
     if (v.stop) kv("Max loss at stop", money((v.stop - v.entry) * v.qty * sg), "down");
     if (v.target) kv("Gain at target", money((v.target - v.entry) * v.qty * sg), "up");
@@ -131,7 +132,7 @@ $("#btnTicketCancel").onclick = () => $("#ticketDlg").close();
 $("#ticketForm").onsubmit = async (e) => {
   e.preventDefault();
   const v = ticketValues();
-  if (!v.qty || v.qty < 1) { $("#ticketErr").textContent = "Size works out to less than 1 share."; return; }
+  if (!v.qty || v.qty <= 0 || (!/-(USD|USDT|USDC|EUR|BTC|ETH)$/.test(v.symbol) && v.qty < 1)) { $("#ticketErr").textContent = "Size works out to less than 1 share."; return; }
   try {
     await api("/api/paper/orders", { method: "POST", body: JSON.stringify({ symbol: v.symbol, side: v.side, type: v.type, price: v.price, qty: v.qty, stop: v.stop, target: v.target, note: v.note, exit_mode: v.exit_mode }) });
     $("#ticketDlg").close(); showTab("center", "paper"); loadPaper();

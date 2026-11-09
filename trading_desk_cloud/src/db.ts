@@ -27,6 +27,10 @@ export const DEFAULT_SETTINGS = {
   deep_max_per_brief: 5,                   // ...but at most this many runs per brief (cost guard)
   learn_apply: true,                       // scans read the playbook built from my own track record
   learn_min_n: 10,                         // a group needs this many settled trades before the playbook mentions it
+  crypto_watchlist: ["BTC-USD", "ETH-USD", "SOL-USD"] as string[], // Crypto desk pairs (Yahoo notation)
+  fomo_link: "https://fomo.family/",       // the FOMO app (mobile, self-custodial) link shown on the Crypto desk; no public API exists
+  kronos_gate: false,                      // chart autopilot: skip a candle-signal entry when a fresh Kronos forecast disagrees
+  kronos_samples: 20,                      // sampled paths per forecast (more = smoother band, slower)
 };
 export type Settings = typeof DEFAULT_SETTINGS;
 

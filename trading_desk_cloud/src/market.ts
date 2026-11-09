@@ -61,7 +61,9 @@ export function marketInfo() {
   };
 }
 // Index/futures/FX symbols (^VIX, ES=F, EURUSD=X) only exist on Yahoo.
-const alpacaSymbol = (s: string) => (/[\^=]/.test(s) ? null : s.replace(/-/g, "."));
+/** Crypto pairs in Yahoo notation (BTC-USD, ETH-USDT…): traded around the clock, no Alpaca stock feed. */
+export const isCrypto = (s: string) => /-(USD|USDT|USDC|EUR|BTC|ETH)$/i.test(s) && !/^\^/.test(s);
+const alpacaSymbol = (s: string) => (/[\^=]/.test(s) || isCrypto(s) ? null : s.replace(/-/g, "."));
 
 async function alpacaGet(path: string, params: Record<string, string>, ttl: number): Promise<unknown> {
   const url = `${cfg.alpacaBase}${path}?${new URLSearchParams(params)}`;

@@ -37,6 +37,8 @@ const BASE_HOSTS = [
   // Winners / copy desk: insider cluster buys, congressional trades, superinvestor filings, copy-trading leaderboards.
   "openinsider.com", "www.openinsider.com", "capitoltrades.com", "www.capitoltrades.com", "dataroma.com", "www.dataroma.com",
   "quiverquant.com", "www.quiverquant.com", "disclosures-clerk.house.gov", "efdsearch.senate.gov", "etoro.com", "www.etoro.com",
+  // Kronos forecasts: the repo (github), the weights (Hugging Face and its CDNs) and the CPU torch wheels.
+  "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs.hf.co", "cdn-lfs-us-1.hf.co", "cdn-lfs-eu-1.hf.co", "us.aws.cdn.hf.co", "cas-bridge.xethub.hf.co", "hf.co", "download.pytorch.org",
   // (reddit.com blocks Anthropic's crawler and cannot be allowed; TradingAgents' sentiment analyst then uses StockTwits and news.)
 ];
 // Python packages installed in the sandbox besides the skills' own requirements (plain names only: the API
@@ -44,7 +46,7 @@ const BASE_HOSTS = [
 // ta-patterns: 300 candlestick/chart pattern detectors with no look-ahead, for the swing scan.
 // ta-lib: the reference technical-analysis library (150+ indicators, 61 candlestick patterns, C speed);
 //   its 0.8 wheels bundle the C library, so it installs without a compiler.
-const EXTRA_PIP = ["ta-patterns>=1.2.1", "ta-lib>=0.8.3"];
+const EXTRA_PIP = ["ta-patterns>=1.2.1", "ta-lib>=0.8.3", "torch", "einops", "huggingface_hub", "safetensors"];
 
 const SYSTEM = `You are the trading copilot behind "Trading Desk", a day-trading cockpit used by a trader in Riyadh (Asia/Riyadh, UTC+3) who trades US equities.
 

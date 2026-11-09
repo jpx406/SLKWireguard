@@ -9,6 +9,7 @@ import { capBlocks, isEngine, recordSpend } from "./cost";
 import { getSetting, getSettings, setSetting } from "./db";
 import { getAccount } from "./paper";
 import { nyNow } from "./briefs";
+import { kronosContext } from "./kronos";
 
 export const TA_WHEEL = "https://github.com/TauricResearch/TradingAgents/releases/download/v0.7.1/tradingagents-0.7.1-py3-none-any.whl";
 export const RATINGS = ["Buy", "Overweight", "Hold", "Underweight", "Sell"] as const;
@@ -114,7 +115,7 @@ export async function startDeep(env: Env, symbol: string, user: string | null, b
     files.push(...resources.map((r) => r.file_id));
     // ~15 model calls plus the sandbox: three times a normal session's budget, at least $3.
     const sid = await createSession(env, Math.max(3, s.session_budget_usd * 3), engine as never, { vaultIds: [env.VAULT_ID], resources });
-    const text = deepPrompt(symbol, ny.date, s.trader_config, engineModels(engine), { portfolio: true, memory: !!memory });
+    const text = (await kronosContext(env.DB, [symbol])) + deepPrompt(symbol, ny.date, s.trader_config, engineModels(engine), { portfolio: true, memory: !!memory });
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text }] }] });
     await env.DB.prepare("UPDATE deep_runs SET session_id = ?, status = 'running', files = ? WHERE id = ?").bind(sid, JSON.stringify(files), id).run();
   } catch (e) {

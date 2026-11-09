@@ -233,7 +233,25 @@ It merges everything into one list (conviction = independent source types agreei
 
 Why not a copy-trading app: dub, Autopilot, eToro and Invo copy other people's accounts in real time but offer no API, and Invo is mostly crypto. The desk uses the same disclosures those apps are built on, for free, and keeps everything on paper.
 
-**Setup:** run `setup/setup-agent.mjs` again once after updating so the sandbox may reach openinsider.com, capitoltrades.com, dataroma.com, quiverquant.com, disclosures-clerk.house.gov, efdsearch.senate.gov and etoro.com (hosts the API refuses are dropped automatically). `sec_user_agent` in the trading rules must have your real name and email for EDGAR.
+**Setup:** run `setup/setup-agent.mjs` again once after updating so the sandbox may reach huggingface.co and its CDNs, download.pytorch.org (Kronos), openinsider.com, capitoltrades.com, dataroma.com, quiverquant.com, disclosures-clerk.house.gov, efdsearch.senate.gov and etoro.com (hosts the API refuses are dropped automatically). `sec_user_agent` in the trading rules must have your real name and email for EDGAR.
+
+## Kronos forecasts (candlestick foundation model)
+
+**Kronos** in the sidebar runs [shiyu-coder/Kronos](https://github.com/shiyu-coder/Kronos) (AAAI 2026, MIT): a decoder-only transformer pre-trained on 12 billion K-lines from 45 exchanges that tokenizes OHLCV bars and samples what the next bars could look like. The desk runs it inside the agent's sandbox (`public/kronos_forecast.py` is mounted there; the agent clones the repo, installs CPU torch and the `NeoQuasar/Kronos-small` weights on first use, then runs the script), so nothing heavy runs in the Worker.
+
+* **Run:** symbol (stocks or crypto such as BTC-USD), bar size (5m, 15m, 1h, daily) and bars ahead. The first run in a fresh sandbox takes several minutes (torch + weights); later runs about a minute. Each run samples *N* futures (Admin Settings, default 20) and reports the mean path, the 10-90% band, the chance of closing higher, the expected move and the mean best/worst excursion.
+* **On the chart:** the dashed line is the mean path and the dotted lines the band, on the main chart (the latest forecast for the symbol loads automatically) and on the Crypto desk tiles.
+* **Mixed with the rest:** every scan prompt and every Deep Analysis start with the fresh forecasts (24 h) for the symbols involved, as one more opinion on direction and size of move. Admin Settings › *Chart autopilot: skip a candle-signal entry when a fresh Kronos forecast disagrees* adds Kronos as a gate (off by default). Kronos knows nothing about news or levels.
+* **Verified here:** Kronos-small on CPU: 5 sampled paths on the repo's 5-minute test series in 62 s (first load), 8 paths on BTC-USD hourly bars in 18 s.
+
+## Crypto desk (24/7, linked to the FOMO app)
+
+**Crypto** in the sidebar is a separate desk for pairs in Yahoo notation (BTC-USD, ETH-USD, SOL-USD by default; each user keeps their own list):
+
+* live charts with candle signals and the plan monitor, 15-minute, hourly or daily bars; prices from Yahoo Finance (CCC);
+* **Kronos** per pair or *Forecast All*; the forecast line and band draw on each tile;
+* **24/7 paper trading:** crypto orders fill at any hour (the cron now runs every minute every day), stay working for 7 days, positions are held to the stop or target (no end-of-day close), and the chart autopilot watches crypto pairs at weekends too; *Paper Buy* opens the ticket in hold mode and *Auto* puts paper money on the pair;
+* **FOMO:** the FOMO app (mobile, self-custodial, Solana/Base/BNB/Monad) has no public API, so the desk links to it (*Open FOMO* and a FOMO button per tile; Admin Settings › *FOMO app link*, for example your referral link `https://fomo.family/r/<name>`) and execution there stays manual: the desk analyses, you tap the trade in FOMO. Nothing here can move real money.
 
 ## Performance: backtesting and the learning loop
 

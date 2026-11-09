@@ -254,6 +254,21 @@ const sigEngine = createSignalEngine({ intervalSec: 300, shift });
 const mainMon = createPlanMonitor({ series: candleS, shift, drawLines: () => !(state.mainPlan && state.mainPlan.symbol === state.symbol),
   onStatus: (text, cls) => { const p = $("#planBar"); p.textContent = text; p.className = `plan-bar small ${cls || ""}`; },
   onEvent: (ev) => { const p = $("#planBar"); p.textContent = ev.text; p.className = `plan-bar small ${ev.kind === "entry" ? "accent" : ev.kind === "target" ? "up" : "down"}`; if (state.sigNotify) notifyPlanEvent(ev); redrawMarkers(); } });
+/* Kronos forecast overlay on the main chart: the latest finished forecast for the symbol, or one picked on the Kronos page. */
+const mainFc = createForecastLayer(chart, shift);
+state.forecast = null;
+async function loadMainForecast(sym) {
+  try {
+    const latest = await api(`/api/kronos/latest?symbols=${encodeURIComponent(sym)}`);
+    const f = latest[sym]; if (!f || sym !== state.symbol) { if (!f) { state.forecast = null; mainFc.clear(); } return; }
+    const run = await api(`/api/kronos/${f.id}`); if (sym !== state.symbol || !run.data) return;
+    showForecastOnMain(run.data);
+  } catch { /* no forecasts yet */ }
+}
+function showForecastOnMain(fc) {
+  state.forecast = fc; mainFc.set(fc);
+  const p = $("#planBar"); if (fc && !p.textContent) { p.textContent = forecastText(fc); p.className = "plan-bar small accent"; }
+}
 /** The signal feed under the main chart, with each pattern's historical reliability on this chart once known. */
 function refreshSigFeed() {
   renderSignalFeed($("#sigFeed"), sigEngine.list(), { fmtTime: sigTime, fmtPrice: fmt, stats: state.sigStats });
@@ -327,7 +342,7 @@ chart.subscribeCrosshairMove(updateLegend);
 function setSymbol(sym) {
   sym = sym.trim().toUpperCase(); if (!sym) return;
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
-  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = ""; state.sigStats = null;
+  state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = ""; state.sigStats = null; state.forecast = null; mainFc.clear(); loadMainForecast(sym);
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]); state.autoCtl?.refresh();
 }
 
@@ -370,7 +385,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "winners", "deep", "learn", "journal", "more"];
+const MAIN_SECTIONS = ["chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
@@ -776,7 +791,7 @@ $("#settingsForm").onsubmit = async (e) => {
   try {
     const engines = Object.fromEntries($$("#engineGrid select").map((x) => [x.name.slice(4), x.value]));
     await saveSettings({ session_budget_usd: +f.session_budget_usd.value, trader_config: raw, data_source: f.data_source.value,
-      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_min_score: +f.deep_min_score.value || 0, deep_max_per_brief: +f.deep_max_per_brief.value || 5, learn_apply: f.learn_apply.checked, learn_min_n: +f.learn_min_n.value || 10, reuse_research: f.reuse_research.checked, engines } : {}) });
+      ...(state.usage ? { daily_cap_usd: +f.daily_cap_usd.value || 0, deep_min_score: +f.deep_min_score.value || 0, deep_max_per_brief: +f.deep_max_per_brief.value || 5, learn_apply: f.learn_apply.checked, learn_min_n: +f.learn_min_n.value || 10, kronos_gate: f.kronos_gate.checked, kronos_samples: +f.kronos_samples.value || 20, fomo_link: f.fomo_link.value.trim(), reuse_research: f.reuse_research.checked, engines } : {}) });
     $("#settingsDlg").close(); await loadStatus();
   } catch (err) { $("#settingsErr").textContent = err.message; }
 };
@@ -803,8 +818,8 @@ async function loadUsage() {
   } else out.append(el("div", null, "No Claude sessions recorded yet."));
   f.daily_cap_usd.value = u.daily_cap_usd || 0; f.reuse_research.checked = u.reuse_research !== false;
   const grid = $("#engineGrid"); grid.innerHTML = "";
-  f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5; f.learn_apply.checked = u.learn_apply !== false; f.learn_min_n.value = u.learn_min_n ?? 10;
-  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"]]) {
+  f.deep_min_score.value = u.deep_min_score ?? 65; f.deep_max_per_brief.value = u.deep_max_per_brief ?? 5; f.learn_apply.checked = u.learn_apply !== false; f.learn_min_n.value = u.learn_min_n ?? 10; f.kronos_gate.checked = !!u.kronos_gate; f.kronos_samples.value = u.kronos_samples ?? 20; f.fomo_link.value = u.fomo_link || "";
+  for (const [id, label] of [...u.slots.map((x) => [x.id, x.label]), ["chat", "Copilot chat"], ["deep", "Deep Analysis (TradingAgents)"], ["kronos", "Kronos forecast"]]) {
     const lb = el("label", null, label), sel = el("select"); sel.name = `eng_${id}`;
     for (const o of u.engine_options) sel.append(new Option(o.label, o.id));
     sel.value = u.engines?.[id] || "default"; lb.append(sel); grid.append(lb);
@@ -1033,7 +1048,7 @@ $("#btnPopChart").onclick = () => openChartWindow(state.symbol);
 // Detection models (shared with the Monitor grid) and the per-chart automatic paper trading control.
 $("#sigModels").append(sigModelsControl((m) => { sigEngine.setModels(m); sigEngine.update(state.candles); redrawMarkers(); refreshSigFeed(); for (const c of state.mon.charts) c.setModels(m); }));
 state.autoCtl = createAutoControl(() => state.symbol); $("#chartAuto").append(state.autoCtl);
-mainMon.setSymbol(state.symbol);
+mainMon.setSymbol(state.symbol); loadMainForecast(state.symbol);
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) { e.preventDefault(); $("#symInput").select(); }
 });

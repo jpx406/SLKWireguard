@@ -31,6 +31,6 @@ ANTHROPIC_WORKSPACE = "default"
 
 # Secret (never in this file):  npx wrangler secret put ANTHROPIC_API_KEY
 
-# Every minute on weekdays (UTC): paper-trading engine + autopilot briefs (mapped to New York time).
+# Every minute (UTC): paper-trading engine (crypto trades at weekends too) + autopilot briefs (mapped to New York time).
 [triggers]
-crons = ["* * * * 1-5"]
+crons = ["* * * * *"]

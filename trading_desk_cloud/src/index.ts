@@ -8,6 +8,8 @@ import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
+import { KRONOS_INTERVALS, finalizeKronos, latestForecasts, listKronos, startKronos } from "./kronos";
+import { isCrypto } from "./market";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -39,7 +41,7 @@ async function setupMarket(env: Env) {
 }
 
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
-const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/];
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/];
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
@@ -139,6 +141,50 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // Kronos forecasts (candlestick foundation model in the sandbox).
+  const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
+  if (path === "/kronos" && m === "GET") {
+    if (agentReady) await finalizeKronos(env);
+    return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate });
+  }
+  if (path === "/kronos/run" && m === "POST") {
+    const b = await body<{ symbol?: unknown; interval?: unknown; pred?: unknown }>(req);
+    const r = await startKronos(env, String(b.symbol ?? ""), String(b.interval ?? "60m"), b.pred == null ? null : Number(b.pred), who.user);
+    return r.error ? bad(r.error) : json(r);
+  }
+  if (path === "/kronos/latest" && m === "GET") {
+    const syms = (url.searchParams.get("symbols") || "").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+    return json(await latestForecasts(env.DB, syms.length ? syms : undefined));
+  }
+  const km = path.match(/^\/kronos\/([a-z0-9]{6,32})$/);
+  if (km && m === "GET") {
+    const r = (await listKronos(env.DB, 200)).find((x) => x.id === km[1]);
+    return r ? json(r) : bad("Forecast not found.", 404);
+  }
+  // Crypto desk: a per-user pair list, live quotes, Kronos forecasts, crypto paper positions, the FOMO app link.
+  const cwKey = `crypto_watchlist:${who.user}`;
+  if (path === "/crypto" && m === "GET") {
+    const s = await getSettings(env.DB);
+    const wl = await getSetting<string[]>(env.DB, cwKey, s.crypto_watchlist);
+    if (agentReady) await finalizeKronos(env);
+    const q = await quotes(wl);
+    const pos = (await env.DB.prepare("SELECT * FROM paper_positions WHERE user = ? AND status = 'open'").bind(who.user).all<{ symbol: string }>()).results.filter((p) => isCrypto(p.symbol));
+    return json({ watchlist: wl, quotes: q, forecasts: await latestForecasts(env.DB, wl), positions: pos, fomo_link: s.fomo_link, auto: Object.fromEntries((await listAuto(env.DB, who.user)).filter((a) => isCrypto(a.symbol)).map((a) => [a.symbol, a])) });
+  }
+  if (path === "/crypto/watchlist" && m === "PUT") {
+    const b = await body<{ watchlist?: unknown }>(req);
+    const wl = (Array.isArray(b.watchlist) ? b.watchlist : []).map((x) => String(x).trim().toUpperCase()).filter((x) => SYMBOL_RE.test(x) && isCrypto(x)).slice(0, 30);
+    await setSetting(env.DB, cwKey, wl);
+    return json({ watchlist: wl });
+  }
+  if (path === "/crypto/forecast" && m === "POST") {
+    // Forecast every pair on the list (one sandbox session each, queued by the finalize loop).
+    const b = await body<{ interval?: unknown }>(req);
+    const wl = await getSetting<string[]>(env.DB, cwKey, (await getSettings(env.DB)).crypto_watchlist);
+    const out: Record<string, unknown> = {};
+    for (const sym of wl) out[sym] = await startKronos(env, sym, String(b.interval ?? "60m"), null, who.user);
+    return json(out);
+  }
   // Learning loop: outcomes of every recommendation, the playbook, pattern reliability and the signal backtester.
   if (path === "/learn" && m === "GET") {
     const days = Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90));
@@ -239,6 +285,10 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       await setSetting(env.DB, "deep_min_score", Math.round(n));
     }
     if ("learn_apply" in patch) await setSetting(env.DB, "learn_apply", !!patch.learn_apply);
+    if ("kronos_gate" in patch) await setSetting(env.DB, "kronos_gate", !!patch.kronos_gate);
+    if ("kronos_samples" in patch) { const n = Number(patch.kronos_samples); if (!(n >= 1 && n <= 100)) return bad("Kronos samples: 1 to 100."); await setSetting(env.DB, "kronos_samples", Math.round(n)); }
+    if ("fomo_link" in patch) { const v = String(patch.fomo_link || "").trim(); if (v && !/^https:\/\/[^\s]{3,200}$/.test(v)) return bad("FOMO link must be an https URL."); await setSetting(env.DB, "fomo_link", v); }
+    if ("crypto_watchlist" in patch) await setSetting(env.DB, "crypto_watchlist", (Array.isArray(patch.crypto_watchlist) ? patch.crypto_watchlist : []).map((x) => String(x).trim().toUpperCase()).filter((x) => SYMBOL_RE.test(x) && isCrypto(x)).slice(0, 30));
     if ("learn_min_n" in patch) { const n = Number(patch.learn_min_n); if (!(n >= 5 && n <= 100)) return bad("Playbook minimum trades per group: 5 to 100."); await setSetting(env.DB, "learn_min_n", Math.round(n)); }
     if ("deep_max_per_brief" in patch) {
       const n = Number(patch.deep_max_per_brief);
@@ -247,7 +297,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
-      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep"]);
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos"]);
       await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
     }
     if ("trader_config" in patch) {
@@ -263,7 +313,6 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
 
   // ---- Deep Analysis (TradingAgents in the sandbox)
   if (path === "/deep" && m === "GET") {
-    const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
     if (agentReady) { await finalizeDeep(env); await deepAfterBriefs(env); }
     const ds = await getSettings(env.DB);
     return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_min_score: ds.deep_min_score, deep_max_per_brief: ds.deep_max_per_brief });
@@ -285,7 +334,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   if (path === "/usage" && m === "GET") {
     if (who.role !== "admin") return bad("Only the admin can see Claude spending.", 403);
     const s = await getSettings(env.DB);
-    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_min_score: s.deep_min_score, deep_max_per_brief: s.deep_max_per_brief, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n, reuse_research: s.reuse_research, engines: s.engines,
+    return json({ ...(await usageReport(env.DB, nyNow().date)), daily_cap_usd: s.daily_cap_usd, deep_min_score: s.deep_min_score, deep_max_per_brief: s.deep_max_per_brief, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n, kronos_gate: s.kronos_gate, kronos_samples: s.kronos_samples, fomo_link: s.fomo_link, reuse_research: s.reuse_research, engines: s.engines,
       engine_options: Object.entries(ENGINES).map(([id, e]) => ({ id, label: e.label })), slots: SLOTS.map(({ id, label }) => ({ id, label })) });
   }
 

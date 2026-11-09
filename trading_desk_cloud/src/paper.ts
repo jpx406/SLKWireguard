@@ -1,6 +1,6 @@
 // Paper trading: simulated accounts per user, bracket orders (entry + stop-loss + take-profit),
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
-import { candles, latestPrice } from "./market";
+import { candles, isCrypto, latestPrice } from "./market";
 import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
@@ -128,8 +128,8 @@ export async function getAccount(db: D1Database, user: string): Promise<Account 
 
 async function barsFor(symbol: string): Promise<Bar[]> {
   const all = await candles(symbol, "1m");
-  const cutoff = nowS() - 60; // only completed minutes, and only trades inside our sessions (07:00-20:00 New York)
-  return all.filter((b) => b.time <= cutoff && inSession(b.time));
+  const cutoff = nowS() - 60; // only completed minutes, and only trades inside our sessions (07:00-20:00 New York); crypto trades 24/7
+  return all.filter((b) => b.time <= cutoff && (isCrypto(symbol) || inSession(b.time)));
 }
 export const lastPrice = latestPrice;
 
@@ -156,9 +156,11 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   const marketable = type === "market" || (side === "long" ? last <= price! : last >= price!);
   const ref = marketable ? last : price!;
   let qty = num(inp.qty);
-  if (!qty && num(inp.amount_usd)) qty = Math.floor(num(inp.amount_usd)! / ref);
-  qty = qty ? Math.floor(qty) : 0;
-  if (qty < 1) return { error: "Quantity must be at least 1 share." };
+  // Crypto trades in fractions (6 decimals, at least $1 of notional); stocks in whole shares.
+  const crypto = isCrypto(symbol);
+  if (!qty && num(inp.amount_usd)) qty = crypto ? num(inp.amount_usd)! / ref : Math.floor(num(inp.amount_usd)! / ref);
+  qty = qty ? (crypto ? Math.round(qty * 1e6) / 1e6 : Math.floor(qty)) : 0;
+  if (crypto ? qty * ref < 1 : qty < 1) return { error: crypto ? "Quantity must be worth at least $1." : "Quantity must be at least 1 share." };
   const at = marketable ? `the market price (${r2(ref)}), where this order fills now` : `the entry price (${r2(ref)})`;
   if (stop !== null && (side === "long" ? stop >= ref : stop <= ref)) return { error: `Stop-loss must be ${side === "long" ? "below" : "above"} ${at}.` };
   if (target !== null && (side === "long" ? target <= ref : target >= ref)) return { error: `Take-profit must be ${side === "long" ? "above" : "below"} ${at}.` };
@@ -229,7 +231,7 @@ export async function cancelOrder(db: D1Database, user: string, id: string) {
 export async function closePosition(db: D1Database, user: string, id: string) {
   const p = await db.prepare("SELECT * FROM paper_positions WHERE id = ? AND user = ? AND status = 'open'").bind(id, user).first<Position>();
   if (!p) return { error: "Position not found or already closed." };
-  if (marketPhase() === "closed") {
+  if (marketPhase() === "closed" && !isCrypto(p.symbol)) {
     // Nothing trades now: sell at the first trade of the next session (07:00 New York pre-market).
     await db.prepare("UPDATE paper_positions SET close_req = ? WHERE id = ? AND status = 'open'").bind(nowS(), id).run();
     return { ok: true, queued: true };
@@ -281,7 +283,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
   for (const o of orders) {
     const s = await sOf(o.user);
     // Day orders stay working through pre-market, the regular session and after-hours.
-    if (o.day < ny.date || (o.day === ny.date && ny.minutes >= sessionTimes(o.day).postEnd)) {
+    if (isCrypto(o.symbol) ? t > o.created_at + 7 * 86400 : (o.day < ny.date || (o.day === ny.date && ny.minutes >= sessionTimes(o.day).postEnd))) {
       await db.prepare("UPDATE paper_orders SET status = 'expired', reason = 'day order expired' WHERE id = ? AND status = 'open'").bind(o.id).run(); continue;
     }
     if ((o.source === "auto" || o.source === "chart") && t > o.created_at + s.auto_valid_min * 60) {
@@ -331,7 +333,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     if (done) continue;
     // End-of-day trades close 5 minutes before the regular close; ones opened after the bell close 5 minutes
     // before after-hours ends (or at the next run if one was opened on an earlier day).
-    const mode = p.exit_mode ?? (s.auto_flat ? "eod" : "hold");
+    const mode = isCrypto(p.symbol) ? "hold" : p.exit_mode ?? (s.auto_flat ? "eod" : "hold"); // crypto has no close: always held to the stop or target
     const st = sessionTimes(p.day_opened);
     const cut = nyNow(new Date(p.opened_at * 1000)).minutes >= st.close - 5 ? st.postEnd - 5 : st.close - 5;
     if (mode === "eod" && (p.day_opened < ny.date || (p.day_opened === ny.date && ny.minutes >= cut))) {

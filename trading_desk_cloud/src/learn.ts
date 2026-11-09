@@ -5,7 +5,7 @@
 // backtester for the candle-signal rule. Conservative fills: stop before target in the same bar, entry at the
 // bar's open when it gaps through the level, time exits at the session close. Paper only.
 import "../public/candles.js";
-import { candles } from "./market";
+import { candles, isCrypto } from "./market";
 import { clockNow, nyNow, nextTradingDate, sessionTimes, isTradingDay } from "./briefs";
 import { getSetting, getSettings, setSetting } from "./db";
 
@@ -41,7 +41,7 @@ export async function ensureLearn(db: D1Database) {
 
 // ------------------------------------------------------------------------------------------- replay
 /** Replay one plan on the bars after it was made. Returns the fields to store. */
-export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string }, bars: Bar[], now = nowS()) {
+export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string; symbol?: string }, bars: Bar[], now = nowS()) {
   const long = o.side === "long", risk = Math.abs(o.entry - o.stop);
   if (!(risk > 0)) return { status: "expired" as const };
   // Entry window: a day plan until that session's close; a swing plan for three sessions. Trade window: the
@@ -51,6 +51,7 @@ export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; en
   if (o.horizon === "swing") { for (let i = 0; i < 2; i++) d = nextTradingDate(d); entryEnd = closeOf(d); }
   let tradeEnd = closeOf(o.day); d = o.day;
   if (o.horizon === "swing") { for (let i = 0; i < 9; i++) d = nextTradingDate(d); tradeEnd = closeOf(d); }
+  if (o.symbol && isCrypto(o.symbol)) { entryEnd = o.created_at + (o.horizon === "swing" ? 3 : 1) * 86400; tradeEnd = o.created_at + (o.horizon === "swing" ? 10 : 1) * 86400; } // 24/7: clock windows
   const after = bars.filter((b) => b.time >= o.created_at && b.time + 300 <= now);
   if (!after.length) return { status: (now > entryEnd ? "no_trigger" : "pending") as "no_trigger" | "pending" };
   let fill: number | null = null, triggered_at: number | null = null, i = 0;

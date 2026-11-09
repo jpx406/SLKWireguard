@@ -659,3 +659,14 @@ body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
 .sig-chip .hist.good { color: var(--up); border-color: var(--up); } .sig-chip .hist.bad { color: var(--down); border-color: var(--down); }
 .sig-chip.unreliable { opacity: 0.6; }
 .bd-sec h4 { margin: 10px 0 4px; font-weight: 600; }
+
+/* ---- Kronos / Crypto */
+.btn-link { text-decoration: none; display: inline-flex; align-items: center; }
+.kr-prob { display: inline-block; min-width: 46px; text-align: right; font-family: var(--mono); }
+.cr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+.cr-tile { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); display: flex; flex-direction: column; min-height: 300px; overflow: hidden; }
+.cr-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex-wrap: wrap; }
+.cr-chart { flex: 1; min-height: 190px; position: relative; }
+.cr-foot { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.cr-fc { font-size: 0.769rem; padding: 0 10px 4px; }
+@media (max-width: 700px) { .cr-grid { grid-template-columns: 1fr; } }

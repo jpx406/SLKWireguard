@@ -162,3 +162,31 @@ function createAutoControl(getSymbol, { compact = false } = {}) {
   const timer = setInterval(refresh, 60000); det.dispose = () => clearInterval(timer);
   return det;
 }
+
+/**
+ * Kronos forecast overlay on a Lightweight Charts chart: the mean path (dashed) with the 10-90% band lines.
+ * createForecastLayer(chart, shiftT) -> { set(fc), clear() }; `fc` is the forecast JSON from /api/kronos/:id.
+ */
+function createForecastLayer(chart, shiftT = (t) => t) {
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const mk = (color, width, style) => chart.addLineSeries({ color, lineWidth: width, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  const mean = mk(css("--accent"), 2, 2), hi = mk(css("--dim"), 1, 3), lo = mk(css("--dim"), 1, 3);
+  let fc = null;
+  return {
+    get forecast() { return fc; },
+    set(f) {
+      fc = f || null;
+      if (!fc) { mean.setData([]); hi.setData([]); lo.setData([]); return; }
+      const pts = (arr) => [{ time: shiftT(fc.last_time), value: fc.last_close }, ...fc.times.map((t, i) => ({ time: shiftT(t), value: arr[i] }))];
+      mean.setData(pts(fc.mean_close)); hi.setData(pts(fc.p90)); lo.setData(pts(fc.p10));
+    },
+    clear() { this.set(null); },
+    retheme() { mean.applyOptions({ color: css("--accent") }); hi.applyOptions({ color: css("--dim") }); lo.applyOptions({ color: css("--dim") }); },
+  };
+}
+/** One line describing a forecast summary ({prob_up, exp_move_pct, band_pct, interval, pred_len, step_sec}). */
+function forecastText(f) {
+  if (!f) return "";
+  const h = (f.pred_len * f.step_sec) / 3600, hz = h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h)}h`;
+  return `Kronos ${f.interval} · next ${hz}: ${Math.round(f.prob_up * 100)}% up · exp ${f.exp_move_pct >= 0 ? "+" : ""}${Number(f.exp_move_pct).toFixed(2)}% · band ±${(f.band_pct / 2).toFixed(2)}%`;
+}

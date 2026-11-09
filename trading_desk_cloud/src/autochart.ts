@@ -3,7 +3,9 @@
 // Deep Analysis) or, with no plan, from a strong candlestick signal on completed 5-minute bars. Exits are the
 // plan's stop / target (the paper engine), plus a strong reversal signal against the trade. Paper only.
 import "../public/candles.js";
-import { candles, latestPrice } from "./market";
+import { candles, isCrypto, latestPrice } from "./market";
+import { kronosAgrees } from "./kronos";
+import { getSettings } from "./db";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
 import { closePosition, ensurePaper, getAccount, placeOrder, type Side } from "./paper";
 import { patternAllowed } from "./learn";
@@ -120,7 +122,7 @@ async function note(db: D1Database, r: AutoRow, text: string) {
 async function completedBars(symbol: string): Promise<Bar[]> {
   const all = (await candles(symbol, "5m", 3)) as Bar[];
   const cutoff = nowS() - 300; // a 5-minute bar is complete once its start is 5 minutes old
-  return all.filter((b) => b.time <= cutoff && inSession(b.time)).slice(-300);
+  return all.filter((b) => b.time <= cutoff && (isCrypto(symbol) || inSession(b.time))).slice(-300);
 }
 
 /** Signals on the LAST completed bar only (strength >= min). */
@@ -134,8 +136,9 @@ function lastBarSignals(bars: Bar[], min = 2): Hit[] {
 export async function runChartAuto(db: D1Database) {
   await ensureAutoChart(db);
   const ny = nyNow();
-  if (!isTradingDay(ny) || !inSession(nowS())) return;
-  const rows = (await db.prepare("SELECT * FROM paper_auto WHERE enabled = 1").all<AutoRow>()).results;
+  const stocksOpen = isTradingDay(ny) && inSession(nowS());
+  const gate = !!(await getSettings(db) as { kronos_gate?: boolean }).kronos_gate;
+  const rows = (await db.prepare("SELECT * FROM paper_auto WHERE enabled = 1").all<AutoRow>()).results.filter((r) => stocksOpen || isCrypto(r.symbol));
   const barsCache = new Map<string, Bar[]>();
   const barsOf = async (s: string) => { if (!barsCache.has(s)) barsCache.set(s, await completedBars(s)); return barsCache.get(s)!; };
   for (const r of rows) {
@@ -174,8 +177,8 @@ export async function runChartAuto(db: D1Database) {
         // Skip once the price is already through the stop or past the first target (the setup is gone).
         const gone = plan.side === "long" ? (stop !== null && last <= stop) || (t1 !== null && last >= t1) : (stop !== null && last >= stop) || (t1 !== null && last <= t1);
         if (!gone && stop !== null) {
-          const qty = Math.floor(budget / plan.entry);
-          if (qty >= 1) placed = { symbol: r.symbol, side: plan.side, type: "limit", price: plan.entry, qty, stop, target: t1, exit_mode: plan.source === "deep" ? "hold" : null,
+          const qty = isCrypto(r.symbol) ? Math.round((budget / plan.entry) * 1e6) / 1e6 : Math.floor(budget / plan.entry);
+          if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side: plan.side, type: "limit", price: plan.entry, qty, stop, target: t1, exit_mode: plan.source === "deep" ? "hold" : null,
             note: `Chart auto (${plan.source === "deep" ? `Deep Analysis ${plan.rating}` : plan.label || "recommendation"}): ${plan.setup}`.slice(0, 300) };
         }
       }
@@ -189,13 +192,15 @@ export async function runChartAuto(db: D1Database) {
           const h = allowed.sort((a, b) => b.strength - a.strength)[0], last = bars.at(-1)!;
           const patt = bars.slice(bars.length - h.bars);
           const side: Side = h.dir === "bullish" ? "long" : "short";
+          // Optional: a fresh Kronos forecast that disagrees with the direction vetoes the entry.
+          if (gate && (await kronosAgrees(db, r.symbol, side)) === false) { await note(db, r, `Skipped ${h.label}: the Kronos forecast disagrees with a ${side}`); continue; }
           const entry = last.close;
           const lo = Math.min(...patt.map((b) => b.low)), hi = Math.max(...patt.map((b) => b.high)), pad = (hi - lo) * 0.1;
           const stop = r2(side === "long" ? lo - pad : hi + pad), risk = Math.abs(entry - stop);
           if (risk > 0 && risk / entry <= 0.05) {
             const target = r2(side === "long" ? entry + 2 * risk : entry - 2 * risk);
-            const qty = Math.floor(budget / entry);
-            if (qty >= 1) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}` };
+            const qty = isCrypto(r.symbol) ? Math.round((budget / entry) * 1e6) / 1e6 : Math.floor(budget / entry);
+            if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}` };
           }
         }
       }
