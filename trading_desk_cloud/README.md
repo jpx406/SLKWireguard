@@ -176,6 +176,15 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **Preferences (gear button, every user):** appearance (*Match this device*, Dark or Light, remembered on each device), your watchlist and brief notifications.
 * **Admin Settings:** data source, budgets, Claude cost controls and the trading rules are under **Admin Settings…** inside Preferences, and also behind the trading-rules badge. Admins only.
 
+## Screen sizes and collapsing
+
+The layout sizes itself to the room each panel has, not only to the window, so it behaves the same on a 14-inch laptop at 150% zoom, a large monitor, a tablet or a phone:
+
+* **Sidebar:** the button at the left of the top bar collapses it to an icon rail (labels become tooltips, the watchlist hides). On narrow desktops it starts collapsed; your choice is remembered on the device.
+* **Right panel** (Briefs, Copilot, Position Size): the button next to Preferences hides it, giving the content the full width.
+* **Sections:** click any section heading (the small triangle) to collapse it; the *Routines* list in Briefs collapses too. Choices are remembered.
+* **Content:** card rows, two-column blocks, the Monitor and Crypto grids and the Quant Terminal reflow by the content width; wide tables scroll inside their own box.
+
 ## iPhone and iPad
 
 * **Install it like an app:** open the desk in Safari, tap Share, then **Add to Home Screen**. It opens full screen with its own icon.

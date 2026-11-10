@@ -85,7 +85,7 @@ function renderWinners() {
       tr.append(c, el("td", "wrap", r.who || ""), el("td", /sell/i.test(r.action || "") ? "down" : "up", r.action || ""), el("td", "mono dim", r.date || ""), el("td", "num", r.size || ""), el("td", "wrap dim", r.note || ""));
       t.append(tr);
     }
-    s.append(t); grid.append(s);
+    const fw = el("div", "bd-table-wrap"); fw.append(t); s.append(fw); grid.append(s);
   }
   if (grid.childElementCount) host.append(grid);
   if (state.winners.briefs.length > 1) {

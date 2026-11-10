@@ -729,3 +729,58 @@ body.chart-window .plan-bar { max-height: 48px; overflow: auto; }
 .q-foot { display: flex; gap: 18px; flex-wrap: wrap; padding: 6px 2px; border-top: 1px solid #1b2330; margin-top: 8px; color: #5b6678; text-transform: uppercase; }
 .q-foot span:first-child { background: #f5b82e; color: #000; padding: 0 8px; font-weight: 700; } .q-foot span.red:first-child { background: #ff3b4a; }
 @media (max-width: 900px) { .q-grid { grid-template-columns: 1fr; } .q-big { font-size: 34px; } .q-stats { grid-template-columns: repeat(2, 1fr); } .q-anrow { grid-template-columns: 1fr; } .q-mode, .q-top .q-sub { display: none; } }
+
+/* ---- adaptive sizing: panels size to the room they have; sidebar, inspector and sections collapse */
+.layout { grid-template-columns: clamp(180px, 15vw, 220px) minmax(0, 1fr) clamp(300px, 26vw, 400px); }
+.content { container-type: inline-size; container-name: content; }
+.inspector { container-type: inline-size; container-name: insp; }
+.sidebar { overflow: hidden; display: flex; flex-direction: column; }
+.nav-list { overflow-y: auto; max-height: 62%; }
+.layout-toggle { flex: none; }
+body.side-collapsed .layout { grid-template-columns: 52px minmax(0, 1fr) clamp(300px, 26vw, 400px); }
+body.side-collapsed .sidebar .nav-item span, body.side-collapsed .sidebar .watch { display: none; }
+body.side-collapsed .nav-list { padding: 6px 4px; max-height: none; flex: 1; border-bottom: none; }
+body.side-collapsed .nav-item { justify-content: center; padding: 9px 0; }
+body.side-collapsed .nav-item .ic { width: 19px; height: 19px; }
+body.insp-collapsed .layout { grid-template-columns: clamp(180px, 15vw, 220px) minmax(0, 1fr); grid-template-areas: "side content"; }
+body.insp-collapsed.side-collapsed .layout { grid-template-columns: 52px minmax(0, 1fr); }
+body.insp-collapsed .inspector { display: none; }
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: clamp(180px, 24vw, 240px) minmax(0, 1fr); }
+  body.side-collapsed .layout { grid-template-columns: 52px minmax(0, 1fr); }
+  #btnInsp { display: none; }
+}
+@media (max-width: 700px) { .layout-toggle { display: none; } .layout { grid-template-columns: minmax(0, 1fr); } }
+/* headings: the hint after a title is plain text and may wrap under it; sections collapse */
+.bd-sec h3 { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; user-select: none; }
+.bd-sec h3::before { content: "\25BE"; font-size: 0.8em; color: var(--dim); width: 0.9em; flex: none; }
+.bd-sec.collapsed h3::before { content: "\25B8"; }
+.bd-sec.collapsed > :not(h3) { display: none !important; }
+.bd-sec h3 > span { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 0.846rem; }
+.ap-details > summary { cursor: pointer; padding: 4px 2px; color: var(--dim); }
+/* content-width rules (the same in a wide window with panels open and in a narrow one) */
+.bd-indices { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.bd-card .big { overflow-wrap: anywhere; }
+@container content (max-width: 900px) {
+  .dash-grid, .bd-grid, .bd-detail, .q-grid { grid-template-columns: minmax(0, 1fr); }
+  .dash-chart { height: 260px; }
+  .loop-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } .loop-step::after { display: none; }
+  .q-big { font-size: 34px; } .q-mode { display: none; }
+}
+@container content (max-width: 560px) {
+  .cr-grid, .mon-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .bd-indices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .loop-steps { grid-template-columns: 1fr 1fr; }
+  .q-stats { grid-template-columns: repeat(2, 1fr); } .q-anrow { grid-template-columns: 1fr; } .q-top .q-sub { display: none; }
+  .pane-toolbar { gap: 6px; padding: 6px 8px; }
+}
+@container insp (max-width: 340px) { .ap-slot { grid-template-columns: auto 1fr auto; } .ap-slot > :nth-child(3) { display: none; } }
+/* wide tables scroll inside their own box instead of pushing the page */
+.bd-table-wrap { overflow-x: auto; max-width: 100%; }
+.board-inner { min-width: 0; }
+.topbar { flex-wrap: wrap; row-gap: 4px; }
+@media (max-width: 1300px) { #skillsCount { display: none; } }
+.ap-details:not([open]) > .ap-slots { display: none; }
+.dash-grid svg.bd-bars { max-width: 720px; }
+.bd-sec { min-width: 0; }
+.bd-grid > *, .dash-grid > * { min-width: 0; }

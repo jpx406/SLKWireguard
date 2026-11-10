@@ -15,6 +15,7 @@ function pctLineChart(seriesList) {
   // seriesList: [{label, color, points:[{day,pct}]}]
   const all = seriesList.flatMap((s) => s.points); if (all.length < 2) return el("div", "dim small", "The comparison appears after the first paper trading day.");
   const days = [...new Set(all.map((p) => p.day))].sort(); const W = 560, H = 200, pad = 34;
+  if (days.length < 2) return el("div", "dim small", "The comparison appears after the second paper trading day.");
   const vals = all.map((p) => p.pct), lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
   const x = (day) => pad + (days.indexOf(day) / Math.max(days.length - 1, 1)) * (W - pad * 2), y = (v) => H - 22 - ((v - lo) / (hi - lo || 1)) * (H - 44);
   const g = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "bd-bars", role: "img" });

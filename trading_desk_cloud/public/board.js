@@ -14,7 +14,17 @@ const nv = (v) => (v === null || v === undefined || v === "" || isNaN(Number(v))
 const pct = (v) => (nv(v) === null ? "—" : `${nv(v) > 0 ? "+" : ""}${fmt(v)}%`);
 const signCls = (v) => (nv(v) > 0 ? "up" : nv(v) < 0 ? "down" : "");
 const biasCls = (b) => (/short|bear/i.test(b || "") ? "down" : /long|bull/i.test(b || "") ? "up" : "");
-const section = (title, extra) => { const s = el("section", "bd-sec"); const h = el("h3", null, title); if (extra) h.append(extra); s.append(h); return s; };
+/** A titled block. Clicking the heading collapses it; the choice is remembered per title on this device. */
+const _secKey = (t) => "td.sec." + String(t).replace(/[0-9(),.$%+-]+/g, "").replace(/ +/g, " ").trim().toLowerCase().slice(0, 40);
+const section = (title, extra) => {
+  const s = el("section", "bd-sec"); const h = el("h3", null, title); if (extra) h.append(extra); s.append(h);
+  const key = _secKey(title); h.tabIndex = 0; h.setAttribute("role", "button"); h.title = "Click to collapse or expand";
+  const set = (c) => { s.classList.toggle("collapsed", c); h.setAttribute("aria-expanded", String(!c)); };
+  try { set(localStorage.getItem(key) === "1"); } catch { set(false); }
+  const toggle = (e) => { if (e.target.closest("button, a, input, select")) return; const c = !s.classList.contains("collapsed"); set(c); try { localStorage.setItem(key, c ? "1" : "0"); } catch { /* ok */ } };
+  h.onclick = toggle; h.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); } };
+  return s;
+};
 
 /** Horizontal bar chart (sector performance, scores). rows: [{label, value, sub?}] */
 function barChart(rows, { unit = "%", signed = true, max } = {}) {

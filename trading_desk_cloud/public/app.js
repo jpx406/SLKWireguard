@@ -391,6 +391,21 @@ const MAIN_SECTIONS = ["dashboard", "quant", "chart", "board", "paper", "monitor
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
+/* Collapsible sidebar (icon rail) and inspector, remembered per device. With no saved choice the sidebar collapses by
+   itself on narrow desktops (a 14-inch laptop at 125-150% zoom), so the content keeps most of the width. */
+function applyPanels() {
+  let side = null, insp = null;
+  try { side = localStorage.getItem("td.side"); insp = localStorage.getItem("td.insp"); } catch { /* ok */ }
+  const w = innerWidth, mode = layoutMode();
+  const auto = (mode === "wide" && w < 1500) || (mode === "medium" && w < 900);
+  document.body.classList.toggle("side-collapsed", mode !== "compact" && (side === null ? auto : side === "1"));
+  document.body.classList.toggle("insp-collapsed", mode === "wide" && insp === "1");
+}
+function togglePanel(which) {
+  const cls = which === "side" ? "side-collapsed" : "insp-collapsed", on = !document.body.classList.contains(cls);
+  try { localStorage.setItem(which === "side" ? "td.side" : "td.insp", on ? "1" : "0"); } catch { /* ok */ }
+  applyPanels(); dispatchEvent(new Event("resize"));
+}
 /** Is a section on screen right now? */
 function sectionVisible(sec) {
   const n = state.nav;
@@ -409,6 +424,7 @@ function navigate(sec, { focus = false } = {}) {
 }
 function renderNav() {
   const n = state.nav, mode = layoutMode(), b = document.body;
+  applyPanels();
   b.dataset.mode = mode; b.dataset.section = n.current; b.dataset.main = n.main; b.dataset.insp = n.insp;
   b.dataset.kind = n.current === "watchlist" ? "watchlist" : INSP_SECTIONS.includes(n.current) ? "insp" : "main";
   for (const p of $$(".pane[data-section]")) p.hidden = !sectionVisible(p.dataset.section);
@@ -1047,6 +1063,10 @@ $$("#indicators button").forEach((b) => (b.onclick = () => {
 // Signals: remembered per device, off by default on the main chart.
 try { if (localStorage.getItem("td.signals") === "1") { state.ind.signals = true; $('#indicators [data-ind="signals"]').classList.add("on"); $("#sigFeed").classList.remove("hidden"); } } catch { /* ok */ }
 $("#btnPopChart").onclick = () => openChartWindow(state.symbol);
+$("#btnSide").onclick = () => togglePanel("side"); $("#btnInsp").onclick = () => togglePanel("insp");
+for (const it of $$(".nav-item")) { const t = it.querySelector("span")?.textContent; if (t && !it.title) it.title = t; } // labels as tooltips for the icon rail
+try { if (localStorage.getItem("td.apslots") === "0") $("#apDetails").open = false; } catch { /* ok */ }
+$("#apDetails").addEventListener("toggle", () => { try { localStorage.setItem("td.apslots", $("#apDetails").open ? "1" : "0"); } catch { /* ok */ } });
 // Detection models (shared with the Monitor grid) and the per-chart automatic paper trading control.
 $("#sigModels").append(sigModelsControl((m) => { sigEngine.setModels(m); sigEngine.update(state.candles); redrawMarkers(); refreshSigFeed(); for (const c of state.mon.charts) c.setModels(m); }));
 state.autoCtl = createAutoControl(() => state.symbol); $("#chartAuto").append(state.autoCtl);
