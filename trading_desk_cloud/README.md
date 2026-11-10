@@ -183,6 +183,22 @@ Fills are simulated on your market data feed (Alpaca real-time, or delayed Yahoo
 * **Text size follows the device:** on iPhone and iPad, body text is 15 pt and follows your Text Size setting (Dynamic Type). **Preferences → Text size** makes it one step smaller (13 pt) or larger (17 pt).
 * **Sizes on a Mac:** body text is 13 pt and controls are at least 28 pt, both following Apple's guidelines.
 
+## Quant Terminal and the hard risk layer
+
+**Quant Terminal** (second in the sidebar) is a dense terminal-style view, always dark, where every panel is computed from the desk's own data: the paper account with its equity curve and a drawdown-risk gauge; live 5-minute candles of the selected symbol; a grid of the latest plans coloured by outcome; *excursion survival* (how many plans reached +xR, how many went against); *tape pressure* (a cumulative-volume-delta proxy from the bars); a *range field* of volatility ridges (the desk has no order-book feed, and the panel says so); *coherence* of the watchlist; a forward *Monte Carlo ruin cone* bootstrapped from the settled R results at the Kelly-sized risk; an *analog matcher* (k-nearest z-scored windows in the last 30 days and what they did next); and a *Bayesian update* of the win probability. A **KILL SWITCH** button sits in the header.
+
+The risk layer (`src/risk.ts`, enforced in `paper.ts`) follows one rule: the AI suggests, plain code decides, and anything unclear means no trade.
+
+* **Regime classifier:** CALM TREND, SIDEWAYS, JUMPY or CRASH from the index (SPY for stocks, BTC-USD for crypto): 20-day move in sigmas, 20-day against 120-day volatility, fall from the 5-day and 60-day highs. Size multiplier 1 / 0.5 / 0.5 / 0 (CRASH = no automatic entries). The terminal shows how often the label was wrong on past data. Paper settings › *Scale automatic sizes by the market regime*.
+* **Kill switch:** cancels working orders, flattens every paper position and stops automatic entries until re-armed.
+* **Max drawdown guard:** equity 15% (setting) below its peak trips the kill switch by itself.
+* **Stale data:** no automatic entry when the symbol's newest bar is over 20 minutes old while its market trades.
+* **Fractional Kelly:** quarter Kelly from the settled plans, capped at 2% of equity, as a sizing choice (*Quarter Kelly from my track record*) and as the Monte Carlo's risk per trade.
+* **Checked before every automatic order** (auto-trade and chart autopilot), with every block written to a risk log.
+* **Backtests** charge 4 basis points per round trip and report the rule against buy and hold over the same bars.
+* **Night review:** after the close the playbook is rebuilt and a strategy proposal from the failure report is filed for approval; nothing applies itself.
+* **Scans** must give each pick an *edge* sentence and a *bear case* sentence.
+
 ## Dashboard
 
 **Dashboard** (first in the sidebar) is the overview, laid out like a trading dashboard V2: KPI cards (paper equity, today, 90-day win rate and average R of the plans, the active strategy version, today's plans), a live 5-minute chart of the current symbol with signals and the plan monitor, *Strategy performance* (paper equity against SPY buy-and-hold since the first trade, plus the latest Kronos lines), *Strategy research* (a heat-map of the candle-signal rule over minimum strength and hold bars, average R per cell with trades and out-of-sample on hover: the parameter-sweep idea from vectorbt, done on the Worker), *Backtest results* cards (total R, win rate, max drawdown, trades, with the R curve: the event-driven replay idea from backtrader, done by the outcome engine and the signal backtester), and a *Paper trading* table of open positions and today's plans with their live status.

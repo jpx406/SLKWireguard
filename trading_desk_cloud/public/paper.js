@@ -379,6 +379,7 @@ function openPaperSettings() {
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "sizing", "risk_pct", "fixed_usd", "max_position_pct", "target", "commission"]) f[k].value = s[k];
   f.auto_trade.checked = s.auto_trade; f.auto_flat.value = s.auto_flat ? "eod" : "hold"; f.starting_cash.value = state.paper.account.starting_cash;
   for (const k of ["auto_side", "auto_min_rr", "auto_min_price", "auto_start", "auto_end", "auto_max_trades_day", "auto_max_daily_loss"]) f[k].value = s[k];
+  f.max_drawdown_pct.value = s.max_drawdown_pct ?? 15; f.regime_sizing.checked = s.regime_sizing !== false;
   f.auto_blocked.value = (s.auto_blocked || []).join(", ");
   // Which scans trigger auto-trades in this account (none ticked = every scan).
   const box = $("#psSlots"); box.innerHTML = "";
@@ -396,7 +397,8 @@ $("#paperSetForm").onsubmit = async (e) => {
   const f = e.target, s = {};
   for (const k of ["auto_min_score", "auto_max_positions", "auto_valid_min", "risk_pct", "fixed_usd", "max_position_pct", "commission"]) s[k] = Number(f[k].value);
   s.sizing = f.sizing.value; s.target = f.target.value; s.auto_trade = f.auto_trade.checked; s.auto_flat = f.auto_flat.value === "eod";
-  for (const k of ["auto_min_rr", "auto_min_price", "auto_max_trades_day", "auto_max_daily_loss"]) s[k] = Number(f[k].value);
+  for (const k of ["auto_min_rr", "auto_min_price", "auto_max_trades_day", "auto_max_daily_loss", "max_drawdown_pct"]) s[k] = Number(f[k].value);
+  s.regime_sizing = f.regime_sizing.checked;
   s.auto_side = f.auto_side.value; s.auto_start = f.auto_start.value; s.auto_end = f.auto_end.value;
   s.auto_blocked = f.auto_blocked.value.toUpperCase().split(/[\s,;]+/).filter(Boolean);
   const boxes = [...$$("#psSlots input")], ticked = boxes.filter((b) => b.checked).map((b) => b.value);

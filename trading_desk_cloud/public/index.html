@@ -46,6 +46,7 @@
   <nav class="panel sidebar" aria-label="Sections">
     <div class="nav-list">
       <button type="button" class="nav-item" data-section="dashboard"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span>Dashboard</span></button>
+      <button type="button" class="nav-item" data-section="quant"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M13 15h4"/></svg><span>Quant Terminal</span></button>
       <button type="button" class="nav-item" data-section="chart"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></svg><span>Chart</span></button>
       <button type="button" class="nav-item" data-section="board"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Market Board</span></button>
       <button type="button" class="nav-item" data-section="paper"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20M6 15h4"/></svg><span>Paper Trading</span></button>
@@ -77,6 +78,7 @@
       <div class="pane-toolbar"><h2 class="pane-title">Dashboard</h2><span class="spacer"></span><span class="dim small">overview of the desk · V2</span></div>
       <div id="dashboard" class="board-inner"><div class="dim">Loading…</div></div>
     </div>
+    <div class="pane board q-pane" data-section="quant" aria-label="Quant terminal"><div id="quant" class="q-host"><div class="dim">Loading…</div></div></div>
     <div class="pane chart-body" data-section="chart" aria-label="Chart">
       <div class="chart-toolbar">
         <form id="symForm" class="inline"><input id="symInput" class="sym-input mono" value="SPY" maxlength="15" title="Press / to focus" aria-label="Symbol"></form>
@@ -206,6 +208,7 @@
         <button type="button" class="more-item" data-section="copilot"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></svg><span>Copilot</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="risk"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span>Position Size</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="dashboard"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span>Dashboard</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="quant"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M13 15h4"/></svg><span>Quant Terminal</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="monitor"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M7 12l3-3 2 2 4-4"/></svg><span>Monitor</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="winners"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 21h8M12 17v4M5 4h14v4a7 7 0 0 1-14 0z"/><path d="M5 6H3a2 2 0 0 0 2 4M19 6h2a2 2 0 0 1-2 4"/></svg><span>Winners</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="deep"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8 11l2 2 4-4"/></svg><span>Deep Analysis</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -440,7 +443,7 @@
         <label>Min score (0-100)<input name="auto_min_score" type="number" min="0" max="100"></label>
         <label>Max open positions + orders<input name="auto_max_positions" type="number" min="1" max="20"></label>
         <label>Entry order valid for (minutes)<input name="auto_valid_min" type="number" min="5" max="390"></label>
-        <label>Position sizing<select name="sizing"><option value="risk">Risk % of equity (entry→stop)</option><option value="rec">Shares from the recommendation</option><option value="fixed">Fixed $ per trade</option></select></label>
+        <label>Position sizing<select name="sizing"><option value="risk">Risk % of equity (entry→stop)</option><option value="rec">Shares from the recommendation</option><option value="fixed">Fixed $ per trade</option><option value="kelly">Quarter Kelly from my track record (capped at 2%)</option></select></label>
         <label>Risk per trade (% of equity)<input name="risk_pct" type="number" step="0.05" min="0.05" max="10"></label>
         <label>Fixed $ per trade<input name="fixed_usd" type="number" step="100" min="10"></label>
         <label>Max position (% of equity)<input name="max_position_pct" type="number" step="1" min="1" max="100"></label>
@@ -457,6 +460,8 @@
         <label>Auto entries until (New York)<input name="auto_end" type="time"></label>
         <label>Max auto entries per day<input name="auto_max_trades_day" type="number" min="1" max="100"></label>
         <label>Stop auto-trading after a daily loss of ($, 0 = off)<input name="auto_max_daily_loss" type="number" step="10" min="0"></label>
+        <label>Max drawdown guard: equity this % below its peak trips the kill switch and flattens the account (0 = off)<input name="max_drawdown_pct" type="number" step="1" min="0" max="90"></label>
+        <label class="check"><input name="regime_sizing" type="checkbox"> Scale automatic sizes by the market regime (calm trend ×1, sideways ×0.5, jumpy ×0.5, crash = no entries)</label>
         <label class="wide">Never auto-trade these symbols<input name="auto_blocked" placeholder="e.g. TSLA, GME"></label>
       </div>
     </fieldset>
@@ -525,5 +530,6 @@
 <script src="/kronos.js"></script>
 <script src="/crypto.js"></script>
 <script src="/dashboard.js"></script>
+<script src="/quant.js"></script>
 </body>
 </html>

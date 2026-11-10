@@ -344,6 +344,7 @@ function setSymbol(sym) {
   if (state.mainPlan && state.mainPlan.symbol !== sym) { state.mainPlan = null; mainLayer.clear(); }
   state.symbol = sym; $("#symInput").value = sym; state.candles = []; sigEngine.reset(); mainMon.setSymbol(sym); $("#planBar").textContent = ""; state.sigStats = null; state.forecast = null; mainFc.clear(); loadMainForecast(sym);
   renderWatchlist(); renderActiveQuote(); loadChart(); refreshQuotes([sym]); state.autoCtl?.refresh();
+  if (typeof loadQuant === "function" && sectionVisible("quant")) loadQuant();
   if (typeof renderDashboard === "function" && state.dash?.data && sectionVisible("dashboard")) renderDashboard(); // the Dashboard follows the selected symbol at once
 }
 
@@ -386,7 +387,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["dashboard", "chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
+const MAIN_SECTIONS = ["dashboard", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");

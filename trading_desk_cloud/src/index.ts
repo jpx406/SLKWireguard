@@ -11,7 +11,8 @@ import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn
 import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
-import { summary as paperSummary } from "./paper";
+import { summary as paperSummary, setKillSwitch } from "./paper";
+import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy } from "./risk";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -174,6 +175,26 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const picksToday = (await env.DB.prepare(`SELECT symbol, side, setup, score, entry, stop, target, status, r_result, slot FROM pick_outcomes p WHERE day = ? AND symbol != '-'
       AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY score DESC LIMIT 12`).bind(nyNow().date).all()).results;
     return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
+  }
+  // Kill switch: on = cancel working orders, flatten every position, no automatic entries; off = re-arm.
+  if (path === "/paper/kill" && m === "POST") return json(await setKillSwitch(env.DB, who.user, (await body<{ on?: unknown }>(req)).on === true, "manual"));
+  // Quant terminal: everything the terminal-style dashboard draws, from real desk data.
+  if (path === "/quant" && m === "GET") {
+    const symbol = (url.searchParams.get("symbol") || "SPY").toUpperCase();
+    const crypto = isCrypto(symbol);
+    const ps = await paperSummary(env.DB, who.user), learn = await learnSummary(env.DB, 90);
+    const rs = (await env.DB.prepare("SELECT r_result, mfe_r, mae_r, status, exit_at FROM pick_outcomes WHERE symbol != '-' AND status IN ('win','loss','timed') AND r_result IS NOT NULL ORDER BY exit_at DESC LIMIT 400").all<{ r_result: number; mfe_r: number | null; mae_r: number | null; status: string; exit_at: number }>()).results.reverse();
+    const row = await env.DB.prepare("SELECT peak_equity FROM paper_accounts WHERE user = ?").bind(who.user).first<{ peak_equity: number | null }>();
+    const peak = Math.max(row?.peak_equity ?? ps.account.starting_cash, ps.account.equity), dd = peak > 0 ? ((peak - ps.account.equity) / peak) * 100 : 0;
+    const regime = await marketRegime(env.DB, crypto);
+    let acc: unknown = null; try { acc = regimeAccuracy((await candles(regime.index, "1d", 700)) as never, regime.index); } catch { acc = null; }
+    const plans = (await env.DB.prepare(`SELECT symbol, side, score, status, r_result, entry, slot FROM pick_outcomes p WHERE symbol != '-' AND created_at >= ?
+      AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY created_at DESC LIMIT 24`).bind(Math.floor(Date.now() / 1000) - 3 * 86400).all()).results;
+    return json({ symbol, account: ps.account, settings: { kill_switch: ps.settings.kill_switch, kill_reason: ps.settings.kill_reason, max_drawdown_pct: ps.settings.max_drawdown_pct, regime_sizing: ps.settings.regime_sizing, sizing: ps.settings.sizing, auto_trade: ps.settings.auto_trade, auto_max_daily_loss: ps.settings.auto_max_daily_loss },
+      curve: ps.curve, positions: ps.positions.length, drawdown_pct: Math.round(dd * 100) / 100, peak_equity: peak,
+      learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, sharpe: learn.sharpe_per_trade, picks: learn.picks, settled: learn.settled, curve: learn.curve.slice(-200) },
+      outcomes: rs.map((o) => ({ r: o.r_result, mfe: o.mfe_r, mae: o.mae_r })), plans, regime, regime_accuracy: acc, kelly: await kellyRead(env.DB), risk_log: await recentRiskLog(env.DB, who.user, 12),
+      active_rules: await activeRules(env.DB), forecast: (await latestForecasts(env.DB, [symbol]))[symbol] ?? null, watchlist: (await getSettings(env.DB)).watchlist });
   }
   if (path === "/learn/sweep" && m === "POST") {
     const b = await body<{ symbol?: unknown; interval?: unknown; days?: unknown }>(req);

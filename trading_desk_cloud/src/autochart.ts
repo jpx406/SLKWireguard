@@ -7,7 +7,7 @@ import { candles, isCrypto, latestPrice } from "./market";
 import { kronosAgrees } from "./kronos";
 import { getSettings } from "./db";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
-import { closePosition, ensurePaper, getAccount, placeOrder, type Side } from "./paper";
+import { closePosition, ensurePaper, getAccount, placeOrder, riskGate, type Side } from "./paper";
 import { patternAllowed } from "./learn";
 import { activeRules, ruleBlocks } from "./strategy";
 
@@ -168,7 +168,10 @@ export async function runChartAuto(db: D1Database) {
       if (todayN >= MAX_ENTRIES_PER_DAY) continue;
       const lastClose = await db.prepare("SELECT closed_at FROM paper_positions WHERE user = ? AND symbol = ? AND status = 'closed' ORDER BY closed_at DESC LIMIT 1").bind(r.user, r.symbol).first<{ closed_at: number }>();
       if (lastClose && nowS() - lastClose.closed_at < REENTRY_COOLDOWN_SEC) continue;
-      const budget = Math.min(r.amount_usd, acct.cash);
+      // Hard gate before every entry: kill switch, drawdown guard, stale data, regime (size multiplier).
+      const gate = await riskGate(db, r.user, r.symbol);
+      if (!gate.ok) { await note(db, r, `Blocked by the risk gate: ${gate.reason}`); continue; }
+      const budget = Math.min(r.amount_usd, acct.cash) * gate.size_mult;
       if (budget < 50) { await note(db, r, "Paused: not enough paper cash."); continue; }
 
       let placed: { symbol: string; side: Side; type: "limit"; price: number; qty: number; stop: number | null; target: number | null; note: string; exit_mode: "hold" | null } | null = null;

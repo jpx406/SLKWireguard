@@ -2,6 +2,7 @@
 // and an engine that fills them against 1-minute bars. No real broker is involved anywhere.
 import { candles, isCrypto, latestPrice } from "./market";
 import { activeRules, ruleBlocks } from "./strategy";
+import { kellyRead, marketRegime, riskLog, type RegimeRead } from "./risk";
 import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
 
 export type Side = "long" | "short";
@@ -15,7 +16,7 @@ export type PaperSettings = {
   auto_min_score: number;       // only picks with score >= this
   auto_max_positions: number;   // open positions + working orders cap
   auto_valid_min: number;       // auto entry orders expire after N minutes
-  sizing: "risk" | "rec" | "fixed";
+  sizing: "risk" | "rec" | "fixed" | "kelly"; // kelly = quarter Kelly from the desk's own settled plans (capped at 2%), else risk_pct
   risk_pct: number;             // sizing=risk: % of equity risked per trade (entry→stop)
   fixed_usd: number;            // sizing=fixed: dollars per trade
   max_position_pct: number;     // cap any position at this % of equity
@@ -32,12 +33,18 @@ export type PaperSettings = {
   auto_end: string;
   auto_max_trades_day: number;  // auto entries per day
   auto_max_daily_loss: number;  // stop auto entries once today's P&L is down this many $ (0 = off)
+  // Hard risk layer (risk.ts): code decides, the AI only suggests.
+  kill_switch: boolean;         // true = no automatic entries; turning it on flattens the account
+  kill_reason: string;          // why it tripped (manual, or the drawdown guard)
+  max_drawdown_pct: number;     // equity this far below its peak trips the kill switch (0 = off)
+  regime_sizing: boolean;       // scale automatic sizes by the market regime (CRASH = no entries)
 };
 export const DEFAULT_PAPER: PaperSettings = {
   auto_trade: false, auto_min_score: 70, auto_max_positions: 5, auto_valid_min: 120,
   sizing: "risk", risk_pct: 1, fixed_usd: 2000, max_position_pct: 25, target: "t1", commission: 0, auto_flat: true,
   auto_slots: [], auto_side: "both", auto_min_rr: 0, auto_min_price: 0, auto_blocked: [],
   auto_start: "07:00", auto_end: "15:30", auto_max_trades_day: 10, auto_max_daily_loss: 0,
+  kill_switch: false, kill_reason: "", max_drawdown_pct: 15, regime_sizing: true,
 };
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const toMin = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
@@ -85,6 +92,7 @@ export async function ensurePaper(db: D1Database) {
   for (const t of ["paper_orders", "paper_positions"]) { try { await db.prepare(`ALTER TABLE ${t} ADD COLUMN exit_mode TEXT`).run(); } catch { /* exists */ } }
   // Added later: a sell requested while the market is closed executes at the next session's first trade.
   try { await db.prepare("ALTER TABLE paper_positions ADD COLUMN close_req INTEGER").run(); } catch { /* exists */ }
+  try { await db.prepare("ALTER TABLE paper_accounts ADD COLUMN peak_equity REAL").run(); } catch { /* exists */ }
   ready = true;
 }
 
@@ -97,7 +105,11 @@ export function sanitizePaperSettings(x: unknown, base: PaperSettings = DEFAULT_
   if ("auto_min_score" in o) s.auto_min_score = clamp(o.auto_min_score, 0, 100, s.auto_min_score);
   if ("auto_max_positions" in o) s.auto_max_positions = Math.round(clamp(o.auto_max_positions, 1, 20, s.auto_max_positions));
   if ("auto_valid_min" in o) s.auto_valid_min = Math.round(clamp(o.auto_valid_min, 5, 390, s.auto_valid_min));
-  if (o.sizing === "risk" || o.sizing === "rec" || o.sizing === "fixed") s.sizing = o.sizing;
+  if (o.sizing === "risk" || o.sizing === "rec" || o.sizing === "fixed" || o.sizing === "kelly") s.sizing = o.sizing;
+  if ("kill_switch" in o) s.kill_switch = o.kill_switch === true;
+  if (typeof o.kill_reason === "string") s.kill_reason = o.kill_reason.slice(0, 200);
+  if ("max_drawdown_pct" in o) s.max_drawdown_pct = clamp(o.max_drawdown_pct, 0, 90, s.max_drawdown_pct);
+  if ("regime_sizing" in o) s.regime_sizing = o.regime_sizing !== false;
   if ("risk_pct" in o) s.risk_pct = clamp(o.risk_pct, 0.05, 10, s.risk_pct);
   if ("fixed_usd" in o) s.fixed_usd = clamp(o.fixed_usd, 10, 10_000_000, s.fixed_usd);
   if ("max_position_pct" in o) s.max_position_pct = clamp(o.max_position_pct, 1, 100, s.max_position_pct);
@@ -345,6 +357,55 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
   }
 }
 
+// --------------------------------------------------------------------------------------- hard risk gate
+/** Trip (or re-arm) the kill switch. Tripping cancels working orders and flattens every open position. */
+export async function setKillSwitch(db: D1Database, user: string, on: boolean, reason = "manual") {
+  const a = await getAccount(db, user);
+  const next = { ...a.s, kill_switch: on, kill_reason: on ? reason : "" };
+  await db.prepare("UPDATE paper_accounts SET settings = ? WHERE user = ?").bind(JSON.stringify(next), user).run();
+  let closed = 0, cancelled = 0;
+  if (on) {
+    cancelled = (await db.prepare("UPDATE paper_orders SET status = 'cancelled', reason = 'kill switch' WHERE user = ? AND status = 'open'").bind(user).run()).meta.changes ?? 0;
+    const pos = (await db.prepare("SELECT id FROM paper_positions WHERE user = ? AND status = 'open'").bind(user).all<{ id: string }>()).results;
+    for (const p of pos) { const r = await closePosition(db, user, p.id); if (!r.error) closed++; }
+    await riskLog(db, user, "*", "kill", `Kill switch ON (${reason}): ${closed} positions closed, ${cancelled} orders cancelled`);
+  } else {
+    // Re-arm from here: the drawdown guard measures from the current equity, not the old peak.
+    await db.prepare("UPDATE paper_accounts SET peak_equity = ? WHERE user = ?").bind(await equityOf(db, user), user).run();
+    await riskLog(db, user, "*", "rearm", "Kill switch OFF: automatic entries allowed again");
+  }
+  return { ok: true, kill_switch: on, closed, cancelled };
+}
+
+/** Checked before EVERY automatic entry. Fails closed: anything unclear means no trade, with a logged reason. */
+export async function riskGate(db: D1Database, user: string, symbol: string): Promise<{ ok: boolean; reason?: string; size_mult: number; regime?: RegimeRead }> {
+  const block = async (reason: string, regime?: RegimeRead) => { await riskLog(db, user, symbol, "block", reason); return { ok: false, reason, size_mult: 0, regime }; };
+  try {
+    const a = await getAccount(db, user);
+    if (a.s.kill_switch) return block(`kill switch on (${a.s.kill_reason || "manual"})`);
+    const eq = await equityOf(db, user);
+    const row = await db.prepare("SELECT peak_equity FROM paper_accounts WHERE user = ?").bind(user).first<{ peak_equity: number | null }>();
+    const peak = Math.max(row?.peak_equity ?? a.starting_cash, eq);
+    if (peak !== row?.peak_equity) await db.prepare("UPDATE paper_accounts SET peak_equity = ? WHERE user = ?").bind(peak, user).run();
+    const dd = peak > 0 ? ((peak - eq) / peak) * 100 : 0;
+    if (a.s.max_drawdown_pct > 0 && dd >= a.s.max_drawdown_pct) {
+      await setKillSwitch(db, user, true, `max drawdown: equity ${r2(dd)}% below its peak (limit ${a.s.max_drawdown_pct}%)`);
+      return block(`max drawdown ${r2(dd)}% reached: kill switch tripped, account flattened`);
+    }
+    // Stale data: the newest 1-minute bar must be recent while this market trades.
+    const crypto = isCrypto(symbol);
+    if (crypto || marketPhase() !== "closed") {
+      const bars = await candles(symbol, "1m");
+      const lastT = bars.length ? bars[bars.length - 1].time : 0;
+      if (!lastT || nowS() - lastT > 20 * 60) return block(`stale data: last ${symbol} bar is ${lastT ? Math.round((nowS() - lastT) / 60) : "?"} minutes old`);
+    }
+    if (!a.s.regime_sizing) return { ok: true, size_mult: 1 };
+    const regime = await marketRegime(db, crypto);
+    if (regime.size_mult <= 0) return block(`regime ${regime.regime} (${regime.why}): staying flat`, regime);
+    return { ok: true, size_mult: regime.size_mult, regime };
+  } catch (e) { return block(`risk check failed (${String((e as Error).message || e).slice(0, 80)}): no trade`); }
+}
+
 // --------------------------------------------------------------------------------------- auto-trading
 type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; stop?: number; targets?: number[]; size_shares?: number; setup?: string; horizon?: string };
 
@@ -393,6 +454,7 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
   const openOrd = (await db.prepare("SELECT symbol FROM paper_orders WHERE user = ? AND status = 'open'").bind(a.user).all<{ symbol: string }>()).results;
   const busy = new Set([...openPos, ...openOrd].map((x) => x.symbol));
   let slots = s.auto_max_positions - busy.size;
+  let kelly: number | undefined;
   const eq = await equityOf(db, a.user);
   for (const p of [...picks].sort((x, y) => (num(y.score) ?? 0) - (num(x.score) ?? 0))) {
     if (slots <= 0 || tradesLeft <= 0) break;
@@ -405,8 +467,12 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     const target = (s.target === "t2" ? targets[1] : undefined) ?? targets[0] ?? null;
     if (s.auto_min_rr > 0 && (target === null || Math.abs(target - entry) / Math.max(Math.abs(entry - stop), 1e-9) < s.auto_min_rr)) continue;
     const perShareRisk = Math.abs(entry - stop);
-    let qty = s.sizing === "rec" ? num(p.size_shares) ?? 0 : s.sizing === "fixed" ? s.fixed_usd / entry : perShareRisk > 0 ? (eq * s.risk_pct / 100) / perShareRisk : 0;
-    qty = Math.floor(Math.min(qty, (eq * s.max_position_pct / 100) / entry));
+    // Hard gate before every order: kill switch, drawdown guard, stale data, regime (size multiplier).
+    const gate = await riskGate(db, a.user, symbol);
+    if (!gate.ok) continue;
+    const riskPct = s.sizing === "kelly" ? (kelly ??= (await kellyRead(db)).risk_pct ?? s.risk_pct) : s.risk_pct;
+    let qty = s.sizing === "rec" ? num(p.size_shares) ?? 0 : s.sizing === "fixed" ? s.fixed_usd / entry : perShareRisk > 0 ? (eq * riskPct / 100) / perShareRisk : 0;
+    qty = Math.floor(Math.min(qty, (eq * s.max_position_pct / 100) / entry) * gate.size_mult);
     if (qty < 1) continue;
     let last: number;
     try { last = await lastPrice(symbol); } catch { continue; }

@@ -265,8 +265,9 @@ export type SignalTrade = { time: number; pattern: string; label: string; dir: s
 
 /** Backtest the chart-autopilot signal rule on completed bars: enter at the pattern bar's close, stop just beyond the
  *  pattern's extreme, target 2R, out after `holdBars`. The last 30% of the bars are the out-of-sample part. */
-export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdBars?: number; only?: string[]; trendGate?: boolean } = {}) {
+export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdBars?: number; only?: string[]; trendGate?: boolean; costBps?: number } = {}) {
   const C = Candles(); const minS = opts.minStrength ?? 2, hold = opts.holdBars ?? 24;
+  const costBps = opts.costBps ?? 4; // round-trip slippage + spread + fees, in basis points of the price, charged on every trade
   const hits = C.detect(bars, { only: opts.only, trendGate: opts.trendGate !== false }).filter((h) => h.strength >= minS);
   const oosFrom = Math.floor(bars.length * 0.7);
   const trades: SignalTrade[] = []; let busyUntil = -1;
@@ -285,7 +286,7 @@ export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdB
       exit = b.close; exitT = b.time;
     }
     busyUntil = Math.min(j, bars.length - 1);
-    trades.push({ time: h.time, pattern: h.pattern, label: h.label, dir: h.dir, strength: h.strength, entry: r2(entry), stop: r2(stop), target: r2(target), exit: r2(exit), exit_time: exitT, r: r2(((exit - entry) * (long ? 1 : -1)) / risk), reason, oos: h.index >= oosFrom });
+    trades.push({ time: h.time, pattern: h.pattern, label: h.label, dir: h.dir, strength: h.strength, entry: r2(entry), stop: r2(stop), target: r2(target), exit: r2(exit), exit_time: exitT, r: r2(((exit - entry) * (long ? 1 : -1) - entry * costBps / 10000) / risk), reason, oos: h.index >= oosFrom });
   }
   const stats = (ts: SignalTrade[]) => {
     const n = ts.length, wins = ts.filter((t) => t.r > 0).length, sum = ts.reduce((a, t) => a + t.r, 0), gp = ts.filter((t) => t.r > 0).reduce((a, t) => a + t.r, 0), gl = -ts.filter((t) => t.r <= 0).reduce((a, t) => a + t.r, 0);
@@ -296,7 +297,10 @@ export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdB
   for (const t of trades) byPattern.set(t.pattern, [...(byPattern.get(t.pattern) || []), t]);
   return { trades, all: stats(trades), in_sample: stats(trades.filter((t) => !t.oos)), out_of_sample: stats(trades.filter((t) => t.oos)),
     by_pattern: [...byPattern.entries()].map(([p, ts]) => ({ pattern: p, label: ts[0].label, dir: ts[0].dir, ...stats(ts), oos: stats(ts.filter((t) => t.oos)) })).sort((a, b) => (b.avg_r ?? -9) - (a.avg_r ?? -9)),
-    bars: bars.length, oos_from: bars[oosFrom]?.time ?? null };
+    bars: bars.length, oos_from: bars[oosFrom]?.time ?? null, cost_bps: costBps,
+    // Buy and hold over the same bars, for the benchmark test: a rule that cannot beat it after costs should not be traded.
+    buy_hold_pct: bars.length > 1 ? r2(((bars[bars.length - 1].close - bars[0].close) / bars[0].close) * 100) : null,
+    strategy_pct: r2(trades.reduce((a, t) => a + t.r * (Math.abs(t.entry - t.stop) / t.entry) * 100, 0)) };
 }
 
 /** Pattern reliability for a symbol and bar size, cached six hours. */
@@ -337,6 +341,10 @@ export async function learnTick(db: D1Database) {
   const st = sessionTimes(ny.date);
   if (ny.minutes >= st.close + 30 && ny.minutes < st.close + 60) {
     const pb = await getSetting<Playbook | null>(db, "learn_playbook", null);
-    if (!pb || nowS() - pb.at > 12 * 3600) await buildPlaybook(db);
+    if (!pb || nowS() - pb.at > 12 * 3600) {
+      await buildPlaybook(db);
+      // Night review: a proposal from today's failure report waits for approval; nothing is applied by itself.
+      try { const { proposeFromStats } = await import("./strategy"); const open = await db.prepare("SELECT 1 FROM strategy_versions WHERE status IN ('proposed','thinking') LIMIT 1").first(); if (!open) await proposeFromStats(db); } catch { /* not enough data yet */ }
+    }
   }
 }

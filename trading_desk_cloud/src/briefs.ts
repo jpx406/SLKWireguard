@@ -45,6 +45,7 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
  "skills_run": [{"skill":"trader-scan","status":"ok|failed|skipped","note":""}]
 }
 Picks may carry "horizon": "day" (default, flat by the close) or "swing" (held 2-10 sessions; the paper desk then holds it until the stop or target).
+Every pick must also carry "edge" (one sentence: why this should work and who is on the other side) and "bear_case" (one sentence: the strongest reason it fails); a pick you cannot write both for does not belong on the list.
 A pick may carry "sources": [{"type":"insider|congress|fund|social|copytrader","who":"name","action":"buy|sell","date":"YYYY-MM-DD","size":"$1.2M","note":"3 insiders in 10 days"}] when it comes from following other traders.
 Rank picks best first (max 10), one entry per symbol, sizes within /workspace/trader/config.json.`;
 
