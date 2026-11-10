@@ -16,7 +16,8 @@ type Hit = { index: number; time: number; pattern: string; label: string; dir: "
 const Candles = () => (globalThis as unknown as { TDCandles: { detect(bars: Bar[], opts?: Record<string, unknown>): Hit[] } }).TDCandles;
 
 export type AutoRule = "plan" | "signal" | "both";
-export type AutoRow = { user: string; symbol: string; amount_usd: number; rule: AutoRule; enabled: number; created_at: number; last_note: string | null; last_at: number | null };
+export type AutoRow = { user: string; symbol: string; amount_usd: number; rule: AutoRule; enabled: number; created_at: number; last_note: string | null; last_at: number | null;
+  stop_override?: number | null; target_override?: number | null }; // your own stop / target for the next automatic entry (null = the plan's)
 export type Plan = {
   source: "position" | "order" | "brief" | "deep"; side: Side; entry: number; stop: number | null; targets: number[];
   time: number | null; setup: string; score?: number | null; rating?: string | null; label?: string; id?: string | null;
@@ -36,6 +37,7 @@ export async function ensureAutoChart(db: D1Database) {
   await ensurePaper(db);
   await db.prepare(`CREATE TABLE IF NOT EXISTS paper_auto (user TEXT NOT NULL, symbol TEXT NOT NULL, amount_usd REAL NOT NULL, rule TEXT NOT NULL DEFAULT 'both',
     enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, last_note TEXT, last_at INTEGER, PRIMARY KEY (user, symbol))`).run();
+  for (const c of ["stop_override REAL", "target_override REAL"]) { try { await db.prepare(`ALTER TABLE paper_auto ADD COLUMN ${c}`).run(); } catch { /* exists */ } }
   ready = true;
 }
 
@@ -92,7 +94,7 @@ export async function listAuto(db: D1Database, user: string) {
   }));
 }
 
-export async function setAuto(db: D1Database, user: string, inp: { symbol: unknown; amount_usd?: unknown; rule?: unknown; enabled?: unknown }) {
+export async function setAuto(db: D1Database, user: string, inp: { symbol: unknown; amount_usd?: unknown; rule?: unknown; enabled?: unknown; stop?: unknown; target?: unknown }) {
   await ensureAutoChart(db);
   const symbol = String(inp.symbol || "").toUpperCase();
   if (!SYMBOL.test(symbol)) return { error: "Bad symbol" };
@@ -105,6 +107,15 @@ export async function setAuto(db: D1Database, user: string, inp: { symbol: unkno
   if (enabled && amount > acct.cash + 1e-9 && !cur) return { error: `Not enough paper cash: ${r2(acct.cash)} available.` };
   await db.prepare(`INSERT INTO paper_auto (user, symbol, amount_usd, rule, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(user, symbol) DO UPDATE SET amount_usd = excluded.amount_usd, rule = excluded.rule, enabled = excluded.enabled`).bind(user, symbol, r2(amount), rule, enabled ? 1 : 0, nowS()).run();
+  // Your own stop / target for the next automatic entry: a number sets it, null or "" clears it, undefined keeps it.
+  for (const [k, col] of [["stop", "stop_override"], ["target", "target_override"]] as const) {
+    const v = inp[k]; if (v === undefined) continue;
+    const n = v === null || v === "" ? null : Number(v);
+    if (n !== null && !(n > 0)) return { error: `The ${k} must be a positive price.` };
+    await db.prepare(`UPDATE paper_auto SET ${col} = ? WHERE user = ? AND symbol = ?`).bind(n, user, symbol).run();
+    // A working entry order for this symbol follows the new level at once.
+    await db.prepare(`UPDATE paper_orders SET ${k} = ? WHERE user = ? AND symbol = ? AND status = 'open' AND source = 'chart'`).bind(n, user, symbol).run();
+  }
   return { ok: true, symbol, amount_usd: r2(amount), rule, enabled };
 }
 
@@ -212,6 +223,10 @@ export async function runChartAuto(db: D1Database) {
         }
       }
       if (!placed) continue;
+      // Your own levels (Auto Trader) replace the plan's when they sit on the right side of the entry.
+      const so = r.stop_override ?? null, to = r.target_override ?? null, lng = placed.side === "long";
+      if (so !== null && (lng ? so < placed.price : so > placed.price)) placed.stop = so;
+      if (to !== null && (lng ? to > placed.price : to < placed.price)) placed.target = to;
       const res = await placeOrder(db, r.user, { ...placed, source: "chart" });
       await note(db, r, res.error ? `Could not enter: ${res.error}` : `${res.position ? "Entered" : "Entry order placed"}: ${placed.side} ${placed.qty} @ ${placed.price} (${placed.note.slice(0, 80)})`);
     } catch (e) { console.error("chart auto", r.symbol, e); }

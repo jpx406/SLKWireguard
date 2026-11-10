@@ -192,6 +192,15 @@ The layout sizes itself to the room each panel has, not only to the window, so i
 * **Text size follows the device:** on iPhone and iPad, body text is 15 pt and follows your Text Size setting (Dynamic Type). **Preferences → Text size** makes it one step smaller (13 pt) or larger (17 pt).
 * **Sizes on a Mac:** body text is 13 pt and controls are at least 28 pt, both following Apple's guidelines.
 
+## Auto Trader (the simple master control)
+
+**Auto Trader** (second in the sidebar) is the one screen a beginner needs to run automatic paper trading, with a **Stocks** and a **Crypto** tab:
+
+* **The list** shows every watchlist symbol and every recent recommendation with one verdict (*Buy setup*, *Worth a look*, *Wait*, *Avoid*, *Missed*, *In trade*), a 0-100 bar and a switch. The verdict combines the scan's plan and score, the Deep Analysis rating, the Kronos forecast, the market regime, your approved strategy rules and where the price is against the entry, stop and target.
+* **The master switch** turns Auto on for everything the chosen style accepts, best first: *Conservative* (verdict 70+, plan entries only, 3 at most), *Balanced* (60+, plan or strong candle signal, 5) or *Active* (50+, 8), with the *money per trade* you set. Off turns them all off. Each row also has its own switch.
+* **The selected symbol** shows a clean candle chart with the entry, stop and target lines (candle signals optional), *What the desk recommends* in plain language with the reasons, and the levels: entry, **stop-loss**, **target** and money for this one, with what you lose at the stop and gain at the target. *Save levels* stores your own stop and target for the automatic trade (a working order follows at once); in a trade it moves the position's stop and target; *Sell now* closes it. Buttons run a scan, a Deep Analysis or a Kronos forecast for more evidence.
+* With Auto on, the desk buys at the entry (or on a strong candle signal when the style allows) and sells at the stop, the target or a reversal signal, every minute, with the browser closed. The hard risk layer still decides: kill switch, drawdown guard, stale data and the market regime come first.
+
 ## Quant Terminal and the hard risk layer
 
 **Quant Terminal** (second in the sidebar) is a dense terminal-style view, always dark, where every panel is computed from the desk's own data: the paper account with its equity curve and a drawdown-risk gauge; live 5-minute candles of the selected symbol; a grid of the latest plans coloured by outcome; *excursion survival* (how many plans reached +xR, how many went against); *tape pressure* (a cumulative-volume-delta proxy from the bars); a *range field* of volatility ridges (the desk has no order-book feed, and the panel says so); *coherence* of the watchlist; a forward *Monte Carlo ruin cone* bootstrapped from the settled R results at the Kelly-sized risk; an *analog matcher* (k-nearest z-scored windows in the last 30 days and what they did next); and a *Bayesian update* of the win probability. A **KILL SWITCH** button sits in the header.

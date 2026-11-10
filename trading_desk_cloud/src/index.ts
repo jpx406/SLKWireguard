@@ -13,6 +13,7 @@ import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
 import { summary as paperSummary, setKillSwitch } from "./paper";
 import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy } from "./risk";
+import { masterApply, masterView } from "./master";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -139,7 +140,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   // strong candle signal, exits at the stop / target or on a reversal signal).
   if (path === "/paper/auto" && m === "GET") return json(await listAuto(env.DB, who.user));
   if (path === "/paper/auto" && m === "PUT") {
-    const r = await setAuto(env.DB, who.user, await body<{ symbol: unknown; amount_usd?: unknown; rule?: unknown; enabled?: unknown }>(req));
+    const r = await setAuto(env.DB, who.user, await body<{ symbol: unknown; amount_usd?: unknown; rule?: unknown; enabled?: unknown; stop?: unknown; target?: unknown }>(req));
     return r.error ? bad(r.error) : json({ ...r, rows: await listAuto(env.DB, who.user) });
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
@@ -175,6 +176,14 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const picksToday = (await env.DB.prepare(`SELECT symbol, side, setup, score, entry, stop, target, status, r_result, slot FROM pick_outcomes p WHERE day = ? AND symbol != '-'
       AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY score DESC LIMIT 12`).bind(nyNow().date).all()).results;
     return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
+  }
+  // Auto Trader: the master control panel (stocks or crypto): rows with verdicts, the master switch and presets.
+  if (path === "/master" && m === "GET") return json(await masterView(env.DB, who.user, url.searchParams.get("kind") === "crypto" ? "crypto" : "stocks"));
+  if (path === "/master" && m === "PUT") {
+    const b = await body<{ kind?: unknown; on?: unknown; preset?: unknown; amount_usd?: unknown }>(req);
+    const kind = b.kind === "crypto" ? "crypto" : "stocks";
+    const r = await masterApply(env.DB, who.user, kind, b);
+    return json({ ...r, view: await masterView(env.DB, who.user, kind) });
   }
   // Kill switch: on = cancel working orders, flatten every position, no automatic entries; off = re-arm.
   if (path === "/paper/kill" && m === "POST") return json(await setKillSwitch(env.DB, who.user, (await body<{ on?: unknown }>(req)).on === true, "manual"));
