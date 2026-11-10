@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trading Desk Manual</title>
+<script>try { var a = localStorage.getItem("td.appearance"); if (a === "light" || a === "dark") document.documentElement.dataset.theme = a;
+  var t = localStorage.getItem("td.textsize"); if (t === "small" || t === "large") document.documentElement.dataset.text = t; } catch (e) {}</script>
+<meta name="color-scheme" content="dark light">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/purify.min.js"></script>
+<style>
+  html, body { height: auto; } body { display: block; overflow: auto; }
+  .man-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 10px; align-items: center; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .man-wrap { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; max-width: 1180px; margin: 0 auto; padding: 14px; }
+  .man-toc { position: sticky; top: 56px; align-self: start; max-height: calc(100vh - 70px); overflow: auto; font-size: 0.923rem; border-right: 1px solid var(--line); padding-right: 10px; }
+  .man-toc a { display: block; padding: 4px 6px; color: var(--text); text-decoration: none; border-radius: 6px; }
+  .man-toc a:hover { background: var(--hover); } .man-toc a.h3 { padding-left: 18px; color: var(--dim); font-size: 0.846rem; }
+  .man-doc { line-height: 1.6; font-size: 1.077rem; min-width: 0; }
+  .man-doc h1 { font-size: 1.9rem; margin: 0 0 10px; } .man-doc h2 { margin-top: 34px; padding-top: 10px; border-top: 1px solid var(--line); scroll-margin-top: 60px; }
+  .man-doc h3 { margin-top: 22px; scroll-margin-top: 60px; }
+  .man-doc table { border-collapse: collapse; width: 100%; margin: 10px 0; display: block; overflow-x: auto; }
+  .man-doc th, .man-doc td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; } .man-doc th { background: var(--panel-2); }
+  .man-doc hr { border: none; border-top: 1px solid var(--line); margin: 24px 0; } .man-doc li { margin: 3px 0; }
+  .man-doc mark { background: #f5b82e55; color: inherit; }
+  @media (max-width: 860px) { .man-wrap { grid-template-columns: 1fr; } .man-toc { position: static; max-height: 240px; border-right: none; border-bottom: 1px solid var(--line); padding-bottom: 8px; } }
+  @media print { .man-bar, .man-toc { display: none; } .man-wrap { display: block; } }
+</style>
+</head>
+<body>
+<header class="man-bar">
+  <b>▲ Trading Desk Manual</b>
+  <input id="manSearch" class="sym-input" placeholder="Search the manual" aria-label="Search the manual" style="width:min(260px,50vw)">
+  <span id="manCount" class="dim small"></span><span class="spacer"></span>
+  <button type="button" class="ghost small" onclick="print()">Print / PDF</button>
+  <a class="ghost small btn-link" href="/">Back to the desk</a>
+</header>
+<div class="man-wrap">
+  <nav id="manToc" class="man-toc" aria-label="Contents"></nav>
+  <main id="manDoc" class="man-doc">Loading…</main>
+</div>
+<script>
+(async () => {
+  const doc = document.getElementById("manDoc"), toc = document.getElementById("manToc");
+  let md = "";
+  try { const r = await fetch("/manual.md"); if (!r.ok) throw new Error(r.status); md = await r.text(); } catch (e) { doc.textContent = "The manual could not be loaded (" + e.message + "). Log in to the desk first."; return; }
+  doc.innerHTML = DOMPurify.sanitize(marked.parse(md));
+  let n = 0;
+  for (const h of doc.querySelectorAll("h2, h3")) {
+    h.id = "s" + (++n);
+    if (/^Contents$/.test(h.textContent)) continue;
+    const a = document.createElement("a"); a.href = "#" + h.id; a.textContent = h.textContent; if (h.tagName === "H3") a.className = "h3"; toc.append(a);
+  }
+  if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+  // Simple search: highlight matches and jump to the first.
+  const original = doc.innerHTML, input = document.getElementById("manSearch"), count = document.getElementById("manCount");
+  let timer; input.oninput = () => { clearTimeout(timer); timer = setTimeout(() => {
+    doc.innerHTML = original; const q = input.value.trim(); count.textContent = ""; if (q.length < 3) return;
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"); let hits = 0;
+    const walk = document.createTreeWalker(doc, NodeFilter.SHOW_TEXT); const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
+    for (const t of nodes) { if (!re.test(t.nodeValue)) continue; re.lastIndex = 0; const span = document.createElement("span"); span.innerHTML = DOMPurify.sanitize(t.nodeValue.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]).replace(re, (m) => { hits++; return "<mark>" + m + "</mark>"; })); t.replaceWith(span); }
+    count.textContent = hits ? hits + " matches" : "no matches"; doc.querySelector("mark")?.scrollIntoView({ block: "center" });
+  }, 250); };
+})();
+</script>
+</body>
+</html>

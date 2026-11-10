@@ -13,6 +13,8 @@ This is the same day-trading app as `../trading_desk`, but it runs entirely on C
 
 **It cannot place orders.** No broker is connected anywhere in this stack. The agent's instructions forbid placing orders, and any tool call that would need approval is automatically denied. Place tickets yourself in your broker or in Claude Code.
 
+**User manual:** `public/manual.md`, shown in the app at `/manual.html` (Help & Skills › *Open the User Manual*): every section, the strategy behind it, recommendations, and a full guideline for using the tools together.
+
 ## What you need
 
 * A Cloudflare account that has `nesrapp.com` added as a zone (it already uses Cloudflare DNS).
