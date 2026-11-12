@@ -12,6 +12,7 @@ import { listAuto, planFor, setAuto, type Plan } from "./autochart";
 import { activeRules, ruleBlocks } from "./strategy";
 import { marketRegime, kellyRead } from "./risk";
 import { getAccount } from "./paper";
+import { radar, type Council } from "./agents";
 
 export type Preset = "conservative" | "balanced" | "active";
 export const PRESETS: Record<Preset, { label: string; text: string; min: number; rule: "plan" | "both"; max: number }> = {
@@ -24,7 +25,7 @@ export type Verdict = { score: number; action: "buy" | "consider" | "wait" | "av
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** One verdict from everything known about a symbol. Reasons are written for a beginner. */
-export function verdictFor(x: { symbol: string; last: number | null; plan: Plan | null; rating: string | null; forecast: { prob_up: number; exp_move_pct: number } | null; regime: { regime: string; size_mult: number }; blocked: string | null }): Verdict {
+export function verdictFor(x: { symbol: string; last: number | null; plan: Plan | null; rating: string | null; forecast: { prob_up: number; exp_move_pct: number } | null; regime: { regime: string; size_mult: number }; blocked: string | null; council?: Council | null }): Verdict {
   const reasons: string[] = []; let score = 50; const p = x.plan, side = p ? p.side : null, long = side !== "short";
   if (x.regime.size_mult <= 0) return { score: 0, action: "avoid", label: "Avoid", side, reasons: [`The market is in a ${x.regime.regime.replace("_", " ").toLowerCase()} state: the desk stays out.`], strategist: "Wait for the market to calm down before starting new trades." };
   if (x.blocked) return { score: 20, action: "avoid", label: "Avoid", side, reasons: [`Your approved strategy rules exclude this one (${x.blocked}).`], strategist: "Skip it: this kind of trade has lost money in your own track record." };
@@ -43,6 +44,7 @@ export function verdictFor(x: { symbol: string; last: number | null; plan: Plan 
     reasons.push(`Deep Analysis rates it ${x.rating}${(long ? s : -s) < 0 ? ", against this trade" : (long ? s : -s) > 0 ? ", which supports it" : ""}.`);
   }
   if (x.forecast) { const pr = long ? x.forecast.prob_up : 1 - x.forecast.prob_up; score += (pr - 0.5) * 30; reasons.push(`Kronos forecast: ${Math.round(x.forecast.prob_up * 100)}% chance of closing higher${pr < 0.45 ? ", against this trade" : ""}.`); }
+  if (x.council) { const c = long ? x.council.consensus : -x.council.consensus; score += Math.max(-8, Math.min(8, c / 6)); reasons.push(`The Six: ${x.council.label.toLowerCase()} (${x.council.consensus >= 0 ? "+" : ""}${x.council.consensus}), ${x.council.agree} of 6 agree${c < -12 ? ", against this trade" : ""}.`); }
   if (x.regime.size_mult < 1) { score -= 5; reasons.push(`Market is ${x.regime.regime.replace("_", " ").toLowerCase()}: sizes are cut to ${x.regime.size_mult * 100}%.`); }
   const t1 = p.targets[0] ?? null;
   if (x.last != null && p.stop != null) {
@@ -70,19 +72,20 @@ export async function masterView(db: D1Database, user: string, kind: "stocks" | 
   const autos = await listAuto(db, user);
   const symbols = [...new Set([...wl, ...recs.map((r) => r.symbol), ...autos.map((a) => a.symbol)].map((x) => x.toUpperCase()))].filter((x) => isCrypto(x) === crypto).slice(0, 40);
   const [qs, ratings, fcs, regime, active, acct] = await Promise.all([quotes(symbols), latestRatings(db), latestForecasts(db, symbols), marketRegime(db, crypto), activeRules(db), getAccount(db, user)]);
+  const councils = await radar(db, symbols, 10), cmap = new Map(councils.map((c) => [c.symbol, c]));
   const qmap = new Map(qs.map((q) => [q.symbol, q as { symbol: string; last?: number | null; change_pct?: number | null }]));
   const amap = new Map(autos.map((a) => [a.symbol, a]));
   const rows = [];
   for (const sym of symbols) {
     const plan = await planFor(db, user, sym), q = qmap.get(sym), last = q?.last ?? null;
     const blocked = active && plan && plan.source === "brief" ? ruleBlocks(active.rules, { score: plan.score ?? null, setup: plan.setup, symbol: sym }) : null;
-    const v = verdictFor({ symbol: sym, last, plan, rating: ratings[sym]?.rating ?? null, forecast: fcs[sym] ?? null, regime, blocked });
+    const v = verdictFor({ symbol: sym, last, plan, rating: ratings[sym]?.rating ?? null, forecast: fcs[sym] ?? null, regime, blocked, council: cmap.get(sym) ?? null });
     const a = amap.get(sym) as (Record<string, unknown> & { enabled: boolean }) | undefined;
-    rows.push({ symbol: sym, last, change_pct: q?.change_pct ?? null, plan, rating: ratings[sym]?.rating ?? null, forecast: fcs[sym] ?? null, verdict: v, auto: a ?? null, in_watchlist: wl.includes(sym) });
+    rows.push({ symbol: sym, last, change_pct: q?.change_pct ?? null, plan, rating: ratings[sym]?.rating ?? null, forecast: fcs[sym] ?? null, verdict: v, auto: a ?? null, in_watchlist: wl.includes(sym), six: cmap.get(sym) ? { consensus: cmap.get(sym)!.consensus, label: cmap.get(sym)!.label, agree: cmap.get(sym)!.agree, radar: cmap.get(sym)!.radar.score } : null });
   }
   rows.sort((x, y) => Number(!!y.auto?.enabled) - Number(!!x.auto?.enabled) || y.verdict.score - x.verdict.score);
   const preset = await getSetting<Preset>(db, `master_preset:${user}`, "balanced"), amount = await getSetting<number>(db, `master_amount:${user}`, 500);
-  return { kind, day: ny.date, rows, regime, preset, presets: PRESETS, amount, cash: r2(acct.cash), kill_switch: acct.s.kill_switch, kill_reason: acct.s.kill_reason, strategy: active ? active.version : null, kelly: await kellyRead(db),
+  return { kind, day: ny.date, rows, radar: councils.slice(0, 5).map((c) => ({ symbol: c.symbol, score: c.radar.score, consensus: c.consensus, label: c.label, buy_share: c.radar.buy_share, rvol: c.radar.rvol })), regime, preset, presets: PRESETS, amount, cash: r2(acct.cash), kill_switch: acct.s.kill_switch, kill_reason: acct.s.kill_reason, strategy: active ? active.version : null, kelly: await kellyRead(db),
     on: rows.filter((r) => r.auto?.enabled).length, in_trade: rows.filter((r) => (r.auto as { position?: unknown } | null)?.position).length };
 }
 

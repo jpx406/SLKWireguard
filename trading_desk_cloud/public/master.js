@@ -48,6 +48,7 @@ function renderMaster() {
   chip(`Market: ${d.regime.regime.replace("_", " ").toLowerCase()}${d.regime.size_mult < 1 ? ` · sizes ×${d.regime.size_mult}` : ""}`, d.regime.size_mult <= 0 ? "down" : "");
   chip(`Paper cash ${money(d.cash)}`); chip(`${d.in_trade} in a trade`);
   chip(d.strategy ? `Strategy v${d.strategy} rules on` : "No strategy rules");
+  if (d.radar?.length) { const r0 = d.radar[0]; const c = el("span", "chip", `Cleanest now: ${d.radar.slice(0, 3).map((x) => `${x.symbol} ${x.score}`).join(" · ")}`); c.title = `Market radar: liquidity, tight bars, active volume, one-sided flow and trend. ${r0.symbol}: buyers ${Math.round(r0.buy_share * 100)}%, volume ${r0.rvol}x normal, the Six ${r0.label.toLowerCase()}.`; c.style.cursor = "pointer"; c.onclick = () => { state.master.sel = r0.symbol; renderMaster(); }; chips.append(c); }
   if (d.kill_switch) chip(`KILL SWITCH ON: ${d.kill_reason || "manual"}`, "down");
   host.append(chips);
   if (d.kill_switch) { const w = el("div", "msg err small"); w.textContent = "The kill switch is on: nothing is bought automatically until you turn it off (Quant Terminal, top right)."; host.append(w); }
@@ -64,6 +65,7 @@ function renderMaster() {
     const bar = el("span", "mt-score"); const fill = el("i"); fill.style.width = `${v.score}%`; bar.append(fill);
     const st = a?.position ? `In trade: ${a.position.side} ${a.position.qty} @ ${fmt(a.position.entry)}` : a?.order ? `Waiting to ${a.order.side === "long" ? "buy" : "short"} at ${fmt(a.order.price)}` : a?.enabled ? "Auto on: watching" : r.plan && r.plan.source !== "position" ? `Entry ${fmt(r.plan.entry)} · stop ${fmt(r.plan.stop)} · target ${fmt(r.plan.targets?.[0])}` : "No plan yet";
     mid.append(vb, bar, el("div", `tiny ${a?.position ? "up" : "dim"}`, st));
+    if (r.six) mid.append(el("div", `tiny ${r.six.consensus >= 12 ? "up" : r.six.consensus <= -12 ? "down" : "dim"}`, `The Six ${r.six.consensus >= 0 ? "+" : ""}${r.six.consensus} · ${r.six.agree}/6 · radar ${r.six.radar}`));
     const right = el("label", "mt-switch"); const c = el("input"); c.type = "checkbox"; c.checked = !!a?.enabled; c.setAttribute("role", "switch"); c.setAttribute("aria-label", `Automatic trading for ${r.symbol}`);
     c.onclick = (e) => e.stopPropagation(); c.onchange = () => masterAuto(r.symbol, { enabled: c.checked, amount_usd: a?.amount_usd ?? d.amount, rule: a?.rule ?? d.presets[d.preset].rule });
     right.append(c, el("span", "mt-knob")); right.onclick = (e) => e.stopPropagation();
@@ -93,6 +95,16 @@ function renderMaster() {
   const bKr = el("button", "ghost small", "Kronos forecast"); bKr.onclick = () => runKronos(r.symbol, d.kind === "crypto" ? "60m" : "60m", null);
   const bScan = el("button", "ghost small", d.kind === "crypto" ? "Run Crypto scan" : "Run Full scan"); bScan.onclick = async () => { try { await api("/api/briefs/run", { method: "POST", body: JSON.stringify({ slot: d.kind === "crypto" ? "cryptoscan" : "fullscan" }) }); showBanner("Scan started: new plans appear here in a few minutes."); } catch (e) { showBanner(e.message); } };
   more.append(bScan, bDeep, bKr); adv.append(more); det.append(adv);
+  // The Six: the agent council for this symbol.
+  const six = el("div", "six"); det.append(six);
+  api(`/api/council/${encodeURIComponent(r.symbol)}`).then((c) => {
+    if (state.master.sel !== r.symbol) return;
+    const head = el("div", "six-head"); head.append(el("b", null, "The Six"), el("span", `mt-verdict ${c.consensus >= 12 ? "up" : c.consensus <= -12 ? "down" : "dim"}`, `${c.label} ${c.consensus >= 0 ? "+" : ""}${c.consensus}`), el("span", "dim tiny", `${c.agree} of 6 agree · radar ${c.radar.score}/100 · six rule-based analysts on ${c.interval} bars, not six AI models`));
+    const grid = el("div", "six-grid");
+    for (const ag of c.agents) { const card = el("div", `six-card ${ag.vote >= 0.15 ? "up" : ag.vote <= -0.15 ? "down" : ""}`); const bar = el("span", "six-bar"); const f = el("i"); f.style.width = `${Math.abs(ag.vote) * 50}%`; f.style[ag.vote >= 0 ? "left" : "right"] = "50%"; bar.append(f);
+      card.append(el("b", null, ag.name), el("span", "dim tiny", ag.role), bar, el("span", "tiny", ag.text)); grid.append(card); }
+    six.append(head, grid);
+  }).catch(() => { six.append(el("div", "dim tiny", "The Six need more price bars for this symbol.")); });
   // Levels
   const lv = el("div", "mt-levels");
   const cur = pos ? { entry: pos.entry, stop: pos.stop, target: pos.target } : ord ? { entry: ord.price, stop: ord.stop, target: ord.target } : { entry: plan?.entry ?? null, stop: a?.stop_override ?? plan?.stop ?? null, target: a?.target_override ?? plan?.targets?.[0] ?? null };

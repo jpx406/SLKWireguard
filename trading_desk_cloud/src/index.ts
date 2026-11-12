@@ -14,6 +14,7 @@ import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersio
 import { summary as paperSummary, setKillSwitch } from "./paper";
 import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy } from "./risk";
 import { masterApply, masterView } from "./master";
+import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
 import { RESULT_FORMAT, SLOTS, ensureBriefSchema, finalizeBriefs, getAutopilot, getScanFilters, CALENDAR, isTradingDay, nyNow, runSchedule, setClockShift, startBrief, type Autopilot, type SlotId } from "./briefs";
@@ -176,6 +177,27 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const picksToday = (await env.DB.prepare(`SELECT symbol, side, setup, score, entry, stop, target, status, r_result, slot FROM pick_outcomes p WHERE day = ? AND symbol != '-'
       AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY score DESC LIMIT 12`).bind(nyNow().date).all()).results;
     return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
+  }
+  // The Six: the agent council for one symbol (rule-based analysts on real bars, cached five minutes).
+  const sixm = path.match(/^\/council\/([A-Za-z0-9.\-^=]{1,15})$/);
+  if (sixm && m === "GET") {
+    const sym = sixm[1].toUpperCase(), plan = await planFor(env.DB, who.user, sym);
+    const c = await councilFor(env.DB, sym, plan ? { side: plan.side, stop: plan.stop } : null, !!plan);
+    return c ? json(c) : bad(`Not enough price bars for ${sym}.`, 404);
+  }
+  // Studio (Open Generative AI): boot script and a proxy to the Muapi API. Login required; with the MUAPI_KEY secret set,
+  // users allowed to use AI share that key, otherwise each user enters their own key in the Studio's settings.
+  if (path === "/studio/boot.js" && m === "GET") return new Response(env.MUAPI_KEY && who.ai ? 'window.__MUAPI_KEY__="shared-by-trading-desk";' : "/* enter your own Muapi key in Settings */", { headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store" } });
+  if (path.startsWith("/studio/api/")) {
+    const target = new URL(path.slice("/studio".length) + url.search, "https://api.muapi.ai");
+    const headers = new Headers(); for (const k of ["content-type", "accept"]) { const v = req.headers.get(k); if (v) headers.set(k, v); }
+    const own = req.headers.get("x-api-key");
+    const key = env.MUAPI_KEY && who.ai && (!own || own === "shared-by-trading-desk") ? env.MUAPI_KEY : own;
+    if (!key || key === "shared-by-trading-desk") return bad("No Muapi key: enter your own key in the Studio's Settings, or ask the admin to set the shared MUAPI_KEY secret.", 401);
+    headers.set("x-api-key", key);
+    const up = await fetch(target.toString(), { method: m, headers, body: m === "GET" || m === "HEAD" ? undefined : req.body });
+    const out = new Headers(); for (const k of ["content-type", "cache-control"]) { const v = up.headers.get(k); if (v) out.set(k, v); }
+    return new Response(up.body, { status: up.status, headers: out });
   }
   // Auto Trader: the master control panel (stocks or crypto): rows with verdicts, the master switch and presets.
   if (path === "/master" && m === "GET") return json(await masterView(env.DB, who.user, url.searchParams.get("kind") === "crypto" ? "crypto" : "stocks"));

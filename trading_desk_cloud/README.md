@@ -203,6 +203,18 @@ The layout sizes itself to the room each panel has, not only to the window, so i
 * **The selected symbol** shows a clean candle chart with the entry, stop and target lines (candle signals optional), *What the desk recommends* in plain language with the reasons, and the levels: entry, **stop-loss**, **target** and money for this one, with what you lose at the stop and gain at the target. *Save levels* stores your own stop and target for the automatic trade (a working order follows at once); in a trade it moves the position's stop and target; *Sell now* closes it. Buttons run a scan, a Deep Analysis or a Kronos forecast for more evidence.
 * With Auto on, the desk buys at the entry (or on a strong candle signal when the style allows) and sells at the stop, the target or a reversal signal, every minute, with the browser closed. The hard risk layer still decides: kill switch, drawdown guard, stale data and the market regime come first.
 
+## The Six, the market radar and the Studio
+
+* **The Six** (`src/agents.ts`): six rule-based analysts on real bars (NOVA ceiling and room, ORIN tail risk, VESK trend, LUMA flow, KIRA exit pressure, DASH opening drive) vote from -1 to +1; the consensus moves the Auto Trader verdict by up to 8 points and is shown as six cards on the selected symbol. `GET /api/council/:symbol`, cached five minutes. They are arithmetic, not language models, and the page says so.
+* **Market radar:** every Auto Trader symbol ranked by liquidity, tight bars, relative volume, one-sided flow and trend; the *Cleanest now* chip shows the top three.
+* **Studio:** `public/studio/` is a build of [Open Generative AI](https://github.com/Anil-matcha/Open-Higgsfield-AI) (MIT; image, video, lip sync, cinema) with its API calls routed through the desk at `/api/studio/*` (login required). Users enter their own Muapi key in the Studio's Settings, or set one shared key for everyone allowed to use AI:
+
+  ```
+  npx wrangler secret put MUAPI_KEY
+  ```
+
+  To rebuild from upstream: copy `index.html`, `src/`, `public/` and `packages/studio/src` into a clean folder, set `baseUrl = '/api/studio'` in `src/lib/muapi.js`, alias `studio` to `packages/studio` in the Vite config, `npx vite build`, copy `dist/` to `public/studio/` and keep the `boot.js` script tag in its `index.html`.
+
 ## Quant Terminal and the hard risk layer
 
 **Quant Terminal** (second in the sidebar) is a dense terminal-style view, always dark, where every panel is computed from the desk's own data: the paper account with its equity curve and a drawdown-risk gauge; live 5-minute candles of the selected symbol; a grid of the latest plans coloured by outcome; *excursion survival* (how many plans reached +xR, how many went against); *tape pressure* (a cumulative-volume-delta proxy from the bars); a *range field* of volatility ridges (the desk has no order-book feed, and the panel says so); *coherence* of the watchlist; a forward *Monte Carlo ruin cone* bootstrapped from the settled R results at the Kelly-sized risk; an *analog matcher* (k-nearest z-scored windows in the last 30 days and what they did next); and a *Bayesian update* of the win probability. A **KILL SWITCH** button sits in the header.

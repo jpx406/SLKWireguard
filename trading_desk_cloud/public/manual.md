@@ -107,6 +107,23 @@ The verdict starts at 50 and moves with the evidence:
 - **Your approved strategy rules** turn a plan they exclude into Avoid.
 - **Price against the levels**: a plan the price has already run through becomes Missed.
 
+### The Six and the market radar
+
+Under the recommendation you will find **The Six**: six rule-based analysts that each look at the price bars with one job and vote from bearish to bullish.
+
+| Agent | Job | What it measures |
+|---|---|---|
+| NOVA | finds the ceiling | room up to the recent high and down to the recent low |
+| ORIN | prices the tail | how bad the bad case is against your stop |
+| VESK | holds the trend | moving averages and the strength of the recent move |
+| LUMA | reads the flow | buying against selling volume, and volume against normal |
+| KIRA | cuts losers early | fresh reversal candles, price against VWAP and EMA 9 |
+| DASH | scales the open | the opening drive, the gap, the opening range |
+
+Their average is the consensus (−100 to +100) and it moves the verdict by up to 8 points. They are arithmetic on real bars, instant and free, and the screen says plainly that they are not six AI models. The more of them agree, the more the consensus means.
+
+The **Cleanest now** chip is the market radar: every symbol ranked by liquidity, tight bars, active volume, one-sided flow and trend. It answers "which market is easiest to trade right now", the idea behind bots that watch hundreds of markets and trade the cleanest one.
+
 ### Recommendations
 
 - Start with **Balanced** and a small amount.
@@ -350,6 +367,12 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 **Copilot.** Chat with the agent that has your skills. Good questions: "check this plan against my rules", "what is the catalyst in NVDA today", "explain why this pick was scored 72". It can never place an order.
 
 **Position Size.** Enter account size, risk percent, entry and stop. It returns the number of shares, the dollar risk and the 1R, 2R and 3R targets, and can draw the plan on the chart.
+
+---
+
+## 17b. Studio (image and video)
+
+**Studio** in the sidebar opens Open Generative AI (an MIT-licensed open-source project) in a new tab: image, video, lip sync and cinema studios that call the Muapi service. It is unrelated to trading. It needs a Muapi key, which is a paid service billed by Muapi: either each user enters their own key in the Studio's Settings, or the admin stores one shared key as the `MUAPI_KEY` secret and every user allowed to use AI shares it. What you generate is subject to Muapi's terms.
 
 ---
 
