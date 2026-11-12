@@ -163,6 +163,7 @@
         <form id="kronosForm" class="inline row gap"><input id="krSym" class="sym-input mono" placeholder="SYMBOL" maxlength="15" aria-label="Symbol to forecast">
           <select id="krInterval" class="small" aria-label="Bar size"><option value="5m">5m</option><option value="15m">15m</option><option value="60m" selected>1h</option><option value="1d">daily</option></select>
           <input id="krPred" type="number" class="sym-input mono" min="4" max="120" placeholder="bars" style="width:5em" aria-label="Bars ahead">
+          <label class="switch cw-switch" title="Instant and free: a bootstrap of the symbol's own past returns, computed in the app. Leave off to run the Kronos model in the sandbox."><input type="checkbox" id="krBuiltin"> Instant (built-in)</label>
           <button class="primary small">Forecast</button></form>
         <span class="spacer"></span><span id="kronosNote" class="dim small"></span>
       </div>

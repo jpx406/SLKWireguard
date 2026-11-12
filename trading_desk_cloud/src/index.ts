@@ -8,7 +8,7 @@ import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
-import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, startKronos } from "./kronos";
+import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
 import { summary as paperSummary, setKillSwitch } from "./paper";
@@ -222,8 +222,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate, score: await forecastScore(env.DB) });
   }
   if (path === "/kronos/run" && m === "POST") {
-    const b = await body<{ symbol?: unknown; interval?: unknown; pred?: unknown }>(req);
-    const r = await startKronos(env, String(b.symbol ?? ""), String(b.interval ?? "60m"), b.pred == null ? null : Number(b.pred), who.user);
+    const b = await body<{ symbol?: unknown; interval?: unknown; pred?: unknown; builtin?: unknown }>(req);
+    const r = b.builtin === true ? await runBuiltin(env.DB, String(b.symbol ?? ""), String(b.interval ?? "60m"), b.pred == null ? null : Number(b.pred), who.user)
+      : await startKronos(env, String(b.symbol ?? ""), String(b.interval ?? "60m"), b.pred == null ? null : Number(b.pred), who.user);
     return r.error ? bad(r.error) : json(r);
   }
   if (path === "/kronos/latest" && m === "GET") {

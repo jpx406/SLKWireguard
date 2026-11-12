@@ -337,7 +337,9 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 **Using it.** Type a symbol, choose a bar size and press Forecast. The first run takes several minutes; later ones about a minute. The result draws on the chart as a dashed line with a dotted band.
 
-**Is it useful?** Unproven. The page scores every forecast once its time has passed. Rely on it only while the direction hit rate is above 55% and the Brier score is below 0.22 over 30 or more forecasts. It knows nothing about news.
+**Two models.** *Kronos* runs in the agent's sandbox (minutes, costs a session). *Instant (built-in)* runs at once and free: it resamples this symbol's own past returns, an honest baseline with no opinion beyond recent drift and volatility. If a Kronos run fails, the row shows the reason and the agent's notes, and the built-in forecast is used instead so the chart still gets a band.
+
+**Is it useful?** Unproven. The page scores every forecast once its time has passed, per model: Kronos is only worth its cost if it beats the built-in baseline. Rely on it only while the direction hit rate is above 55% and the Brier score is below 0.22 over 30 or more forecasts. It knows nothing about news.
 
 **Recommendations.** Treat it as one more vote. Never trade on it alone.
 

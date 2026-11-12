@@ -27,7 +27,8 @@ function renderDeep() {
   host.append(intro);
   if (!state.deep.runs.length) { host.append(el("div", "bd-empty", "No deep analyses yet. Type a symbol above and click Run Deep Analysis, or use the Deep Analysis button on a recommendation.")); return; }
   const sec = section(`Runs (${state.deep.runs.length})`);
-  sec.append(table(["Symbol", "Date", "Rating", "Conf.", "Trader", "Entry", "Stop", "Targets", "Days", "Status", "Cost", ""], state.deep.runs.map((r) => {
+  sec.append(table(["Symbol", "Date", "Rating", "Conf.", "Trader", "Entry", "Stop", "Targets", "Days", "Status", "Cost", ""], state.deep.runs.flatMap((r) => {
+    let extra = null;
     const d = r.data || {}, tr = el("tr", "pick-row"); tr.style.cursor = "pointer";
     const sym = td(r.symbol, "sym"); sym.onclick = (e) => { e.stopPropagation(); setSymbol(r.symbol); navigate("chart"); };
     const rt = el("td"); rt.append(r.status === "done" ? ratingBadge(r.rating) : el("span", `pill ${r.status}`, r.status === "error" ? "error" : "working…"));
@@ -37,8 +38,8 @@ function renderDeep() {
     const act = el("td"); if (r.status === "done" && r.rating) { const pt = el("button", "ghost small", /Sell|Underweight/.test(r.rating) ? "Paper Short" : "Paper Buy"); pt.onclick = (e) => { e.stopPropagation(); openTicket({ symbol: r.symbol, side: /Sell|Underweight/.test(r.rating) ? "short" : "long", type: d.entry ? "limit" : "market", price: d.entry, stop: d.stop, target: (d.targets || [])[0], note: `Deep analysis ${r.rating}: ${(d.summary || "").slice(0, 120)}`, exit_mode: "hold" }); }; act.append(pt); }
     tr.append(act);
     tr.onclick = () => openDeepRun(r.id);
-    if (r.error) { const er = el("tr"); const c = el("td", "small down"); c.colSpan = 12; c.textContent = r.error; tr.after(er); er.append(c); }
-    return tr;
+    if (r.error) { const er = el("tr"); const c = el("td", "small down"); c.colSpan = 12; c.textContent = r.error; er.append(c); extra = er; }
+    return extra ? [tr, extra] : [tr];
   })));
   host.append(sec);
   const det = el("div"); det.id = "deepDetail"; host.append(det);

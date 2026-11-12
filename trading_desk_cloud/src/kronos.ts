@@ -81,6 +81,45 @@ export async function startKronos(env: Env, symbol: string, interval: string, pr
   return { id };
 }
 
+/** Built-in baseline: block bootstrap of the symbol's own log returns (no model, no cost). Same shape as a Kronos forecast. */
+export function bootstrapForecast(symbol: string, interval: string, bars: { time: number; high: number; low: number; close: number }[], pred: number, samples = 400): Forecast | null {
+  const b = bars.slice(-401); if (b.length < 60) return null;
+  const step = interval === "1d" ? 86400 : interval === "60m" ? 3600 : interval === "15m" ? 900 : 300;
+  const rets = b.slice(1).map((x, i) => Math.log(x.close / b[i].close)), rng = b.slice(1).map((x) => Math.log(x.high / x.low) / 2);
+  let seed = (b[b.length - 1].time % 2147483647) || 1; const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+  const block = Math.max(2, Math.min(12, Math.floor(pred / 4))), last = b[b.length - 1].close, paths: number[][] = [], his: number[][] = [], los: number[][] = [];
+  for (let s = 0; s < samples; s++) {
+    const p: number[] = [], h: number[] = [], l: number[] = []; let px = last;
+    while (p.length < pred) { const st = Math.floor(rnd() * (rets.length - block)); for (let k = 0; k < block && p.length < pred; k++) { px *= Math.exp(rets[st + k]); p.push(px); h.push(px * Math.exp(rng[st + k])); l.push(px * Math.exp(-rng[st + k])); } }
+    paths.push(p); his.push(h); los.push(l);
+  }
+  const col = (m: number[][], i: number) => m.map((r) => r[i]).sort((x, y) => x - y), q = (v: number[], f: number) => v[Math.floor(f * (v.length - 1))], avg = (v: number[]) => v.reduce((x, y) => x + y, 0) / v.length;
+  const r6 = (n: number) => Math.round(n * 1e6) / 1e6, r3 = (n: number) => Math.round(n * 1000) / 1000;
+  const idx = Array.from({ length: pred }, (_, i) => i), fin = col(paths, pred - 1);
+  const times: number[] = []; let t = b[b.length - 1].time; while (times.length < pred) { t += step; if (interval === "1d" && !/-(USD|USDT|USDC|EUR|BTC|ETH)$/.test(symbol) && [0, 6].includes(new Date(t * 1000).getUTCDay())) continue; times.push(t); }
+  return { symbol, interval, step_sec: step, model: "built-in bootstrap", samples, lookback: b.length, pred_len: pred, last_time: b[b.length - 1].time, last_close: r6(last), times,
+    mean_close: idx.map((i) => r6(avg(col(paths, i)))), p10: idx.map((i) => r6(q(col(paths, i), 0.1))), p90: idx.map((i) => r6(q(col(paths, i), 0.9))),
+    mean_high: idx.map((i) => r6(avg(col(his, i)))), mean_low: idx.map((i) => r6(avg(col(los, i)))),
+    prob_up: r3(fin.filter((v) => v > last).length / fin.length), exp_move_pct: r3(((avg(fin) - last) / last) * 100),
+    max_up_pct: r3(((avg(his.map((h) => Math.max(...h))) - last) / last) * 100), max_down_pct: r3(((avg(los.map((l) => Math.min(...l))) - last) / last) * 100),
+    band_pct: r3(((q(fin, 0.9) - q(fin, 0.1)) / last) * 100), elapsed_s: 0 };
+}
+/** Run the built-in forecast now and store it as a finished run. */
+export async function runBuiltin(db: D1Database, symbol: string, interval: string, pred: number | null, user: string | null, note: string | null = null, id: string | null = null) {
+  await ensureKronos(db);
+  symbol = symbol.trim().toUpperCase();
+  if (!/^[A-Z0-9.\-^=]{1,15}$/.test(symbol)) return { error: "Bad symbol" };
+  if (!(KRONOS_INTERVALS as readonly string[]).includes(interval)) return { error: "Bar size must be 5m, 15m, 60m or 1d." };
+  const n = Math.max(4, Math.min(120, Math.round(pred || DEFAULT_PRED[interval])));
+  let fc: Forecast | null = null;
+  try { fc = bootstrapForecast(symbol, interval, (await candles(symbol, interval, interval === "1d" ? 730 : interval === "60m" ? 90 : 30)) as never, n); } catch (e) { return { error: String((e as Error).message || e).slice(0, 200) }; }
+  if (!fc) return { error: `Not enough ${interval} bars for ${symbol}.` };
+  if (id) { await db.prepare("UPDATE kronos_runs SET status = 'done', data = ?, error = ?, finished_at = datetime('now') WHERE id = ?").bind(JSON.stringify(fc), note, id).run(); return { id }; }
+  const nid = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  await db.prepare("INSERT INTO kronos_runs (id, symbol, interval, pred_len, status, user, data, error, finished_at) VALUES (?, ?, ?, ?, 'done', ?, ?, ?, datetime('now'))").bind(nid, symbol, interval, n, user, JSON.stringify(fc), note).run();
+  return { id: nid };
+}
+
 export function extractForecast(text: string): Forecast | null {
   const last = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].at(-1);
   if (!last) return null;
@@ -128,7 +167,12 @@ export async function finalizeKronos(env: Env) {
         const why: Record<string, string> = { budget_reached: "Stopped at the session budget.", refusal: "Claude declined this request.", retries_exhausted: "Failed after retries." };
         const err = idleReason === "end_turn" ? null : why[idleReason] ?? idleReason;
         if (fc) await finish("done", err);
-        else await finish("error", [err, ...errors, content ? "No forecast JSON in the answer: see the agent's notes below (usually a host the sandbox may not reach, or torch not installed; run setup/setup-agent.mjs again)." : "Claude finished without writing an answer."].filter(Boolean).join(" · "));
+        else {
+          const why2 = [err, ...errors, content ? "Kronos did not return a forecast: see the agent's notes below (usually a host the sandbox may not reach, or torch not installed; run setup/setup-agent.mjs again)." : "Claude finished without writing an answer."].filter(Boolean).join(" · ");
+          await finish("error", why2);
+          // Fall back to the built-in forecast so the chart still gets a band; the row keeps the reason.
+          try { await runBuiltin(env.DB, r.symbol, r.interval, r.pred_len, r.user, `${why2} Showing the built-in forecast instead.`, r.id); } catch { /* keep the error */ }
+        }
       } else if (ageMin > 40) await finish("error", "Timed out after 40 minutes.");
     } catch (e) { console.error("kronos", r.id, e); }
   }
@@ -174,7 +218,10 @@ export async function forecastScore(db: D1Database) {
   let brier = 0, err = 0, hits = 0;
   for (const r of results) { const fc = JSON.parse(r.data) as Forecast; const y = r.actual_move_pct > 0 ? 1 : 0; brier += (fc.prob_up - y) ** 2; err += Math.abs(fc.exp_move_pct - r.actual_move_pct); hits += r.hit; }
   const n = results.length;
-  return { n, hit_rate: Math.round((hits / n) * 1000) / 10, brier: Math.round((brier / n) * 1000) / 1000, avg_abs_error_pct: Math.round((err / n) * 100) / 100 };
+  const by: Record<string, { n: number; hits: number; brier: number }> = {};
+  for (const r of results) { const fc = JSON.parse(r.data) as Forecast, k = /bootstrap/.test(fc.model || "") ? "Built-in" : "Kronos", y = r.actual_move_pct > 0 ? 1 : 0; const g = (by[k] ??= { n: 0, hits: 0, brier: 0 }); g.n++; g.hits += r.hit; g.brier += (fc.prob_up - y) ** 2; }
+  const by_model = Object.fromEntries(Object.entries(by).map(([k, g]) => [k, { n: g.n, hit_rate: Math.round((g.hits / g.n) * 1000) / 10, brier: Math.round((g.brier / g.n) * 1000) / 1000 }]));
+  return { n, hit_rate: Math.round((hits / n) * 1000) / 10, brier: Math.round((brier / n) * 1000) / 1000, avg_abs_error_pct: Math.round((err / n) * 100) / 100, by_model };
 }
 
 /** Freshest finished forecast per symbol (any bar size) within `hours`. */
