@@ -506,6 +506,11 @@
         <label>&nbsp;<button type="button" id="btnPwChange" class="ghost">Change Password</button></label>
       </div>
     </fieldset>
+    <fieldset id="pkBox"><legend>Face ID / fingerprint sign-in</legend>
+      <div id="pkList"></div>
+      <button type="button" id="btnPkAdd" class="ghost small" style="margin-top:8px">Set up on this device</button>
+      <p class="dim small">Uses Face ID, Touch ID, Windows Hello or your phone's fingerprint. Set it up once on each device you use. It also lets you choose a new password if you forget yours.</p>
+    </fieldset>
     <fieldset id="usersBox" class="hidden"><legend>Users (admin)</legend>
       <table class="bd-table" id="usersTable"><thead><tr><th>User</th><th>Role</th><th>Claude access</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
       <div class="f-grid" style="margin-top:8px">
@@ -534,8 +539,12 @@
         <label class="lg-eye" title="Show password"><input type="checkbox" id="loginShow" aria-label="Show password"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></label></div></div>
     <div id="loginErr" class="err-text" role="alert"></div>
     <div class="lg-actions"><button class="primary lg-btn">Sign in</button></div>
+    <button type="button" id="btnPasskey" class="ghost lg-alt"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 10.500v5"/><path d="M8 20v-9a4 4 0 0 1 8 0v9"/><path d="M4.500 17v-6a7.500 7.500 0 0 1 15 0v6"/></svg> Sign in with Face ID / fingerprint</button>
     <details class="lg-forgot"><summary>Forgot password?</summary>
-      <p>Ask the JP97 administrator to reset it. Your account goes back to the initial password and you choose a new one at the next sign-in.</p></details>
+      <p><b>If you set up Face ID / fingerprint on this device:</b> sign in with it, then open your account (top right) and choose a new password. No current password is asked.</p>
+      <p><b>Otherwise:</b> type your username above and ask for a reset. Your account goes back to the initial password and you choose a new one at the next sign-in.</p>
+      <button type="button" id="btnForgot" class="ghost small">Ask the administrator for a reset</button>
+      <p id="forgotOut" role="status"></p></details>
     <p class="lg-foot">Accounts and passwords are managed by the JP97 administrator.<br>Paper trading only: no real orders are placed.</p>
   </form>
 </dialog>
@@ -564,6 +573,7 @@
 <script src="/board.js"></script>
 <script src="/app.js"></script>
 <script src="/paper.js"></script>
+<script src="/passkey.js"></script>
 <script src="/deep.js"></script>
 <script src="/winners.js"></script>
 <script src="/learn.js"></script>

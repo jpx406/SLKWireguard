@@ -23,7 +23,7 @@ async function accessKeys(team: string, force = false): Promise<Jwk[]> {
   return keys;
 }
 
-export type Identity = { email: string; user: string; role: "admin" | "user"; ai: boolean; must_change?: boolean; recovery?: boolean };
+export type Identity = { email: string; user: string; role: "admin" | "user"; ai: boolean; must_change?: boolean; recovery?: boolean; passkey?: boolean };
 const ADMIN = (email: string): Identity => ({ email, user: "admin", role: "admin", ai: true });
 
 export async function authenticate(req: Request, env: Env): Promise<Identity | Response> {
@@ -90,7 +90,7 @@ const enc = new TextEncoder();
 const b64url = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 export const USERNAME_RE = /^[a-z0-9_.-]{3,32}$/;
 
-type UserRow = { id: string; salt: string; hash: string; role: string; ai: number; ver: number; created_at: string; must_change?: number };
+type UserRow = { id: string; salt: string; hash: string; role: string; ai: number; ver: number; created_at: string; must_change?: number; reset_requested?: number | null };
 
 let usersReady = false;
 export async function ensureUsers(db: D1Database) {
@@ -101,6 +101,7 @@ export async function ensureUsers(db: D1Database) {
     db.prepare("CREATE TABLE IF NOT EXISTS login_failures (ip TEXT NOT NULL, at INTEGER NOT NULL)"),
   ]);
   try { await db.prepare("ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0").run(); } catch { /* exists */ }
+  try { await db.prepare("ALTER TABLE users ADD COLUMN reset_requested INTEGER").run(); } catch { /* exists */ }
   if (!(await db.prepare("SELECT 1 FROM users WHERE id = 'admin'").first())) {
     const h = await hashPassword(INITIAL_PASSWORD);
     await db.prepare("INSERT OR IGNORE INTO users (id, salt, hash, role, ai, ver, must_change) VALUES ('admin', ?, ?, 'admin', 1, 1, 1)").bind(h.salt, h.hash).run();
@@ -125,16 +126,17 @@ async function sameSecret(a: string, b: string) {
   return crypto.subtle.timingSafeEqual(x, y);
 }
 
-async function issueCookie(env: Env, user: string, ver: number, recovery = false) {
+/** kind: "" = password, "r" = the recovery secret (admin only), "k" = a passkey (Face ID / fingerprint). */
+export async function issueCookie(env: Env, user: string, ver: number, kind: "" | "r" | "k" = "") {
   const exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
-  const payload = `${recovery ? "v2r" : "v2"}.${user}.${ver}.${exp}`;
+  const payload = `v2${kind}.${user}.${ver}.${exp}`;
   const sig = b64url(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode(payload)));
   return `${COOKIE}=${payload}.${sig}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_DAYS * 86400}`;
 }
 
 async function sessionIdentity(req: Request, env: Env): Promise<Identity | null> {
   const v = (req.headers.get("cookie") || "").split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-  const m0 = v?.match(/^(v2r?)\.([a-z0-9_.-]{3,32})\.(\d{1,9})\.(\d{10})\.([A-Za-z0-9_-]{43})$/);
+  const m0 = v?.match(/^(v2[rk]?)\.([a-z0-9_.-]{3,32})\.(\d{1,9})\.(\d{10})\.([A-Za-z0-9_-]{43})$/);
   if (!m0 || Number(m0[4]) < Date.now() / 1000) return null;
   const recovery = m0[1] === "v2r", m = m0.slice(1);
   const ok = await crypto.subtle.verify("HMAC", await sessionKey(env), b64urlDecode(m[4]), enc.encode(`${m0[1]}.${m[1]}.${m[2]}.${m[3]}`));
@@ -143,7 +145,30 @@ async function sessionIdentity(req: Request, env: Env): Promise<Identity | null>
   const row = await env.DB.prepare("SELECT id, role, ai, ver, must_change FROM users WHERE id = ?").bind(m[1]).first<UserRow>();
   if (!row || row.ver !== Number(m[2])) return null; // deleted, or password changed since
   const admin = row.role === "admin" || row.id === "admin";
-  return { email: row.id, user: row.id, role: admin ? "admin" : "user", ai: !!row.ai || admin, must_change: !!row.must_change && !recovery, recovery };
+  return { email: row.id, user: row.id, role: admin ? "admin" : "user", ai: !!row.ai || admin, must_change: !!row.must_change && !recovery, recovery, passkey: m0[1] === "v2k" };
+}
+
+const ipOf = (req: Request) => req.headers.get("cf-connecting-ip") || "unknown";
+/** True when this IP (5) or everyone together (30) had too many failed sign-ins in the last 15 minutes. */
+export async function loginLocked(req: Request, db: D1Database) {
+  const since = Math.floor(Date.now() / 1000) - 900;
+  await db.prepare("DELETE FROM login_failures WHERE at < ?").bind(since).run();
+  const mine = await db.prepare("SELECT COUNT(*) AS n FROM login_failures WHERE ip = ?").bind(ipOf(req)).first<{ n: number }>();
+  const all = await db.prepare("SELECT COUNT(*) AS n FROM login_failures").first<{ n: number }>();
+  return (mine?.n ?? 0) >= 5 || (all?.n ?? 0) >= 30;
+}
+export async function noteLoginFailure(req: Request, db: D1Database) {
+  await db.prepare("INSERT INTO login_failures (ip, at) VALUES (?, ?)").bind(ipOf(req), Math.floor(Date.now() / 1000)).run();
+}
+
+/** POST /api/login/forgot {username}: leaves a note for the admin. Always answers the same, so it reveals no usernames. */
+export async function forgotPassword(req: Request, env: Env): Promise<Response> {
+  await ensureUsers(env.DB);
+  let username = "";
+  try { username = String(((await req.json()) as { username?: unknown }).username ?? "").trim().toLowerCase(); } catch { /* empty */ }
+  if (USERNAME_RE.test(username) && username !== "admin")
+    await env.DB.prepare("UPDATE users SET reset_requested = ? WHERE id = ?").bind(Math.floor(Date.now() / 1000), username).run();
+  return Response.json({ ok: true });
 }
 
 /** POST /api/login {username, password}. Max 5 failures per IP and 30 overall per 15 minutes. */
@@ -178,7 +203,7 @@ export async function login(req: Request, env: Env): Promise<Response> {
   }
   await db.prepare("DELETE FROM login_failures WHERE ip = ?").bind(ip).run();
   return new Response(JSON.stringify({ ok: true, user: username, must_change: mustChange }), {
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Set-Cookie": await issueCookie(env, username, ver, recovery) },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "Set-Cookie": await issueCookie(env, username, ver, recovery ? "r" : "") },
   });
 }
 
@@ -191,8 +216,8 @@ export function logout(): Response {
 // ---------------------------------------------------------------------------------------- user admin
 export async function listUsers(db: D1Database) {
   await ensureUsers(db);
-  const { results } = await db.prepare("SELECT id, role, ai, created_at, must_change FROM users ORDER BY id = 'admin' DESC, id").all<UserRow>();
-  return results.map((u) => ({ id: u.id, role: u.id === "admin" ? "admin" : u.role, ai: !!u.ai || u.id === "admin", created_at: u.created_at, must_change: !!u.must_change }));
+  const { results } = await db.prepare("SELECT id, role, ai, created_at, must_change, reset_requested FROM users ORDER BY id = 'admin' DESC, id").all<UserRow>();
+  return results.map((u) => ({ id: u.id, role: u.id === "admin" ? "admin" : u.role, ai: !!u.ai || u.id === "admin", created_at: u.created_at, must_change: !!u.must_change, reset_requested: u.reset_requested ?? null }));
 }
 
 export function checkNewPassword(p: string) {
@@ -222,12 +247,12 @@ export async function updateUser(db: D1Database, id: string, patch: { password?:
   if (patch.reset) {
     // Back to the initial password; the user must choose a new one at the next sign-in.
     const h = await hashPassword(INITIAL_PASSWORD);
-    await db.prepare("UPDATE users SET salt = ?, hash = ?, ver = ver + 1, must_change = 1 WHERE id = ?").bind(h.salt, h.hash, id).run();
+    await db.prepare("UPDATE users SET salt = ?, hash = ?, ver = ver + 1, must_change = 1, reset_requested = NULL WHERE id = ?").bind(h.salt, h.hash, id).run();
   } else if (patch.password !== undefined) {
     const bad = checkNewPassword(patch.password);
     if (bad) return bad;
     const h = await hashPassword(patch.password);
-    await db.prepare("UPDATE users SET salt = ?, hash = ?, ver = ver + 1, must_change = 0 WHERE id = ?").bind(h.salt, h.hash, id).run();
+    await db.prepare("UPDATE users SET salt = ?, hash = ?, ver = ver + 1, must_change = 0, reset_requested = NULL WHERE id = ?").bind(h.salt, h.hash, id).run();
   }
   if (patch.ai !== undefined) await db.prepare("UPDATE users SET ai = ? WHERE id = ?").bind(patch.ai ? 1 : 0, id).run();
   if (patch.role !== undefined) await db.prepare("UPDATE users SET role = ?, ver = ver + 1 WHERE id = ?").bind(patch.role, id).run();
@@ -246,12 +271,13 @@ export async function changeOwnPassword(env: Env, who: Identity, current: string
   await ensureUsers(env.DB);
   const row = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(who.user).first<UserRow>();
   if (!row) return deny(400, "No such user.");
-  // A recovery session (admin signed in with the LOGIN_PASSWORD secret) may set a new password without the current one.
-  if (!who.recovery && !(await sameSecret((await hashPassword(current, row.salt)).hash, row.hash))) return deny(401, "Current password is wrong.");
+  // A recovery session (admin signed in with the LOGIN_PASSWORD secret) or a passkey session (Face ID / fingerprint
+  // just proved who this is) may set a new password without the current one: that is the self-service reset.
+  if (!who.recovery && !who.passkey && !(await sameSecret((await hashPassword(current, row.salt)).hash, row.hash))) return deny(401, "Current password is wrong.");
   if (await sameSecret((await hashPassword(next, row.salt)).hash, row.hash)) return deny(400, "The new password must be different from the current one.");
   const err = await updateUser(env.DB, who.user, { password: next });
   if (err) return deny(400, err);
   return new Response(JSON.stringify({ ok: true }), {
-    headers: { "Content-Type": "application/json", "Set-Cookie": await issueCookie(env, who.user, row.ver + 1) },
+    headers: { "Content-Type": "application/json", "Set-Cookie": await issueCookie(env, who.user, row.ver + 1, who.passkey ? "k" : "") },
   });
 }

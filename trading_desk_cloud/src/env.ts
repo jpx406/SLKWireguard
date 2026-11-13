@@ -14,6 +14,7 @@ export interface Env {
   ALPACA_SECRET_KEY?: string; // secret
   ALPACA_DATA_BASE?: string; // tests only: mock Alpaca data server
   MARKET_DATA_BASE?: string; // tests only: mock market-data server
+  DEV_ORIGIN?: string; // local wrangler dev only: the page's real origin (http://localhost:8787), for passkeys
   DEV_NO_AUTH?: string; // "1" only in .dev.vars for local `wrangler dev`
   DEV_CLOCK_SHIFT_SEC?: string; // tests only (.dev.vars): pretend the clock is this many seconds ahead
 }

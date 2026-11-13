@@ -21,6 +21,10 @@ $("#btnMe").onclick = async () => {
   const me = state.me || {};
   $("#meTitle").textContent = `${me.user} (${me.role}${me.ai ? ", Claude access" : ""})`;
   $("#pwBox").classList.toggle("hidden", !me.password_login);
+  // Signed in with Face ID / fingerprint or the recovery password: a new password needs no current one.
+  $("#meForm").current.closest("label").classList.toggle("hidden", !!(me.passkey || me.recovery));
+  $("#pkBox").classList.toggle("hidden", !me.password_login);
+  if (me.password_login) loadPasskeys();
   $("#usersBox").classList.toggle("hidden", me.role !== "admin" || !me.password_login);
   $("#meErr").textContent = "";
   if (me.role === "admin" && me.password_login) await loadUsers();
@@ -55,6 +59,7 @@ async function loadUsers(list) {
     };
     act.append(pw, del);
     const name = el("td", "sym", u.id); if (u.must_change) name.append(el("span", "dim tiny", "  initial password"));
+    if (u.reset_requested) { const b = el("span", "badge warn", "asked for a reset"); b.title = `Asked ${new Date(u.reset_requested * 1000).toLocaleString()}. Check with the person first, then press Reset Password.`; name.append(" ", b); }
     tr.append(name, roleTd, aiTd, el("td", "dim small", u.created_at || ""), act); tb.append(tr);
   }
 }

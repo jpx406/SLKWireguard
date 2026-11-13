@@ -857,3 +857,10 @@ dialog.login input:not([type="checkbox"]) { width: 100%; box-sizing: border-box;
 .lg-forgot { text-align: center; } .lg-forgot summary { cursor: pointer; text-decoration: underline; list-style: none; display: inline-block; padding: 8px; } .lg-forgot summary::-webkit-details-marker { display: none; }
 .lg-forgot p, .lg-note { margin: 4px 0 0; color: var(--dim); font-size: 0.923rem; } .lg-note { text-align: center; }
 .lg-foot { text-align: center; color: var(--dim); font-size: 0.923rem; margin: 0; }
+
+/* ---- Face ID / fingerprint */
+.lg-alt { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; font-size: 1.077rem; font-weight: 600; border-radius: 10px; width: 100%; }
+.lg-alt .ic { width: 24px; height: 24px; }
+.lg-forgot p { text-align: left; } .lg-forgot button { margin-top: 8px; } #forgotOut { min-height: 1em; }
+.pk-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; } .pk-row button { margin-left: auto; }
+.badge.warn { background: color-mix(in srgb, var(--warn, #b45309) 18%, transparent); color: var(--warn, #b45309); border: 1px solid currentColor; }

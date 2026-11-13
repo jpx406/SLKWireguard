@@ -1,6 +1,7 @@
 // Trading Desk on Cloudflare: static UI (./public) + JSON API under /api, behind Cloudflare Access.
 import type { Env } from "./env";
-import { authenticate, login, logout, listUsers, createUser, updateUser, deleteUser, changeOwnPassword, type Identity } from "./auth";
+import { loginOptions, loginFinish, registerOptions, registerFinish, listPasskeys, deletePasskey, deleteUserPasskeys } from "./passkeys";
+import { forgotPassword, authenticate, login, logout, listUsers, createUser, updateUser, deleteUser, changeOwnPassword, type Identity } from "./auth";
 import { autoTradeNewBriefs, hasAccount, leaderboard, cancelOrder, closePosition, getAccount, placeOrder, resetAccount, runEngine, sanitizePaperSettings, summary, updatePosition } from "./paper";
 import { ensureSchema, getSettings, setSetting, getSetting, normalizeTrade, tradeStats, DEFAULT_SETTINGS, type Trade } from "./db";
 import { candles, quotes, INTERVALS, SYMBOL_RE, setMarketBase, configureMarket, marketInfo, testAlpaca, type DataSource } from "./market";
@@ -50,6 +51,12 @@ const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/r
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
+/** The site a passkey belongs to: the request's own host. Local `wrangler dev` reports the route's host, so DEV_ORIGIN (in .dev.vars only) names the real one there. */
+function site(env: Env, url: URL): { origin: string; host: string } {
+  if (env.DEV_ORIGIN) { try { const o = new URL(env.DEV_ORIGIN); if (o.hostname === "localhost" || o.hostname === "127.0.0.1") return { origin: o.origin, host: o.hostname }; } catch { /* ignore a bad value */ } }
+  return { origin: url.origin, host: url.hostname };
+}
+
 async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Response> {
   const path = url.pathname.replace(/^\/api/, "");
   const m = req.method;
@@ -75,11 +82,20 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     if (who.role !== "admin") return bad("Only the admin can test the data connection.", 403);
     return json({ iex: await testAlpaca("iex"), sip: await testAlpaca("sip"), info: marketInfo() });
   }
-  if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD, must_change: !!who.must_change, recovery: !!who.recovery });
+  if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD, must_change: !!who.must_change, recovery: !!who.recovery, passkey: !!who.passkey });
   if (path === "/me/password" && m === "POST") {
     const b = await body<{ current?: string; next?: string }>(req);
     return changeOwnPassword(env, who, String(b.current ?? ""), String(b.next ?? ""));
   }
+  // Face ID / fingerprint devices of the signed-in user.
+  if (path === "/me/passkeys" && m === "GET") return json(await listPasskeys(env.DB, who.user));
+  if (path === "/me/passkeys/options" && m === "POST") { if (!env.LOGIN_PASSWORD) return bad("Password login is not enabled."); return json(await registerOptions(env, who, site(env, url).host)); }
+  if (path === "/me/passkeys" && m === "POST") {
+    const err = await registerFinish(env, who, site(env, url).origin, await body<Record<string, unknown>>(req));
+    return err ? bad(err) : json(await listPasskeys(env.DB, who.user));
+  }
+  const pk = path.match(/^\/me\/passkeys\/([A-Za-z0-9_-]{1,1024})$/);
+  if (pk && m === "DELETE") { await deletePasskey(env.DB, who.user, pk[1]); return json(await listPasskeys(env.DB, who.user)); }
 
   // ---- users (admin)
   if (path === "/users" && m === "GET") return json(await listUsers(env.DB));
@@ -99,7 +115,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     });
     return err ? bad(err) : json(await listUsers(env.DB));
   }
-  if (um && m === "DELETE") { await deleteUser(env.DB, um[1]); return json(await listUsers(env.DB)); }
+  if (um && m === "DELETE") { await deleteUser(env.DB, um[1]); if (um[1] !== "admin") await deleteUserPasskeys(env.DB, um[1]); return json(await listUsers(env.DB)); }
 
   // ---- paper trading (per user)
   if (path === "/paper" && m === "GET") {
@@ -559,6 +575,13 @@ export default {
       if (req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
       await ensureSchema(env.DB);
       return login(req, env);
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/login/")) {
+      if (req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
+      await ensureSchema(env.DB);
+      if (url.pathname === "/api/login/forgot") return forgotPassword(req, env);
+      if (url.pathname === "/api/login/passkey/options") return json(await loginOptions(env, site(env, url).host));
+      if (url.pathname === "/api/login/passkey") return loginFinish(req, env, site(env, url).origin, site(env, url).host);
     }
     if (req.method === "POST" && url.pathname === "/api/logout") return logout();
     const who = await authenticate(req, env);
