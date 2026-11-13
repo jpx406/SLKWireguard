@@ -207,6 +207,17 @@ The layout sizes itself to the room each panel has, not only to the window, so i
 
 * **The Six** (`src/agents.ts`): six rule-based analysts on real bars (NOVA ceiling and room, ORIN tail risk, VESK trend, LUMA flow, KIRA exit pressure, DASH opening drive) vote from -1 to +1; the consensus moves the Auto Trader verdict by up to 8 points and is shown as six cards on the selected symbol. `GET /api/council/:symbol`, cached five minutes. They are arithmetic, not language models, and the page says so.
 * **Market radar:** every Auto Trader symbol ranked by liquidity, tight bars, relative volume, one-sided flow and trend; the *Cleanest now* chip shows the top three.
+## Research: thesis tracker and price watches
+
+Adapted from [LangAlpha](https://github.com/ginlix-ai/LangAlpha)'s thesis-tracker skill (Apache-2.0). LangAlpha itself is a separate full platform (its own server, sandbox, database and broker connections that can place live orders) and is not embedded; the desk takes the method.
+
+* **Thesis** (`src/thesis.ts`, **Research** in the sidebar): type a symbol, a side, a horizon and optionally your reason. Claude researches it and writes three to five *pillars*, each one falsifiable claim with confirm / warning / break levels and a next proof point, plus bull / base / bear prices, the price at which the thesis is wrong, and a *security call* (callable, conditional, re-underwrite, inputs missing).
+* **Evidence ledger:** append-only. Every development you add, every fired watch and every data point the analyst finds becomes a row; nothing is rewritten, so drift is visible.
+* **The rule is in code:** one core pillar impaired means at least *watch*; two mean *impaired*; a core pillar broken or changed sets the whole thesis to the same. If the analyst's own verdict is more benign than the rule allows, the desk overrides it and says so. No numeric conviction score is invented.
+* **Price watches:** fire when a price is reached or a stock moves a set percent in a day, checked every minute. A watch can just notify, or *wake the thesis*: the analyst re-checks the pillars against the move (this uses Claude; only users with Claude access can set it). The analyst proposes up to four watches itself at the levels that would change the decision.
+* **Where it feeds:** tracked theses ride along in the scan prompts, so a plan against a thesis marked impaired or broken needs a reason. Spending is recorded under *Research thesis* in Settings and counts toward the daily cap.
+* API: `GET/POST /api/thesis`, `GET/DELETE /api/thesis/:id`, `POST /api/thesis/:id/update`, `POST /api/watches`, `DELETE /api/watches/:id`. Per user.
+
 ## Quant Terminal and the hard risk layer
 
 **Quant Terminal** (second in the sidebar) is a dense terminal-style view, always dark, where every panel is computed from the desk's own data: the paper account with its equity curve and a drawdown-risk gauge; live 5-minute candles of the selected symbol; a grid of the latest plans coloured by outcome; *excursion survival* (how many plans reached +xR, how many went against); *tape pressure* (a cumulative-volume-delta proxy from the bars); a *range field* of volatility ridges (the desk has no order-book feed, and the panel says so); *coherence* of the watchlist; a forward *Monte Carlo ruin cone* bootstrapped from the settled R results at the Kelly-sized risk; an *analog matcher* (k-nearest z-scored windows in the last 30 days and what they did next); and a *Bayesian update* of the win probability. A **KILL SWITCH** button sits in the header.

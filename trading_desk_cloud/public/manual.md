@@ -370,6 +370,52 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 ---
 
+## 17b. Research (thesis tracker and price watches)
+
+The other screens answer "what do I trade today". **Research** answers "why do I own this, and what would prove me wrong". It is for positions you hold for weeks or months. The method is adapted from the open-source LangAlpha project.
+
+### Start a thesis
+
+Type a symbol, choose long or short and a horizon, and write in one sentence why you would own it (optional, but it gives the analyst something to test). Press **Start thesis**. After a few minutes you get:
+
+- **Pillars:** three to five claims the position rests on. Each must be something evidence could disprove ("data-center revenue grows above 30% a year"), with the level that confirms it, the level that warns, and the level that breaks it. *Core* pillars are the ones the position cannot survive without.
+- **Scenarios:** bull, base and bear prices for your horizon, and the price at which the thesis is simply wrong.
+- **Security call:** *callable* (there is enough to act on), *conditional* (waiting for one named input), *re-underwrite* (the thesis changed: start over rather than trim), or *inputs missing*.
+- **Price watches** at the levels that would change the decision.
+
+### Status words
+
+| Status | Meaning |
+|---|---|
+| strengthening | evidence is beating the plan |
+| intact | evidence matches the plan |
+| watch | a warning level was touched; the next proof point decides |
+| impaired | a break level was crossed, the thesis still stands on other pillars |
+| broken | the reason to own it is gone |
+| changed | the business is no longer what you underwrote |
+| untested | no evidence yet |
+
+The overall status follows the core pillars by a fixed rule the desk enforces itself: one core pillar impaired means at least *watch*, two mean *impaired*, and a broken core pillar breaks the thesis. This stops the most common mistake: a thesis that stays "fine" for a year while every reason for it quietly fails.
+
+### Keep it honest
+
+- **Add a development** whenever something happens: an earnings print, a guidance cut, a deal, a sharp move. The analyst verifies it, works out what actually caused it, and re-checks each pillar.
+- **The evidence ledger** only grows. Old rows are never edited, so you can see whether your reason for holding has changed.
+- **Drift check:** each update names the usual self-deceptions if it finds them: the reason changed, the levels moved, only good news was logged, the horizon stretched, or the price is being read as proof.
+
+### Price watches
+
+Add a watch for any symbol: rises to a price, falls to a price, or moves up or down in a day by a percent. The desk checks every minute. A fired watch shows in the list and as a notification. With **wake the thesis** ticked, the analyst re-checks the thesis on the spot; that costs a Claude run, so use it on the levels that matter (the break price, the bear and bull values).
+
+### Recommendations
+
+- Write the thesis **before** you buy, not after. The break price is your exit, decided while you are calm.
+- Two or three core pillars are enough. Ten pillars means you have not decided what matters.
+- When a thesis turns *impaired* or *broken*, act on the security call. Do not add a new reason to keep holding: that is the first drift pattern.
+- Research is slower and costs more per run than a scan. Keep it for positions you mean to hold.
+
+---
+
 ## 18. The safety layer
 
 These run in plain code before every automatic order.

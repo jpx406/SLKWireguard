@@ -9,6 +9,7 @@ import { ENGINES, capBlocks, isEngine, recordSpend, usageReport } from "./cost";
 import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } from "./deep";
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
+import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
 import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
@@ -47,7 +48,7 @@ async function setupMarket(env: Env) {
 }
 
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
-const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/, /^\/strategy\/propose$/];
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/, /^\/strategy\/propose$/, /^\/thesis$/, /^\/thesis\/[a-z0-9]+\/update$/];
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
@@ -86,7 +87,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   if (who.role !== "admin" && (path.startsWith("/users") || (m !== "GET" && ADMIN_WRITES.some((r) => r.test(path)))))
     return bad("Only the admin can change this.", 403);
-  if (!who.ai && AI_ROUTES.some((r) => r.test(path))) return bad("Your account is not allowed to run Claude scans or chat. Ask the admin.", 403);
+  if (!who.ai && m !== "GET" && AI_ROUTES.some((r) => r.test(path))) return bad("Your account is not allowed to run Claude scans or chat. Ask the admin.", 403);
 
   if (path === "/market/test" && m === "GET") {
     if (who.role !== "admin") return bad("Only the admin can test the data connection.", 403);
@@ -251,6 +252,27 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
   }
   // Kronos forecasts (candlestick foundation model in the sandbox).
+  // ---- Research: thesis tracker and price watches (per user)
+  if (path === "/thesis" && m === "GET") { if (agentReady) await finalizeTheses(env); return json(await listTheses(env.DB, who.user)); }
+  if (path === "/thesis" && m === "POST") {
+    if (!agentReady) return bad("The Claude agent is not set up yet (run setup/setup-agent.mjs).", 503);
+    const r = await startThesis(env, await body<Record<string, unknown>>(req), who.user); return r.error ? bad(r.error) : json(r);
+  }
+  const tm = path.match(/^\/thesis\/([a-z0-9]{6,32})(\/update)?$/);
+  if (tm && !tm[2] && m === "GET") { const t = await getThesis(env.DB, who.user, tm[1]); return t ? json(t) : bad("No such thesis.", 404); }
+  if (tm && !tm[2] && m === "DELETE") { await deleteThesis(env.DB, who.user, tm[1]); return json({ ok: true }); }
+  if (tm && tm[2] && m === "POST") {
+    if (!agentReady) return bad("The Claude agent is not set up yet (run setup/setup-agent.mjs).", 503);
+    const r = await updateThesis(env, tm[1], String((await body<{ note?: string }>(req)).note ?? ""), who.user); return r.error ? bad(r.error) : json(r);
+  }
+  if (path === "/watches" && m === "POST") {
+    const b = await body<Record<string, unknown>>(req);
+    // A watch that wakes the analyst spends Claude money: only for users allowed to.
+    const err = await addWatch(env.DB, who.user, { ...b, action: who.ai ? b.action : "notify" }); return err ? bad(err) : json({ ok: true });
+  }
+  const wm = path.match(/^\/watches\/([a-z0-9]{6,32})$/);
+  if (wm && m === "DELETE") { await deleteWatch(env.DB, who.user, wm[1]); return json({ ok: true }); }
+
   if (path === "/kronos" && m === "GET") {
     if (agentReady) await finalizeKronos(env);
     try { await evaluateForecasts(env.DB, 5); } catch { /* later */ }
@@ -420,7 +442,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
-      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos", "strategy"]);
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos", "strategy", "thesis"]);
       await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
     }
     if ("trader_config" in patch) {
