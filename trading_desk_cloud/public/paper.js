@@ -11,6 +11,7 @@ const tm = (t) => (t ? new Date(t * 1000).toLocaleString([], { month: "short", d
 async function loadMe() {
   try { state.me = await api("/api/me"); } catch { return; }
   if (state.me.must_change) showChangePw(state.me);
+  else if (typeof pkOffer === "function") setTimeout(() => pkOffer(state.me), 1500);
   $("#meName").textContent = state.me.user;
   const noAi = !state.me.ai, admin = state.me.role === "admin";
   for (const id of ["#btnFullScan", "#btnSend"]) { const b = $(id); if (b) { b.disabled = noAi; if (noAi) b.title = "Your account can't run Claude. Ask the admin."; } }

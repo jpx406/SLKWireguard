@@ -864,3 +864,6 @@ dialog.login input:not([type="checkbox"]) { width: 100%; box-sizing: border-box;
 .lg-forgot p { text-align: left; } .lg-forgot button { margin-top: 8px; } #forgotOut { min-height: 1em; }
 .pk-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; } .pk-row button { margin-left: auto; }
 .badge.warn { background: color-mix(in srgb, var(--warn, #b45309) 18%, transparent); color: var(--warn, #b45309); border: 1px solid currentColor; }
+
+.lg-hint { margin: -6px 0 0; text-align: center; color: var(--dim); font-size: 0.923rem; }
+.pk-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--panel); color: var(--text); border: 1px solid var(--up); border-radius: 10px; padding: 10px 16px; z-index: 1000; max-width: 92vw; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
