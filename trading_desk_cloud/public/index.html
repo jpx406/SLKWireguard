@@ -13,6 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trading Desk">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,7 +28,7 @@
 <div id="banner" class="banner hidden" role="alert"></div>
 <header class="topbar">
   <button type="button" id="btnSide" class="icon-btn layout-toggle" title="Show or hide the menu labels and watchlist" aria-label="Collapse or expand the sidebar"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
-  <div class="brand"><span class="logo" aria-hidden="true">▲</span> <span class="brand-name">Trading Desk</span></div>
+  <div class="brand"><svg class="jp-logo top-logo" viewBox="0 0 64 64" role="img" aria-label="JP97"><rect width="64" height="64" rx="14" fill="#0f172a"/><path d="M11 33l10-10 8 6 17-17" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 12h9v9" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><text x="32" y="55" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="0.5"><tspan fill="#ffffff">JP</tspan><tspan fill="#c8d400">97</tspan></text></svg> <span class="brand-name">JP97 Trading Desk</span></div>
   <button type="button" id="modeBadge" class="badge muted" title="Your trading rules (trader/config.json)">Checking Rules…</button>
   <div class="clocks">
     <div class="clock"><span class="lbl">Riyadh</span><span id="clkRiyadh" class="mono">--:--:--</span></div>
@@ -509,23 +510,49 @@
       <table class="bd-table" id="usersTable"><thead><tr><th>User</th><th>Role</th><th>Claude access</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
       <div class="f-grid" style="margin-top:8px">
         <label>New username<input id="nuName" placeholder="e.g. maria" autocapitalize="none" spellcheck="false"></label>
-        <label>Password (10+ characters)<input id="nuPw" type="password" autocomplete="new-password"></label>
         <label class="check"><input id="nuAi" type="checkbox"> Can use Claude (scans, Copilot) — costs money</label>
       </div>
       <button type="button" id="btnAddUser" class="primary small">Add User</button>
+      <p class="dim small">A new user signs in with the initial password <b>Welcome1234</b> and must choose their own at the first sign-in. Reset Password puts an account back to it.</p>
     </fieldset>
     <div id="meErr" class="err-text"></div>
     <div class="row gap end"><button type="button" id="btnMeLogout" class="ghost" style="margin-right:auto">Log Out</button><button type="button" id="btnMeClose" class="primary">Close</button></div>
   </form>
 </dialog>
 
-<dialog id="loginDlg" class="login">
+<dialog id="loginDlg" class="login" aria-labelledby="lgTitle">
   <form id="loginForm">
-    <div class="brand big-brand"><span class="logo">▲</span> Trading Desk</div>
-    <label>Username<input id="loginUser" autocomplete="username" placeholder="admin" autocapitalize="none" spellcheck="false"></label>
-    <label>Password<input id="loginPw" type="password" autocomplete="current-password" required></label>
-    <div id="loginErr" class="err-text"></div>
-    <button class="primary">Log In</button>
+    <div class="lg-head">
+      <svg class="jp-logo lg-logo" viewBox="0 0 64 64" role="img" aria-label="JP97"><rect width="64" height="64" rx="14" fill="#0f172a"/><path d="M11 33l10-10 8 6 17-17" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 12h9v9" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><text x="32" y="55" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="0.5"><tspan fill="#ffffff">JP</tspan><tspan fill="#c8d400">97</tspan></text></svg>
+      <h1 class="lg-title" id="lgTitle"><span class="lg-chip">JP97</span> TRADING DESK</h1>
+      <div class="lg-sub">Paper trading — sign in</div>
+    </div>
+    <div class="lg-field"><label for="loginUser">Username</label>
+      <input id="loginUser" autocomplete="username" placeholder="admin" autocapitalize="none" spellcheck="false"></div>
+    <div class="lg-field"><label for="loginPw">Password</label>
+      <div class="lg-pw"><input id="loginPw" type="password" autocomplete="current-password" required>
+        <label class="lg-eye" title="Show password"><input type="checkbox" id="loginShow" aria-label="Show password"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></label></div></div>
+    <div id="loginErr" class="err-text" role="alert"></div>
+    <div class="lg-actions"><button class="primary lg-btn">Sign in</button></div>
+    <details class="lg-forgot"><summary>Forgot password?</summary>
+      <p>Ask the JP97 administrator to reset it. Your account goes back to the initial password and you choose a new one at the next sign-in.</p></details>
+    <p class="lg-foot">Accounts and passwords are managed by the JP97 administrator.<br>Paper trading only: no real orders are placed.</p>
+  </form>
+</dialog>
+
+<dialog id="pwDlg" class="login" aria-labelledby="pwTitle">
+  <form id="pwForm">
+    <div class="lg-head">
+      <svg class="jp-logo lg-logo" viewBox="0 0 64 64" role="img" aria-label="JP97"><rect width="64" height="64" rx="14" fill="#0f172a"/><path d="M11 33l10-10 8 6 17-17" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M37 12h9v9" fill="none" stroke="#c8d400" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><text x="32" y="55" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="800" letter-spacing="0.5"><tspan fill="#ffffff">JP</tspan><tspan fill="#c8d400">97</tspan></text></svg>
+      <h1 class="lg-title" id="pwTitle">Choose your password</h1>
+      <div class="lg-sub" id="pwSub">First sign-in</div>
+    </div>
+    <p class="lg-note" id="pwNote">You signed in with the initial password. Choose your own before you continue.</p>
+    <div class="lg-field" id="pwCurBox"><label for="pwCur">Current password</label><input id="pwCur" type="password" autocomplete="current-password"></div>
+    <div class="lg-field"><label for="pwNew">New password (10 or more characters)</label><input id="pwNew" type="password" autocomplete="new-password" required minlength="10"></div>
+    <div class="lg-field"><label for="pwNew2">New password again</label><input id="pwNew2" type="password" autocomplete="new-password" required></div>
+    <div id="pwErr" class="err-text" role="alert"></div>
+    <div class="lg-actions"><button type="button" id="pwLogout" class="ghost">Sign out</button><button class="primary lg-btn">Save and continue</button></div>
   </form>
 </dialog>
 

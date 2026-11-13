@@ -834,3 +834,26 @@ input:focus-visible + .mt-knob { outline: 2px solid var(--accent); outline-offse
 .flash-up { animation: flash-up 1.2s ease-out; border-radius: 3px; } .flash-down { animation: flash-down 1.2s ease-out; border-radius: 3px; }
 @media (max-width: 700px) { .live-txt { display: none; } }
 @media (prefers-reduced-motion: reduce) { .live-box.ok .live-dot, .flash-up, .flash-down { animation: none; } }
+
+/* ---- Sign-in screen (JP97) */
+dialog.login { width: min(480px, 94vw); border: 0; background: transparent; padding: 24px 16px; box-shadow: none; }
+dialog.login form { gap: 14px; }
+.jp-logo { display: block; flex: none; } .top-logo { width: 22px; height: 22px; display: inline-block; vertical-align: -5px; }
+.lg-head { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; margin-bottom: 6px; }
+.lg-logo { width: 84px; height: 84px; }
+.lg-title { margin: 6px 0 0; font-size: clamp(1.5rem, 6vw, 2.15rem); font-weight: 800; letter-spacing: 0.01em; line-height: 1.15; }
+.lg-chip { background: #c8d400; color: #111827; padding: 0 0.22em; border-radius: 6px; }
+.lg-sub { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.923rem; color: var(--dim); }
+.lg-field { display: flex; flex-direction: column; gap: 6px; } .lg-field label { font-weight: 600; }
+dialog.login input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; min-height: 46px; font-size: 1.077rem; padding: 8px 12px; border-radius: 8px; }
+.lg-pw { display: flex; gap: 8px; align-items: center; } .lg-pw input { flex: 1; min-width: 0; }
+.lg-eye { position: relative; width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 8px; cursor: pointer; color: var(--text); }
+.lg-eye input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; } .lg-eye .ic { width: 24px; height: 24px; }
+.lg-eye:hover { background: var(--panel-2); } .lg-eye:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lg-eye:has(input:checked) { color: var(--accent); }
+.lg-actions { display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
+.lg-btn, dialog.login button.primary.lg-btn { background: #c8d400; color: #111827; border-color: #c8d400; font-weight: 700; min-height: 48px; padding: 0 40px; border-radius: 10px; font-size: 1.077rem; }
+.lg-btn:hover { filter: brightness(0.94); }
+.lg-forgot { text-align: center; } .lg-forgot summary { cursor: pointer; text-decoration: underline; list-style: none; display: inline-block; padding: 8px; } .lg-forgot summary::-webkit-details-marker { display: none; }
+.lg-forgot p, .lg-note { margin: 4px 0 0; color: var(--dim); font-size: 0.923rem; } .lg-note { text-align: center; }
+.lg-foot { text-align: center; color: var(--dim); font-size: 0.923rem; margin: 0; }

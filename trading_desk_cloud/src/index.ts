@@ -75,7 +75,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     if (who.role !== "admin") return bad("Only the admin can test the data connection.", 403);
     return json({ iex: await testAlpaca("iex"), sip: await testAlpaca("sip"), info: marketInfo() });
   }
-  if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD });
+  if (path === "/me" && m === "GET") return json({ user: who.user, role: who.role, ai: who.ai, password_login: !!env.LOGIN_PASSWORD, must_change: !!who.must_change, recovery: !!who.recovery });
   if (path === "/me/password" && m === "POST") {
     const b = await body<{ current?: string; next?: string }>(req);
     return changeOwnPassword(env, who, String(b.current ?? ""), String(b.next ?? ""));
@@ -90,8 +90,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const um = path.match(/^\/users\/([a-z0-9_.-]{3,32})$/);
   if (um && m === "PUT") {
-    const b = await body<{ password?: string; ai?: boolean; role?: string }>(req);
+    const b = await body<{ password?: string; reset?: boolean; ai?: boolean; role?: string }>(req);
     const err = await updateUser(env.DB, um[1], {
+      ...(b.reset === true ? { reset: true } : {}),
       ...(typeof b.password === "string" && b.password ? { password: b.password } : {}),
       ...(typeof b.ai === "boolean" ? { ai: b.ai } : {}),
       ...(b.role === "admin" || b.role === "user" ? { role: b.role } : {}),
@@ -562,6 +563,8 @@ export default {
     if (req.method === "POST" && url.pathname === "/api/logout") return logout();
     const who = await authenticate(req, env);
     if (who instanceof Response) return who;
+    // First sign-in with the initial password: nothing works until the user has chosen their own.
+    if (who.must_change && !/^\/api\/me(\/password)?$/.test(url.pathname)) return Response.json({ detail: "Change your password first.", must_change: true }, { status: 403 });
     if (req.method !== "GET" && req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
     try {
       return await api(req, env, url, who);

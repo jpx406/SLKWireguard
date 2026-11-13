@@ -56,6 +56,7 @@ const api = async (path, opts = {}) => {
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     if (r.status === 401 && err.login) { showLogin(); throw new Error("Please log in."); }
+    if (r.status === 403 && err.must_change) { showChangePw(); throw new Error("Change your password first."); }
     throw new Error(err.detail || `${r.status} ${r.statusText}`);
   }
   if (!ct.includes("json")) throw new Error(`Unexpected response from ${path} (not JSON). Reload the page; if it persists, the Worker is not handling /api.`);
@@ -75,8 +76,27 @@ document.getElementById("loginForm").onsubmit = async (e) => {
   if (r?.ok) { location.reload(); return; }
   err.textContent = r ? (await r.json().catch(() => ({}))).detail || "Login failed." : "Can't reach the server.";
 };
+document.getElementById("loginShow").onchange = (e) => { document.getElementById("loginPw").type = e.target.checked ? "text" : "password"; };
+/** First sign-in (or a reset): the user must choose their own password before anything else works. */
+function showChangePw(me) {
+  const d = document.getElementById("pwDlg");
+  if (me?.recovery) { document.getElementById("pwCurBox").classList.add("hidden"); document.getElementById("pwSub").textContent = "Recovery"; document.getElementById("pwNote").textContent = "You signed in with the recovery password. Set a new admin password."; }
+  if (d.open) return;
+  document.getElementById("banner").classList.add("hidden");
+  d.showModal();
+}
+document.getElementById("pwDlg").addEventListener("cancel", (e) => e.preventDefault());
+document.getElementById("pwLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); };
+document.getElementById("pwForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const g = (id) => document.getElementById(id), err = g("pwErr"); err.textContent = "";
+  if (g("pwNew").value !== g("pwNew2").value) { err.textContent = "The two new passwords are not the same."; return; }
+  const r = await fetch("/api/me/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: g("pwCur").value, next: g("pwNew").value }) }).catch(() => null);
+  if (r?.ok) { location.reload(); return; }
+  err.textContent = r ? (await r.json().catch(() => ({}))).detail || "Could not change the password." : "Can't reach the server.";
+};
 function showBanner(msg) {
-  if (msg === "Please log in.") return;
+  if (msg === "Please log in." || msg === "Change your password first.") return;
   const b = document.getElementById("banner"); b.innerHTML = "";
   const t = document.createElement("span"); t.innerHTML = "<b>Problem:</b> "; t.append(document.createTextNode(msg));
   const x = document.createElement("button"); x.className = "ghost small"; x.textContent = "dismiss"; x.onclick = () => b.classList.add("hidden");

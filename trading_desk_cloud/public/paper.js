@@ -10,6 +10,7 @@ const tm = (t) => (t ? new Date(t * 1000).toLocaleString([], { month: "short", d
 /* ------------------------------------------------------------------ identity / roles */
 async function loadMe() {
   try { state.me = await api("/api/me"); } catch { return; }
+  if (state.me.must_change) showChangePw(state.me);
   $("#meName").textContent = state.me.user;
   const noAi = !state.me.ai, admin = state.me.role === "admin";
   for (const id of ["#btnFullScan", "#btnSend"]) { const b = $(id); if (b) { b.disabled = noAi; if (noAi) b.title = "Your account can't run Claude. Ask the admin."; } }
@@ -19,7 +20,7 @@ async function loadMe() {
 $("#btnMe").onclick = async () => {
   const me = state.me || {};
   $("#meTitle").textContent = `${me.user} (${me.role}${me.ai ? ", Claude access" : ""})`;
-  $("#pwBox").classList.toggle("hidden", me.user === "admin");
+  $("#pwBox").classList.toggle("hidden", !me.password_login);
   $("#usersBox").classList.toggle("hidden", me.role !== "admin" || !me.password_login);
   $("#meErr").textContent = "";
   if (me.role === "admin" && me.password_login) await loadUsers();
@@ -47,12 +48,14 @@ async function loadUsers(list) {
     role.onchange = () => userCall("PUT", u.id, { role: role.value });
     const roleTd = el("td"); roleTd.append(role);
     const act = el("td"), pw = el("button", "ghost small", "Reset Password"), del = el("button", "ghost small", "Delete");
-    pw.onclick = () => { const p = prompt(`New password for ${u.id} (10+ characters):`); if (p) userCall("PUT", u.id, { password: p }); };
+    if (u.id === "admin") { role.disabled = cb.disabled = true; del.classList.add("hidden"); }
+    pw.onclick = async () => { if (await askConfirm({ title: `Reset the password of ${u.id}?`, message: "The account goes back to the initial password Welcome1234 and is signed out everywhere. They must choose a new password at the next sign-in.", confirm: "Reset Password" })) userCall("PUT", u.id, { reset: true }); };
     del.onclick = async () => {
       if (await askConfirm({ title: `Delete ${u.id}?`, message: "They can no longer log in. Their paper account and history stay in the database.", confirm: "Delete User" })) userCall("DELETE", u.id);
     };
     act.append(pw, del);
-    tr.append(el("td", "sym", u.id), roleTd, aiTd, el("td", "dim small", u.created_at || ""), act); tb.append(tr);
+    const name = el("td", "sym", u.id); if (u.must_change) name.append(el("span", "dim tiny", "  initial password"));
+    tr.append(name, roleTd, aiTd, el("td", "dim small", u.created_at || ""), act); tb.append(tr);
   }
 }
 async function userCall(method, id, body) {
@@ -63,8 +66,8 @@ async function userCall(method, id, body) {
 $("#btnAddUser").onclick = async () => {
   $("#meErr").textContent = "";
   try {
-    const list = await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#nuName").value.trim().toLowerCase(), password: $("#nuPw").value, ai: $("#nuAi").checked }) });
-    $("#nuName").value = $("#nuPw").value = ""; $("#nuAi").checked = false; loadUsers(list);
+    const list = await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#nuName").value.trim().toLowerCase(), ai: $("#nuAi").checked }) });
+    $("#nuName").value = ""; $("#nuAi").checked = false; loadUsers(list);
   } catch (e) { $("#meErr").textContent = e.message; }
 };
 

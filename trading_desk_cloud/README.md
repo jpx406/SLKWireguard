@@ -351,11 +351,12 @@ The **Swing setups (2-10 day holds)** brief (Autopilot, off by default, 16:40 Ne
 
 ## Users
 
-* **Admin:** log in with username **admin** and the `LOGIN_PASSWORD` secret. To change it, run `.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`. This logs everyone out.
-* **Adding users:** 👤 (top right) → Users → add a username and password (10+ characters). Passwords are stored as salted PBKDF2 hashes, never in plain text.
+* **Admin:** sign in with username **admin**. On a fresh database (and the first time after this version is deployed) the admin password is the initial password `Welcome1234`, and the desk makes you choose your own before anything else works. Do that right after deploying: until you do, anyone who knows the initial password can take the admin account.
+* **Recovery:** the `LOGIN_PASSWORD` secret still signs the admin in at any time and lets them set a new admin password without the current one. Keep it long and private. Changing it (`.\node_modules\.bin\wrangler.cmd secret put LOGIN_PASSWORD`) logs everyone out.
+* **Adding users:** 👤 (top right) → Users → type a username → Add User. The account starts with the initial password `Welcome1234` and the user must choose their own (10+ characters, not the initial one) at the first sign-in. Passwords are stored as salted PBKDF2 hashes, never in plain text.
 * **Claude access:** tick **Claude access** only for users who may run scans and Copilot, since those cost money on your Anthropic key. Users without it can still see the briefs and the market board, chart, paper trade and keep a journal.
 * **What each user has of their own:** a paper account and a journal. The watchlist, config, filters and autopilot are shared and only the admin can change them.
-* **Passwords:** users can change their own password under 👤. The admin can reset a password (which logs that user out) or delete a user.
+* **Passwords:** users can change their own password under 👤. Everyone, the admin included, can change their own password under 👤. **Reset Password** puts an account back to the initial password, signs it out everywhere and forces a new choice at the next sign-in. The admin account cannot be deleted.
 
 
 **Each user has their own paper account:**
