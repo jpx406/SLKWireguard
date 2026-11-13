@@ -122,7 +122,7 @@ function thesisDetail(det) {
   for (const l of t.ledger.slice(0, 60)) { const r = el("div", "th-led"); r.append(el("span", "mono dim tiny", String(l.at).slice(0, 10)), el("span", "badge muted", l.pillar || "note")); const b = el("div"); b.append(l.fact); if (l.signal || l.impact || l.source) b.append(el("div", "dim tiny", [l.signal, l.impact, l.source].filter(Boolean).join(" · "))); r.append(b); lg.append(r); }
   det.append(lg);
   if (t.content) { const rep = el("details", "th-report"); rep.append(el("summary", null, "Full report")); const m = el("div", "md"); m.innerHTML = md(t.content); rep.append(m); det.append(rep); }
-  det.append(el("p", "dim tiny", `Method adapted from LangAlpha's thesis-tracker (Apache-2.0). Research, not advice.${t.cost ? ` Last run cost ${t.cost}.` : ""}`));
+  det.append(el("p", "dim tiny", `Method adapted from LangAlpha's thesis-tracker (Apache-2.0). Research, not advice.${t.cost ? ` Last run cost ${formatCost(t.cost)}.` : ""}`));
 }
 
 $("#thesisForm").onsubmit = async (e) => {
