@@ -12,6 +12,7 @@ import { runChartAuto } from "./autochart";
 import { learnTick, playbookPrompt } from "./learn";
 import { evaluateForecasts, finalizeKronos, kronosContext } from "./kronos";
 import { checkWatches, finalizeTheses, thesisContext } from "./thesis";
+import { flowContext } from "./flow";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
@@ -223,7 +224,7 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filters
     // The full scan runs every skill, so it gets twice the normal per-session budget.
     const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd, engine as never);
     await env.DB.prepare("UPDATE briefs SET engine = ? WHERE id = ?").bind(engine, id).run();
-    const handoff = (await rulesPrompt(env.DB)) + (await playbookPrompt(env.DB)) + (await kronosContext(env.DB, s.watchlist)) + (await thesisContext(env.DB)) + (s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "");
+    const handoff = (await rulesPrompt(env.DB)) + (await playbookPrompt(env.DB)) + (await kronosContext(env.DB, s.watchlist)) + (await thesisContext(env.DB)) + (await flowContext(env.DB, s.watchlist)) + (s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "");
     const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
     if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
     const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${handoff}${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;

@@ -370,6 +370,49 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 ---
 
+## 17a. Options Flow
+
+Options traders often move before the stock does, and the dealers who take the other side of their trades have to hedge. **Options Flow** shows both: where the option money went today, and where dealer hedging is likely to slow the stock down or speed it up. Data comes from Cboe and is about 15 minutes delayed.
+
+### Reading the top row
+
+- **Flow score:** from -100 to +100. Positive means more money went into bullish trades (calls bought, puts sold) than bearish ones. Near zero means no clear lean.
+- **Premium today:** total dollars paid for options in the selected expiries.
+- **Put/Call volume:** above 1 means more puts than calls traded.
+- **IV30:** how big a move the options market is pricing for the next month.
+
+Use **Today / Week / 45 days / All** to choose which expiries count. *Today* shows same-day options, which drive intraday moves; *45 days* is the default.
+
+### The three lists
+
+- **Premium leaders:** the contracts with the most money traded. *Vol / OI* above 1 (shown in amber) means more traded today than existed yesterday: new positions, not old ones being moved.
+- **New since last refresh:** what traded since the screen last updated.
+- **Unusual:** heavy volume against little or no open interest.
+
+**Side** is an estimate: *bought* means the last trade was near the ask (someone paid up), *sold* near the bid. *Mid* trades are not counted as bullish or bearish.
+
+### The gamma map
+
+Each bar is one strike. Green strikes act as brakes, red strikes as accelerators.
+
+| Term | Meaning | How to use it |
+|---|---|---|
+| Positive gamma | dealers buy dips and sell rallies | expect a quiet, range-bound day; fade the edges |
+| Negative gamma | dealers sell drops and buy rallies | expect big, fast moves; do not fade, use wider stops |
+| Magnet | largest positive strike | price tends to stall or pin here, especially near expiry |
+| Pit | largest negative strike | moves speed up through here |
+| Flip | where gamma changes sign | above it the day is calmer, below it wilder |
+| Call wall / Put wall | most call / put gamma | the usual ceiling and floor |
+
+### Recommendations
+
+- Check SPY first each morning: its gamma regime sets the tone for everything else.
+- Use the magnet and the walls as targets and as places **not** to chase a breakout.
+- One large trade is not a signal. Look for the same direction across several strikes and expiries, with volume above open interest.
+- This screen has no individual trades, so it cannot show sweeps or blocks, and the side is an estimate. Treat it as context for a plan, never as the plan.
+
+---
+
 ## 17b. Research (thesis tracker and price watches)
 
 The other screens answer "what do I trade today". **Research** answers "why do I own this, and what would prove me wrong". It is for positions you hold for weeks or months. The method is adapted from the open-source LangAlpha project.

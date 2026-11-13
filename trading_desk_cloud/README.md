@@ -207,6 +207,19 @@ The layout sizes itself to the room each panel has, not only to the window, so i
 
 * **The Six** (`src/agents.ts`): six rule-based analysts on real bars (NOVA ceiling and room, ORIN tail risk, VESK trend, LUMA flow, KIRA exit pressure, DASH opening drive) vote from -1 to +1; the consensus moves the Auto Trader verdict by up to 8 points and is shown as six cards on the selected symbol. `GET /api/council/:symbol`, cached five minutes. They are arithmetic, not language models, and the page says so.
 * **Market radar:** every Auto Trader symbol ranked by liquidity, tight bars, relative volume, one-sided flow and trend; the *Cleanest now* chip shows the top three.
+## Options Flow and dealer gamma
+
+An options-flow screen in the spirit of paid flow terminals (Skylit, Unusual Whales and similar), built on free data. Their code and data are proprietary and nothing of theirs is copied; the layout, names and scores here are the desk's own.
+
+* **Data:** Cboe's free delayed option chains (`cdn.cboe.com`, about 15 minutes behind), fetched by the Worker per symbol and reused for 90 seconds. Every contract's volume, open interest, bid, ask, last trade, IV and greeks.
+* **Premium leaders:** contracts ranked by dollars traded today, with volume against open interest, IV, tags (0DTE, $1M+, unusual, far OTM) and filters for calls/puts, side and size.
+* **New since last refresh:** the desk keeps the previous snapshot's volumes and lists what traded in between, with the premium paid. This is the closest a snapshot source gets to a live tape.
+* **Side and scores (`src/flow.ts`):** *bought* when the last trade sat in the top 30% of the bid-ask spread, *sold* in the bottom 30%, otherwise *mid*. The **score** runs from -100 (bearish) to +100 (bullish): calls bought or puts sold are bullish; it grows with premium, volume against open interest, near expiries and out-of-the-money strikes. **Interest** (0-100) ignores direction. Both are ranking aids, not forecasts.
+* **Dealer gamma (GEX):** gamma x open interest x 100 x price² x 1% per strike, calls positive and puts negative (the usual assumption that dealers are long calls and short puts). The screen names the largest positive strike (*magnet*), the largest negative (*pit*), the *flip* level, and the call and put walls, and says what a positive or negative total usually means for the day's range.
+* **Limits, stated on the screen:** no individual trades, so no sweeps, blocks or multi-leg detection; side is an estimate; data is delayed; very large chains (SPX) are refused, use SPY. Reading a 6 MB chain takes roughly 50 ms of CPU, which needs the Workers Paid plan.
+* **Where it feeds:** a symbol looked at in the last 30 minutes adds one line (flow score, gamma regime and key strikes) to the scan prompts.
+* API: `GET /api/flow?symbol=SPY&range=0dte|week|month|all`.
+
 ## Research: thesis tracker and price watches
 
 Adapted from [LangAlpha](https://github.com/ginlix-ai/LangAlpha)'s thesis-tracker skill (Apache-2.0). LangAlpha itself is a separate full platform (its own server, sandbox, database and broker connections that can place live orders) and is not embedded; the desk takes the method.

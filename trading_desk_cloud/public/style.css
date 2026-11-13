@@ -897,3 +897,22 @@ dialog.login input:not([type="checkbox"]) { width: 100%; box-sizing: border-box;
 
 .th-detail p { margin: 0; } .th-detail table { width: 100%; table-layout: auto; } .th-detail table td, .th-detail table th { white-space: normal; vertical-align: top; }
 .th-detail table td:first-child { min-width: 180px; } .th-detail .bd-table-wrap { overflow-x: auto; }
+
+/* ---- Options flow */
+.fl-head { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.fl-kpi, .fl-score { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); min-width: 96px; }
+.fl-score b { font-size: 1.538rem; line-height: 1.1; } .fl-kpi b { font-size: 1.077rem; }
+.fl-score.up { border-color: var(--up); } .fl-score.down { border-color: var(--down); }
+.fl-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+@container content (max-width: 900px) { .fl-body { grid-template-columns: minmax(0, 1fr); } }
+.fl-main, .fl-side { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.fl-tabs { align-self: flex-start; flex-wrap: wrap; } .fl-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-tag { font-size: 0.692rem; padding: 0 4px; border-radius: 3px; border: 1px solid var(--line); color: var(--dim); font-weight: 500; white-space: nowrap; }
+tr.fl-fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.fl-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); } .fl-card h4 { margin: 0 0 6px; } .fl-card p { margin: 0 0 6px; }
+.fl-split { margin: 6px 0; } .fl-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); margin: 3px 0; }
+.fl-bar i.up { background: var(--up); } .fl-bar i.down { background: var(--down); } .fl-leg { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.fl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; } .fl-gex { width: 100%; height: auto; display: block; }
+.fl-strike { display: grid; grid-template-columns: 70px minmax(0, 1fr) 64px; gap: 8px; align-items: center; padding: 2px 0; } .fl-strike i { height: 8px; border-radius: 4px; background: var(--accent); display: block; }
+#flow td.warn { color: var(--warn, #b45309); }
+@container content (max-width: 900px) { .fl-side { order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; } }

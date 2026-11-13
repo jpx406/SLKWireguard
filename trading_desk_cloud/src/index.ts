@@ -10,6 +10,7 @@ import { deepAfterBriefs, finalizeDeep, latestRatings, listDeep, startDeep } fro
 import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
+import { optionsFlow, setFlowBase } from "./flow";
 import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
@@ -38,7 +39,7 @@ function parseConfig(raw: string) {
 /** Point market data at the configured source (setting cached for 30 s per isolate). */
 let srcCache: { at: number; v: DataSource } | null = null;
 async function setupMarket(env: Env) {
-  setMarketBase(env.MARKET_DATA_BASE);
+  setMarketBase(env.MARKET_DATA_BASE); setFlowBase(env.FLOW_DATA_BASE);
   if (!srcCache || Date.now() - srcCache.at > 30_000) {
     let v: DataSource = "auto";
     try { await ensureSchema(env.DB); v = await getSetting<DataSource>(env.DB, "data_source", "auto"); } catch { /* default */ }
@@ -252,6 +253,12 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
   }
   // Kronos forecasts (candlestick foundation model in the sandbox).
+  // ---- Options flow and dealer gamma (Cboe delayed chains)
+  if (path === "/flow" && m === "GET") {
+    try { return json(await optionsFlow(env, url.searchParams.get("symbol") || "SPY", url.searchParams.get("range") || "month")); }
+    catch (e) { return bad(String((e as Error).message || e).slice(0, 200), 502); }
+  }
+
   // ---- Research: thesis tracker and price watches (per user)
   if (path === "/thesis" && m === "GET") { if (agentReady) await finalizeTheses(env); return json(await listTheses(env.DB, who.user)); }
   if (path === "/thesis" && m === "POST") {
