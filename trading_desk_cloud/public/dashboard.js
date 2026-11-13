@@ -94,11 +94,14 @@ function renderDashboard() {
   host.append(pt);
 
   // Live mini chart
+  if (state.dash.mc && state.dash.mcSym === state.symbol && state.dash.mcBox) { box.replaceWith(state.dash.mcBox); return; }
   if (state.dash.mc) state.dash.mc.dispose();
   state.dash.mc = createMiniChart(box, { symbol: state.symbol, interval: "5m", range: "1D", fontSize: 10, signals: true });
+  state.dash.mcSym = state.symbol; state.dash.mcBox = box;
 }
 
 document.addEventListener("section", (e) => {
-  if (e.detail === "dashboard") loadDashboard();
-  else if (state.dash.mc && !sectionVisible("dashboard")) { state.dash.mc.dispose(); state.dash.mc = null; }
+  clearInterval(state.dash.timer);
+  if (e.detail === "dashboard") { loadDashboard(); state.dash.timer = setInterval(() => { if (sectionVisible("dashboard") && !document.hidden) loadDashboard(); }, 30000); }
+  else if (state.dash.mc && !sectionVisible("dashboard")) { state.dash.mc.dispose(); state.dash.mc = null; state.dash.mcBox = null; }
 });

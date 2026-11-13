@@ -81,7 +81,7 @@ function renderCryptoDashboard(host) {
   // Movers on the list
   const mv = section("Pairs (24h)"); const qs = Object.values(state.crypto.quotes).filter((q) => q.last != null).sort((a, b) => (b.change_pct ?? 0) - (a.change_pct ?? 0));
   mv.append(qs.length ? table(["Pair", "Last", "24h", "Kronos", "Plan"], qs.map((q) => { const tr = el("tr"); const f = d.forecasts[q.symbol]; const s = td(q.symbol, "sym"); s.style.cursor = "pointer"; s.onclick = () => { setSymbol(q.symbol); navigate("chart"); };
-    tr.append(s, td(fmt(q.last), "num"), td(q.change_pct == null ? "—" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`, `num ${pnlCls(q.change_pct)}`), td(f ? `${Math.round(f.prob_up * 100)}% up · ${f.exp_move_pct >= 0 ? "+" : ""}${fmt(f.exp_move_pct)}%` : "—", f ? (f.prob_up >= 0.6 ? "up" : f.prob_up <= 0.4 ? "down" : "") : "dim"),
+    tr.append(s, liveTag(td(fmt(q.last), "num"), q.symbol), td(q.change_pct == null ? "—" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`, `num ${pnlCls(q.change_pct)}`), td(f ? `${Math.round(f.prob_up * 100)}% up · ${f.exp_move_pct >= 0 ? "+" : ""}${fmt(f.exp_move_pct)}%` : "—", f ? (f.prob_up >= 0.6 ? "up" : f.prob_up <= 0.4 ? "down" : "") : "dim"),
       td((d.scan?.picks || []).find((p) => p.symbol === q.symbol) ? `${(d.scan.picks.find((p) => p.symbol === q.symbol)).bias} · score ${(d.scan.picks.find((p) => p.symbol === q.symbol)).score}` : "—", "small")); return tr; })) : el("div", "dim small", "No quotes yet."));
   grid.append(mv);
   // Crypto equity
@@ -126,6 +126,6 @@ $("#cryptoForecastAll").onclick = async () => {
   b.disabled = false;
 };
 document.addEventListener("section", (e) => {
-  if (e.detail === "crypto") { loadCrypto(); clearInterval(state.crypto.timer); state.crypto.timer = setInterval(() => { if (sectionVisible("crypto")) loadCrypto(); }, 60000); }
+  if (e.detail === "crypto") { loadCrypto(); clearInterval(state.crypto.timer); state.crypto.timer = setInterval(() => { if (sectionVisible("crypto") && !document.hidden) loadCrypto(); }, 30000); }
   else if (state.crypto.charts.length && !sectionVisible("crypto")) { disposeCryptoCharts(); clearInterval(state.crypto.timer); }
 });

@@ -433,3 +433,7 @@ If something fails, a red **Problem:** bar at the top of the app says what went 
 npx wrangler dev
 npm run typecheck
 ```
+
+## How live the screens are
+
+Prices are polled, not streamed. `public/live.js` runs one loop every 10 seconds while the tab is visible: it refreshes the watchlist, the active quote and every element tagged with `liveTag(node, symbol)`, flashes a price green or red when it changes, and drives the indicator in the top bar (source and seconds since the last data arrived; amber after 45 seconds without data). Charts refresh every 20 seconds, Dashboard, Crypto and Quant Terminal every 30, Auto Trader every 60. Stock prices do not move while the US market is closed; without Alpaca keys the source is Yahoo, which can lag.

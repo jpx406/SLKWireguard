@@ -354,7 +354,7 @@ function renderWatchlist() {
   for (const sym of state.settings.watchlist) {
     const q = state.quotes[sym] || {}; const cls = q.change_pct > 0 ? "up" : q.change_pct < 0 ? "down" : "";
     const row = el("div", `w-row${sym === state.symbol ? " active" : ""}`);
-    row.append(el("span", "w-sym", sym), el("span", "w-px", fmt(q.last)), el("span", "w-chg " + cls, q.change_pct == null ? "" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`));
+    row.append(el("span", "w-sym", sym), flashEl(el("span", "w-px", fmt(q.last)), "w:" + sym, q.last), el("span", "w-chg " + cls, q.change_pct == null ? "" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`));
     row.setAttribute("aria-label", `${sym}${q.last == null ? "" : `, ${fmt(q.last)}`}${q.change_pct == null ? "" : `, ${q.change_pct > 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent`}`);
     const pop = el("button", "w-del w-pop"); pop.innerHTML = icon("popout"); pop.title = `Open ${sym} in its own window`; pop.setAttribute("aria-label", `Open ${sym} in its own window`);
     pop.onclick = (e) => { e.stopPropagation(); openChartWindow(sym); };
@@ -368,7 +368,7 @@ function renderWatchlist() {
 }
 function renderActiveQuote() {
   const q = state.quotes[state.symbol] || {};
-  $("#qLast").textContent = fmt(q.last);
+  $("#qLast").textContent = fmt(q.last); flashEl($("#qLast"), "q:" + state.symbol, q.last);
   const c = $("#qChg"); c.className = `mono ${q.change_pct > 0 ? "up" : q.change_pct < 0 ? "down" : ""}`;
   c.textContent = q.change_pct == null ? "" : `${q.last - q.prev >= 0 ? "+" : ""}${fmt(q.last - q.prev)} (${fmt(q.change_pct)}%)`;
   // The canvas chart has no text of its own: describe it for VoiceOver.
@@ -389,6 +389,16 @@ async function refreshQuotes(only) {
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
 const MAIN_SECTIONS = ["dashboard", "master", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
+state.live = { last: 0, prev: {}, source: null };
+/** Flash a price element green or red when its value changed since the last time this key was drawn. */
+function flashEl(node, key, value) {
+  if (value == null) return node;
+  const p = state.live.prev[key]; state.live.prev[key] = value;
+  if (p != null && value !== p) { node.classList.remove("flash-up", "flash-down"); void node.offsetWidth; node.classList.add(value > p ? "flash-up" : "flash-down"); }
+  return node;
+}
+/** Mark an element as a live price for a symbol: the live loop keeps it current. kind: "px" or "pxchg". */
+function liveTag(node, sym, kind = "px") { node.dataset.live = sym; node.dataset.liveKind = kind; return node; }
 state.nav = { main: "chart", insp: "briefs", current: "chart" };
 const layoutMode = () => (innerWidth > 1100 ? "wide" : innerWidth > 700 ? "medium" : "compact");
 /* Collapsible sidebar (icon rail) and inspector, remembered per device. With no saved choice the sidebar collapses by
@@ -1095,8 +1105,8 @@ const landing = new URLSearchParams(location.search).get("paper");
   const failed = results.find((r) => r.status === "rejected");
   if (failed) showBanner(failed.reason?.message || String(failed.reason));
   renderWorkflows();
-  setInterval(refreshQuotes, 15000);
-  setInterval(() => { if (intraday() && marketState().s !== "closed") loadChart(true); }, 20000);
+  // Quotes are refreshed by the live loop (live.js) every 10 seconds.
+  setInterval(() => { if (intraday() && (marketState().s !== "closed" || /-(USD|USDT|USDC|EUR|BTC|ETH)$/.test(state.symbol))) loadChart(true); }, 20000);
   setInterval(loadBriefs, 60000);
   syncNotifyButtons();
 })();

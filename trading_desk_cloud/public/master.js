@@ -60,7 +60,7 @@ function renderMaster() {
   for (const r of d.rows) {
     const v = r.verdict, a = r.auto, row = el("div", `mt-row${r.symbol === state.master.sel ? " on" : ""}`); row.tabIndex = 0;
     const left = el("div", "mt-rl"); const nm = el("div", "mt-sym"); nm.append(el("b", null, r.symbol)); if (r.rating) nm.append(ratingBadge(r.rating));
-    left.append(nm, el("div", "mono small", `${r.last == null ? "—" : fmt(r.last)}${r.change_pct == null ? "" : `  ${r.change_pct > 0 ? "+" : ""}${fmt(r.change_pct)}%`}`));
+    left.append(nm, liveTag(el("div", "mono small", `${r.last == null ? "—" : fmt(r.last)}${r.change_pct == null ? "" : `  ${r.change_pct > 0 ? "+" : ""}${fmt(r.change_pct)}%`}`), r.symbol, "pxchg"));
     const mid = el("div", "mt-rm"); const vb = el("span", `mt-verdict ${V_CLS[v.action]}`, v.label); vb.title = v.reasons.join(" ");
     const bar = el("span", "mt-score"); const fill = el("i"); fill.style.width = `${v.score}%`; bar.append(fill);
     const st = a?.position ? `In trade: ${a.position.side} ${a.position.qty} @ ${fmt(a.position.entry)}` : a?.order ? `Waiting to ${a.order.side === "long" ? "buy" : "short"} at ${fmt(a.order.price)}` : a?.enabled ? "Auto on: watching" : r.plan && r.plan.source !== "position" ? `Entry ${fmt(r.plan.entry)} · stop ${fmt(r.plan.stop)} · target ${fmt(r.plan.targets?.[0])}` : "No plan yet";
@@ -80,7 +80,7 @@ function renderMaster() {
   if (!r) { det.append(el("div", "dim", "Select a symbol.")); return; }
   const v = r.verdict, a = r.auto, pos = a?.position, ord = a?.order, plan = r.plan;
   const head = el("div", "mt-dhead"); const title = el("h2", null, r.symbol); title.style.cursor = "pointer"; title.title = "Open the full chart"; title.onclick = () => { setSymbol(r.symbol); navigate("chart"); };
-  head.append(title, el("span", "mono", r.last == null ? "—" : fmt(r.last)), el("span", `mt-verdict ${V_CLS[v.action]}`, `${v.label} · ${v.score}`), el("span", "spacer"));
+  head.append(title, liveTag(el("span", "mono", r.last == null ? "—" : fmt(r.last)), r.symbol), el("span", `mt-verdict ${V_CLS[v.action]}`, `${v.label} · ${v.score}`), el("span", "spacer"));
   const dsw = el("label", "mt-master small"); const dc = el("input"); dc.type = "checkbox"; dc.checked = !!a?.enabled; dc.setAttribute("role", "switch"); dc.setAttribute("aria-label", `Automatic trading for ${r.symbol}`);
   dc.onchange = () => masterAuto(r.symbol, { enabled: dc.checked, amount_usd: +(damt.value) || d.amount, rule: a?.rule ?? d.presets[d.preset].rule });
   dsw.append(dc, el("span", "mt-knob"), el("b", null, a?.enabled ? "Auto ON" : "Auto OFF")); head.append(dsw);

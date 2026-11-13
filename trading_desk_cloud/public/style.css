@@ -822,3 +822,15 @@ input:focus-visible + .mt-knob { outline: 2px solid var(--accent); outline-offse
 .six-card.up { border-color: var(--up); } .six-card.down { border-color: var(--down); }
 .six-bar { height: 5px; background: var(--line); border-radius: 3px; position: relative; display: block; }
 .six-bar i { position: absolute; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; } .six-card.up .six-bar i { background: var(--up); } .six-card.down .six-bar i { background: var(--down); }
+
+/* ---- Live indicator and price flashes */
+.live-box { align-items: center; gap: 6px; white-space: nowrap; font-size: 0.846rem; color: var(--dim); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+.live-box.ok .live-dot { background: var(--up); animation: live-pulse 2s ease-in-out infinite; }
+.live-box.stale { color: var(--warn, #d9a441); } .live-box.stale .live-dot { background: var(--warn, #d9a441); }
+@keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes flash-up { from { background: color-mix(in srgb, var(--up) 45%, transparent); } to { background: transparent; } }
+@keyframes flash-down { from { background: color-mix(in srgb, var(--down) 45%, transparent); } to { background: transparent; } }
+.flash-up { animation: flash-up 1.2s ease-out; border-radius: 3px; } .flash-down { animation: flash-down 1.2s ease-out; border-radius: 3px; }
+@media (max-width: 700px) { .live-txt { display: none; } }
+@media (prefers-reduced-motion: reduce) { .live-box.ok .live-dot, .flash-up, .flash-down { animation: none; } }

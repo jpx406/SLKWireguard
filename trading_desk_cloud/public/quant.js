@@ -241,7 +241,7 @@ function renderQuant() {
 
 document.addEventListener("section", (e) => {
   clearInterval(state.quant.poll);
-  if (e.detail === "quant") { loadQuant(); state.quant.poll = setInterval(() => { if (sectionVisible("quant")) loadQuant(); }, 45000); }
+  if (e.detail === "quant") { loadQuant(); state.quant.poll = setInterval(() => { if (sectionVisible("quant") && !document.hidden) loadQuant(); }, 30000); }
   else { for (const t of state.quant.timers) clearInterval(t); state.quant.timers = []; }
 });
 let _qResize; addEventListener("resize", () => { clearTimeout(_qResize); _qResize = setTimeout(() => { if (state.quant.data && sectionVisible("quant")) renderQuant(); }, 250); });

@@ -111,14 +111,14 @@ async function alpacaQuotes(symbols: string[], feed: "iex" | "sip") {
   const map = new Map(symbols.map((s) => [alpacaSymbol(s)!, s]));
   const r = (await alpacaGet("/v2/stocks/snapshots", { symbols: [...map.keys()].join(","), feed }, 3)) as Record<string, Snap | null>;
   const today = nyDay(new Date().toISOString());
-  const out = new Map<string, { symbol: string; last: number | null; prev: number | null; change_pct: number | null; volume: number | null }>();
+  const out = new Map<string, { symbol: string; source?: string; last: number | null; prev: number | null; change_pct: number | null; volume: number | null }>();
   for (const [asym, orig] of map) {
     const s = r[asym];
     if (!s) continue;
     const last = s.latestTrade?.p ?? s.dailyBar?.c ?? null;
     // Before today's session has a daily bar, "yesterday" is the latest daily bar.
     const prev = s.dailyBar && nyDay(s.dailyBar.t) !== today ? s.dailyBar.c : s.prevDailyBar?.c ?? null;
-    out.set(orig, { symbol: orig, last, prev, change_pct: last != null && prev ? ((last - prev) / prev) * 100 : null, volume: s.dailyBar && nyDay(s.dailyBar.t) === today ? s.dailyBar.v : null });
+    out.set(orig, { symbol: orig, source: "alpaca", last, prev, change_pct: last != null && prev ? ((last - prev) / prev) * 100 : null, volume: s.dailyBar && nyDay(s.dailyBar.t) === today ? s.dailyBar.v : null });
   }
   return out;
 }
@@ -197,7 +197,7 @@ export async function quotes(symbols: string[]) {
     try {
       const m = (await yahooChart(symbol, "1d", "1d", false, 10)).meta;
       const last = m.regularMarketPrice ?? null, prev = m.chartPreviousClose ?? m.previousClose ?? null;
-      return { symbol, last, prev, change_pct: last != null && prev ? ((last - prev) / prev) * 100 : null, volume: m.regularMarketVolume ?? null };
+      return { symbol, source: "yahoo", last, prev, change_pct: last != null && prev ? ((last - prev) / prev) * 100 : null, volume: m.regularMarketVolume ?? null };
     } catch (e) {
       return { symbol, error: String((e as Error).message).slice(0, 120) };
     }
