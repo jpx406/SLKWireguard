@@ -185,20 +185,6 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const c = await councilFor(env.DB, sym, plan ? { side: plan.side, stop: plan.stop } : null, !!plan);
     return c ? json(c) : bad(`Not enough price bars for ${sym}.`, 404);
   }
-  // Studio (Open Generative AI): boot script and a proxy to the Muapi API. Login required; with the MUAPI_KEY secret set,
-  // users allowed to use AI share that key, otherwise each user enters their own key in the Studio's settings.
-  if (path === "/studio/boot.js" && m === "GET") return new Response(env.MUAPI_KEY && who.ai ? 'window.__MUAPI_KEY__="shared-by-trading-desk";' : "/* enter your own Muapi key in Settings */", { headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store" } });
-  if (path.startsWith("/studio/api/")) {
-    const target = new URL(path.slice("/studio".length) + url.search, "https://api.muapi.ai");
-    const headers = new Headers(); for (const k of ["content-type", "accept"]) { const v = req.headers.get(k); if (v) headers.set(k, v); }
-    const own = req.headers.get("x-api-key");
-    const key = env.MUAPI_KEY && who.ai && (!own || own === "shared-by-trading-desk") ? env.MUAPI_KEY : own;
-    if (!key || key === "shared-by-trading-desk") return bad("No Muapi key: enter your own key in the Studio's Settings, or ask the admin to set the shared MUAPI_KEY secret.", 401);
-    headers.set("x-api-key", key);
-    const up = await fetch(target.toString(), { method: m, headers, body: m === "GET" || m === "HEAD" ? undefined : req.body });
-    const out = new Headers(); for (const k of ["content-type", "cache-control"]) { const v = up.headers.get(k); if (v) out.set(k, v); }
-    return new Response(up.body, { status: up.status, headers: out });
-  }
   // Auto Trader: the master control panel (stocks or crypto): rows with verdicts, the master switch and presets.
   if (path === "/master" && m === "GET") return json(await masterView(env.DB, who.user, url.searchParams.get("kind") === "crypto" ? "crypto" : "stocks"));
   if (path === "/master" && m === "PUT") {

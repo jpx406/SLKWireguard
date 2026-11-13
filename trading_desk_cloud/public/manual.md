@@ -370,12 +370,6 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 ---
 
-## 17b. Studio (image and video)
-
-**Studio** in the sidebar opens Open Generative AI (an MIT-licensed open-source project) in a new tab: image, video, lip sync and cinema studios that call the Muapi service. It is unrelated to trading. It needs a Muapi key, which is a paid service billed by Muapi: either each user enters their own key in the Studio's Settings, or the admin stores one shared key as the `MUAPI_KEY` secret and every user allowed to use AI shares it. What you generate is subject to Muapi's terms.
-
----
-
 ## 18. The safety layer
 
 These run in plain code before every automatic order.

@@ -815,8 +815,7 @@ input:focus-visible + .mt-knob { outline: 2px solid var(--accent); outline-offse
 .mt-risk { margin: 6px 0; } button.danger { color: var(--down); border-color: var(--down); }
 @container content (max-width: 820px) { .mt-body { grid-template-columns: minmax(0, 1fr); } .mt-detail { position: static; order: -1; } .mt-chart { height: 240px; } }
 
-/* ---- The Six (agent council) and the Studio link */
-a.nav-item, a.more-item { text-decoration: none; box-sizing: border-box; }
+/* ---- The Six (agent council) */
 .six { margin: 10px 0; } .six-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .six-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; }
 .six-card { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--panel-2); display: flex; flex-direction: column; gap: 3px; }
