@@ -6,7 +6,7 @@
 import type { Env } from "./env";
 import { client, createSession, deleteFile, uploadText } from "./agent";
 import { capBlocks, isEngine, recordSpend } from "./cost";
-import { getSettings } from "./db";
+import { getSetting, getSettings, setSetting } from "./db";
 import { nyNow } from "./briefs";
 import { candles } from "./market";
 // The forecast script ships with the app (public/kronos_forecast.py) and rides into the sandbox as a mounted file.
@@ -18,6 +18,27 @@ export const KRONOS_REPO = "https://github.com/shiyu-coder/Kronos.git";
 const MODEL_FILES = ["__init__.py", "kronos.py", "module.py"];
 export const KRONOS_INTERVALS = ["5m", "15m", "60m", "1d"] as const;
 const SCRIPT_MOUNT = "/workspace/kronos_forecast.py", REPO_DIR = "/workspace/kronos";
+const BARS_MOUNT = `${REPO_DIR}/bars.csv`, WEIGHTS_DIR = `${REPO_DIR}/weights`;
+// The weights (about 115 MB) are uploaded once to the Anthropic Files API by setup/setup-agent.mjs under these
+// names and mounted into each run, so the sandbox needs no access to huggingface.co. The bars ride along as a CSV,
+// so it needs no access to Yahoo either: only PyPI, for torch.
+const WEIGHT_FILES: Record<string, string> = {
+  "kronos-tokenizer-base.config.json": "tokenizer/config.json", "kronos-tokenizer-base.model.safetensors": "tokenizer/model.safetensors",
+  "kronos-small.config.json": "model/config.json", "kronos-small.model.safetensors": "model/model.safetensors",
+};
+/** File ids of the uploaded weights (looked up by name, remembered for an hour), or null when setup has not uploaded them. */
+async function weightFiles(env: Env): Promise<Record<string, string> | null> {
+  const cached = await getSetting<{ at: number; ids: Record<string, string> | null } | null>(env.DB, "kronos_weights", null);
+  if (cached && Date.now() - cached.at < (cached.ids ? 3600_000 : 300_000)) return cached.ids;
+  let ids: Record<string, string> | null = {};
+  try {
+    for await (const f of client(env).files.list({ limit: 1000 } as never) as AsyncIterable<{ id: string; filename: string }>) if (WEIGHT_FILES[f.filename]) ids[f.filename] = f.id;
+    if (Object.keys(ids).length < Object.keys(WEIGHT_FILES).length) ids = null;
+  } catch { ids = null; }
+  await setSetting(env.DB, "kronos_weights", { at: Date.now(), ids });
+  return ids;
+}
+const DAYS: Record<string, number> = { "5m": 30, "15m": 30, "60m": 90, "1d": 730 };
 const DEFAULT_PRED: Record<string, number> = { "5m": 36, "15m": 32, "60m": 24, "1d": 10 };
 
 export type KronosRun = {
@@ -40,13 +61,14 @@ export async function ensureKronos(db: D1Database) {
   ready = true;
 }
 
-export function kronosPrompt(symbol: string, interval: string, pred: number, samples: number) {
-  return `[Kronos forecast] Produce a probabilistic candlestick forecast for ${symbol} on ${interval} bars with the Kronos foundation model. The model code is already mounted at ${REPO_DIR}/model/ and the forecast script at ${SCRIPT_MOUNT}; nothing needs to be cloned. Do exactly this with bash, printing only short progress lines:
-0. Files: if ${REPO_DIR}/model or ${SCRIPT_MOUNT} is missing, the mounts are under /mnt/session/uploads instead: \`mkdir -p ${REPO_DIR} && cp -r /mnt/session/uploads${REPO_DIR}/. ${REPO_DIR}/ && cp /mnt/session/uploads${SCRIPT_MOUNT} ${SCRIPT_MOUNT}\`.
-1. Dependencies: \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas, tqdm" 2>/dev/null || pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu einops huggingface_hub safetensors pandas numpy tqdm\`; if that index is unreachable, \`pip install --quiet torch einops huggingface_hub safetensors pandas numpy tqdm\`. Allow up to 10 minutes; do not give up before the install finishes.
-2. Run: \`cd ${REPO_DIR} && python3 ${SCRIPT_MOUNT} --symbol ${symbol} --interval ${interval} --pred ${pred} --samples ${samples} --kronos ${REPO_DIR} --out /workspace/kronos_fc.json 2>&1 | tail -n 15\`. The weights NeoQuasar/Kronos-small and NeoQuasar/Kronos-Tokenizer-base download from huggingface.co on first use (about 115 MB; later runs use the cache). If Yahoo returned too few bars, wait 20 seconds and run once more.
+export function kronosPrompt(symbol: string, interval: string, pred: number, samples: number, o: { weights?: boolean; csv?: boolean } = {}) {
+  const src = o.csv ? ` --csv ${BARS_MOUNT}` : "", w = o.weights ? ` --tokenizer ${WEIGHTS_DIR}/tokenizer --model ${WEIGHTS_DIR}/model` : "";
+  return `[Kronos forecast] Produce a probabilistic candlestick forecast for ${symbol} on ${interval} bars with the Kronos foundation model. Everything is already mounted: the model code at ${REPO_DIR}/model/, the forecast script at ${SCRIPT_MOUNT}${o.csv ? `, the price bars at ${BARS_MOUNT}` : ""}${o.weights ? ` and the model weights under ${WEIGHTS_DIR}/ (no download from huggingface.co is needed or possible)` : ""}. Nothing needs to be cloned. Do exactly this with bash, printing only short progress lines:
+0. Files: if ${REPO_DIR}/model or ${SCRIPT_MOUNT} is missing, the mounts are under /mnt/session/uploads instead: \`mkdir -p /workspace && cp -r /mnt/session/uploads/workspace/. /workspace/\`.${o.weights ? ` Then check \`ls -l ${WEIGHTS_DIR}/tokenizer ${WEIGHTS_DIR}/model\` shows a config.json and a model.safetensors in each.` : ""}
+1. Dependencies: \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas, tqdm" 2>/dev/null || pip install --quiet torch einops huggingface_hub safetensors pandas numpy tqdm\`. Allow up to 10 minutes; do not give up before the install finishes.
+2. Run: \`cd ${REPO_DIR} && ${o.weights ? "HF_HUB_OFFLINE=1 " : ""}python3 ${SCRIPT_MOUNT} --symbol ${symbol} --interval ${interval} --pred ${pred} --samples ${samples} --kronos ${REPO_DIR}${src}${w} --out /workspace/kronos_fc.json 2>&1 | tail -n 15\`.${o.weights ? "" : " The weights NeoQuasar/Kronos-small and NeoQuasar/Kronos-Tokenizer-base download from huggingface.co on first use (about 115 MB)."}${o.csv ? "" : " If Yahoo returned too few bars, wait 20 seconds and run once more."}
 3. Print the result: \`cat /workspace/kronos_fc.json\`.
-If a step fails, print the last 30 lines of its output and say which host or package was the problem (for example "huggingface.co not allowed" or "torch not installed"), so the desk can show it.
+If a step fails, print the last 30 lines of its output and say which host, file or package was the problem (for example "huggingface.co not allowed", "weights not mounted" or "torch not installed"), so the desk can show it. Do not write a JSON block of your own when the run failed.
 Then one or two sentences reading the forecast for a trader (direction, size of the move versus the band; Kronos is a statistical model of past K-lines, not news-aware). End your answer with ONE fenced \`\`\`json block containing the file's JSON exactly as printed (nothing after it). Do not place orders and do not run any other skill.`;
 }
 
@@ -71,13 +93,26 @@ export async function startKronos(env: Env, symbol: string, interval: string, pr
     files.push(fid);
     const resources = [{ file_id: fid, mount_path: SCRIPT_MOUNT }];
     for (const f of MODEL_FILES) { const t = await (await env.ASSETS.fetch(`https://assets.local/kronos_model/${f}`)).text(); const id = await uploadText(env, f, t, "text/x-python"); files.push(id); resources.push({ file_id: id, mount_path: `${REPO_DIR}/model/${f}` }); }
+    // The bars the Worker already has ride along as a CSV, and the weights uploaded by setup are mounted (never deleted after a run).
+    let csv = false;
+    try {
+      const bars = ((await candles(symbol, interval, DAYS[interval] ?? 30)) as { time: number; open: number; high: number; low: number; close: number; volume: number }[]).slice(-520);
+      if (bars.length >= 64) {
+        const bid = await uploadText(env, "kronos_bars.csv", "time,open,high,low,close,volume\n" + bars.map((b) => `${b.time},${b.open},${b.high},${b.low},${b.close},${b.volume ?? 0}`).join("\n") + "\n", "text/csv");
+        files.push(bid); resources.push({ file_id: bid, mount_path: BARS_MOUNT }); csv = true;
+      }
+    } catch { /* the script falls back to Yahoo */ }
+    const weights = await weightFiles(env);
+    if (weights) for (const [name, rel] of Object.entries(WEIGHT_FILES)) resources.push({ file_id: weights[name], mount_path: `${WEIGHTS_DIR}/${rel}` });
     // A first run installs torch and downloads the weights: give it twice the normal budget (at least $2).
     const sid = await createSession(env, Math.max(2, s.session_budget_usd * 2), engine as never, { resources });
-    await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text: kronosPrompt(symbol, interval, n, Number((s as { kronos_samples?: number }).kronos_samples) || 20) }] }] });
+    await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text: kronosPrompt(symbol, interval, n, Number((s as { kronos_samples?: number }).kronos_samples) || 20, { weights: !!weights, csv }) }] }] });
     await env.DB.prepare("UPDATE kronos_runs SET session_id = ?, status = 'running', files = ? WHERE id = ?").bind(sid, JSON.stringify(files), id).run();
   } catch (e) {
     for (const f of files) await deleteFile(env, f);
     await env.DB.prepare("UPDATE kronos_runs SET status = 'error', error = ?, finished_at = datetime('now') WHERE id = ?").bind(String((e as Error).message || e).slice(0, 500), id).run();
+    // The session could not start (for example the mounts were refused): still give the chart a band.
+    try { await runBuiltin(env.DB, symbol, interval, n, user, `Kronos could not start: ${String((e as Error).message || e).slice(0, 300)} Showing the built-in forecast instead.`, id); } catch { /* keep the error */ }
   }
   return { id };
 }
@@ -169,7 +204,7 @@ export async function finalizeKronos(env: Env) {
         const err = idleReason === "end_turn" ? null : why[idleReason] ?? idleReason;
         if (fc) await finish("done", err);
         else {
-          const why2 = [err, ...errors, content ? "Kronos did not return a forecast: see the agent's notes below (usually a host the sandbox may not reach, or torch not installed; run setup/setup-agent.mjs again)." : "Claude finished without writing an answer."].filter(Boolean).join(" · ");
+          const why2 = [err, ...errors, content ? "Kronos did not return a forecast: see the agent's notes below (usually the model weights are not uploaded yet: run setup/setup-agent.mjs again, it uploads them)." : "Claude finished without writing an answer."].filter(Boolean).join(" · ");
           await finish("error", why2);
           // Fall back to the built-in forecast so the chart still gets a band; the row keeps the reason.
           try { await runBuiltin(env.DB, r.symbol, r.interval, r.pred_len, r.user, `${why2} Showing the built-in forecast instead.`, r.id); } catch { /* keep the error */ }

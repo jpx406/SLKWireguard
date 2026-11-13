@@ -46,6 +46,14 @@ const BASE_HOSTS = [
 // ta-patterns: 300 candlestick/chart pattern detectors with no look-ahead, for the swing scan.
 // ta-lib: the reference technical-analysis library (150+ indicators, 61 candlestick patterns, C speed);
 //   its 0.8 wheels bundle the C library, so it installs without a compiler.
+// Kronos model weights (MIT, about 115 MB together): Hugging Face repo and file -> the name they get in the Files API.
+// src/kronos.ts looks them up by these names.
+const KRONOS_WEIGHTS = [
+  { repo: "Kronos-Tokenizer-base", file: "config.json", name: "kronos-tokenizer-base.config.json" },
+  { repo: "Kronos-Tokenizer-base", file: "model.safetensors", name: "kronos-tokenizer-base.model.safetensors" },
+  { repo: "Kronos-small", file: "config.json", name: "kronos-small.config.json" },
+  { repo: "Kronos-small", file: "model.safetensors", name: "kronos-small.model.safetensors" },
+];
 const EXTRA_PIP = ["ta-patterns>=1.2.1", "ta-lib>=0.8.3", "torch", "einops", "huggingface_hub", "safetensors"];
 
 const SYSTEM = `You are the trading copilot behind "Trading Desk", a day-trading cockpit used by a trader in Riyadh (Asia/Riyadh, UTC+3) who trades US equities.
@@ -188,6 +196,24 @@ async function main() {
   const pipShown = envConfig.packages?.pip ?? [];
   console.log(`  networking: ${networking.type}${networking.allowed_hosts ? ` (${networking.allowed_hosts.length} hosts)` : ""}${pipShown.length ? `, pip: ${pipShown.join(" ")}` : ""}`);
   state.environment_id = environmentId;
+
+  // Kronos weights: downloaded here (this computer can reach Hugging Face) and uploaded once to the Files API, so a
+  // forecast run mounts them and the sandbox needs no access to huggingface.co. Skipped when already uploaded.
+  try {
+    const have = new Set();
+    for await (const f of client.files.list({ limit: 1000 })) have.add(f.filename);
+    for (const w of KRONOS_WEIGHTS) {
+      if (have.has(w.name)) { console.log(`Kronos weights: ${w.name} already uploaded`); continue; }
+      process.stdout.write(`Kronos weights: downloading ${w.name} ... `);
+      const r = await fetch(`https://huggingface.co/NeoQuasar/${w.repo}/resolve/main/${w.file}`);
+      if (!r.ok) throw new Error(`Hugging Face answered ${r.status} for ${w.repo}/${w.file}`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      await client.files.upload({ file: await toFile(buf, w.name, { type: w.file.endsWith(".json") ? "application/json" : "application/octet-stream" }) });
+      console.log(`uploaded (${(buf.length / 1e6).toFixed(1)} MB)`);
+    }
+  } catch (e) {
+    console.warn(`  ! Kronos weights were not uploaded: ${/** @type {any} */ (e)?.message || e}. Kronos forecasts will use the built-in fallback until this works; run the script again.`);
+  }
 
   // Vault: the API key the sandbox uses when TradingAgents calls Claude (Deep Analysis). The value is substituted
   // into requests to api.anthropic.com at the network edge; the sandbox itself only sees a placeholder.
