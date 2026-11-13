@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  CF_VERSION_METADATA?: { id?: string; tag?: string; timestamp?: string }; // this deploy's id (wrangler.toml [version_metadata])
   ANTHROPIC_API_KEY: string;
   AGENT_ID: string;
   ENVIRONMENT_ID: string;

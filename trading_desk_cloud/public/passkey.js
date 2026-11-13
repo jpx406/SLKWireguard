@@ -23,13 +23,26 @@ btnPk.onclick = async () => {
   const err = document.getElementById("loginErr"); err.textContent = "";
   btnPk.disabled = true;
   try {
-    const o = await pkPost("/api/login/passkey/options");
+    const o = pkFresh(pkPrep.login) ? pkPrep.login.o : await pkPost("/api/login/passkey/options");
+    pkPrep.login = null;
     const cred = await navigator.credentials.get({ publicKey: { challenge: pkBytes(o.challenge), rpId: o.rpId, userVerification: "required", timeout: o.timeout, allowCredentials: [] } });
     const done = await pkPost("/api/login/passkey", { id: cred.id, clientDataJSON: pkB64(cred.response.clientDataJSON), authenticatorData: pkB64(cred.response.authenticatorData), signature: pkB64(cred.response.signature) });
     try { localStorage.setItem(`td.pk.${done.user}`, "on"); } catch { /* private window */ }
     location.reload();
-  } catch (e) { err.textContent = pkReason(e); btnPk.disabled = false; }
+  } catch (e) { err.textContent = pkReason(e); btnPk.disabled = false; pkPrepLogin(); }
 };
+// iPhone Safari only shows Face ID when the request comes straight from a tap. A network call between the tap and
+// the request can break that, so the one-time challenge is fetched ahead (they last five minutes; refreshed at four).
+const pkPrep = { login: null, reg: null };
+const pkFresh = (p) => !!p && Date.now() - p.at < 4 * 60000;
+async function pkPrepLogin() { if (!pkSupported()) return; try { pkPrep.login = { o: await pkPost("/api/login/passkey/options"), at: Date.now() }; } catch { pkPrep.login = null; } }
+async function pkPrepReg() { if (!pkSupported()) return; try { pkPrep.reg = { o: await api("/api/me/passkeys/options", { method: "POST", body: "{}" }), at: Date.now() }; } catch { pkPrep.reg = null; } }
+{
+  const dlg = document.getElementById("loginDlg");
+  new MutationObserver(() => { if (dlg.open && !pkFresh(pkPrep.login)) pkPrepLogin(); }).observe(dlg, { attributes: true, attributeFilter: ["open"] });
+  if (dlg.open) pkPrepLogin();
+  setInterval(() => { if (dlg.open && !document.hidden && !pkFresh(pkPrep.login)) pkPrepLogin(); }, 30000);
+}
 
 /* ---- forgot password */
 document.getElementById("btnForgot").onclick = async () => {
@@ -45,6 +58,7 @@ async function loadPasskeys(list) {
   const box = document.getElementById("pkList"); if (!box) return;
   const btn = document.getElementById("btnPkAdd"), supported = pkSupported();
   btn.classList.toggle("hidden", !supported);
+  if (supported && !pkFresh(pkPrep.reg)) pkPrepReg();
   let keys = list;
   if (!keys) { try { keys = await api("/api/me/passkeys"); } catch { keys = []; } }
   box.innerHTML = "";
@@ -62,7 +76,8 @@ function pkDeviceName() {
 }
 /** Register this device for the signed-in user; returns the updated device list. */
 async function pkRegister() {
-  const o = await api("/api/me/passkeys/options", { method: "POST", body: "{}" });
+  const o = pkFresh(pkPrep.reg) ? pkPrep.reg.o : await api("/api/me/passkeys/options", { method: "POST", body: "{}" });
+  pkPrep.reg = null;
   const cred = await navigator.credentials.create({ publicKey: { ...o, challenge: pkBytes(o.challenge), user: { ...o.user, id: pkBytes(o.user.id) }, excludeCredentials: o.excludeCredentials.map((c) => ({ ...c, id: pkBytes(c.id) })) } });
   const pub = cred.response.getPublicKey?.();
   if (!pub) throw new Error("This browser cannot hand over the device key. Update the browser and try again.");
@@ -90,9 +105,10 @@ async function pkOffer(me) {
     ? "You already use it on another device. Turn it on here too, so this device can sign you in without a password."
     : "Next time, sign in with Face ID, Touch ID, Windows Hello or your fingerprint instead of typing your password. It also lets you choose a new password if you forget yours.";
   err.textContent = "";
+  await pkPrepReg();
   document.getElementById("pkOfferYes").onclick = async () => {
     err.textContent = "";
-    try { await pkRegister(); d.close(); pkToast("Face ID / fingerprint is on for this device. Use it on the sign-in screen next time."); } catch (e) { err.textContent = pkReason(e); }
+    try { await pkRegister(); d.close(); pkToast("Face ID / fingerprint is on for this device. Use it on the sign-in screen next time."); } catch (e) { err.textContent = pkReason(e); pkPrepReg(); }
   };
   document.getElementById("pkOfferNo").onclick = () => { pkMark("skip"); d.close(); };
   if (!d.open && !document.querySelector("dialog[open]")) d.showModal();

@@ -51,6 +51,16 @@ const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/r
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
+/** GET /api/version (no login): the id of the running deploy. Open pages compare it with the one they loaded under. */
+async function versionInfo(env: Env): Promise<Response> {
+  const m = env.CF_VERSION_METADATA;
+  let version = (m?.id || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+  if (!version) { // no metadata binding (an older wrangler.toml): fall back to the page's own fingerprint
+    try { version = ((await env.ASSETS.fetch("https://assets.local/index.html", { method: "HEAD" })).headers.get("etag") || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 8); } catch { /* unknown */ }
+  }
+  return Response.json({ version: version || "dev", at: m?.timestamp || null }, { headers: { "Cache-Control": "no-store" } });
+}
+
 /** The site a passkey belongs to: the request's own host. Local `wrangler dev` reports the route's host, so DEV_ORIGIN (in .dev.vars only) names the real one there. */
 function site(env: Env, url: URL): { origin: string; host: string } {
   if (env.DEV_ORIGIN) { try { const o = new URL(env.DEV_ORIGIN); if (o.hostname === "localhost" || o.hostname === "127.0.0.1") return { origin: o.origin, host: o.hostname }; } catch { /* ignore a bad value */ } }
@@ -571,6 +581,7 @@ export default {
     if (env.DEV_CLOCK_SHIFT_SEC) setClockShift(Number(env.DEV_CLOCK_SHIFT_SEC));
     if (url.pathname.startsWith("/api/")) await setupMarket(env);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+    if (req.method === "GET" && url.pathname === "/api/version") return versionInfo(env);
     if (req.method === "POST" && url.pathname === "/api/login") {
       if (req.headers.get("content-type")?.split(";")[0] !== "application/json") return bad("JSON required", 415);
       await ensureSchema(env.DB);

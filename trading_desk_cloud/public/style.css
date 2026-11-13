@@ -867,3 +867,7 @@ dialog.login input:not([type="checkbox"]) { width: 100%; box-sizing: border-box;
 
 .lg-hint { margin: -6px 0 0; text-align: center; color: var(--dim); font-size: 0.923rem; }
 .pk-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--panel); color: var(--text); border: 1px solid var(--up); border-radius: 10px; padding: 10px 16px; z-index: 1000; max-width: 92vw; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+
+/* ---- New version bar */
+.update-bar { position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 2000; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+  background: var(--panel); color: var(--text); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; max-width: 94vw; box-shadow: 0 6px 24px rgba(0,0,0,.3); }

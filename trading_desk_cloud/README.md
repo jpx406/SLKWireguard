@@ -441,3 +441,7 @@ npm run typecheck
 ## How live the screens are
 
 Prices are polled, not streamed. `public/live.js` runs one loop every 10 seconds while the tab is visible: it refreshes the watchlist, the active quote and every element tagged with `liveTag(node, symbol)`, flashes a price green or red when it changes, and drives the indicator in the top bar (source and seconds since the last data arrived; amber after 45 seconds without data). Charts refresh every 20 seconds, Dashboard, Crypto and Quant Terminal every 30, Auto Trader every 60. Stock prices do not move while the US market is closed; without Alpaca keys the source is Yahoo, which can lag.
+
+## New versions and open pages
+
+Files are served with `Cache-Control: public, max-age=0, must-revalidate`, so a fresh page load always gets the current code. A page that stays open, or that a phone keeps in memory, keeps running the old code after a deploy. Each page therefore compares the running deploy id (`GET /api/version`, from the `[version_metadata]` binding in `wrangler.toml`) with the one it loaded under: every minute, when the tab becomes visible, and when the phone restores it. The sign-in screen reloads itself; a signed-in page shows "A new version of the desk is ready" with **Refresh now**. The sign-in screen's footer shows the version and deploy time. If your local `wrangler.toml` has no `[version_metadata]` section, add the two lines from the repository copy; without them the check falls back to a fingerprint of `index.html`.

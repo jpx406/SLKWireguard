@@ -67,3 +67,24 @@ function liveReloadVisible() {
 setInterval(liveIndicator, 1000);
 setInterval(liveTick, LIVE_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { liveTick(); liveReloadVisible(); } });
+
+/* ---- New version: a page left open (or kept in memory by the phone) keeps running the old code after a deploy.
+   Compare the server's deploy id with the one this page loaded under and ask for a refresh when it changed. */
+state.version = { loaded: null, snoozed: 0 };
+async function checkVersion() {
+  let v;
+  try { const r = await fetch("/api/version", { cache: "no-store" }); if (!r.ok) return; v = await r.json(); } catch { return; }
+  const foot = document.getElementById("lgVersion");
+  if (foot && state.version.loaded == null) foot.textContent = `Version ${v.version}${v.at ? ` · ${new Date(v.at).toISOString().slice(0, 16).replace("T", " ")} UTC` : ""}`;
+  if (state.version.loaded == null) { state.version.loaded = v.version; return; }
+  if (v.version === state.version.loaded) return;
+  // On the sign-in screen nothing can be lost: just load the new version.
+  if (document.getElementById("loginDlg").open) { location.reload(); return; }
+  if (Date.now() > state.version.snoozed) document.getElementById("updateBar").classList.remove("hidden");
+}
+document.getElementById("btnUpdate").onclick = () => location.reload();
+document.getElementById("btnUpdateLater").onclick = () => { state.version.snoozed = Date.now() + 10 * 60000; document.getElementById("updateBar").classList.add("hidden"); };
+checkVersion();
+setInterval(() => { if (!document.hidden) checkVersion(); }, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+window.addEventListener("pageshow", (e) => { if (e.persisted) checkVersion(); }); // restored from the phone's back/forward memory
