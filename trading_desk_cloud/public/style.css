@@ -916,3 +916,13 @@ tr.fl-fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .fl-strike { display: grid; grid-template-columns: 70px minmax(0, 1fr) 64px; gap: 8px; align-items: center; padding: 2px 0; } .fl-strike i { height: 8px; border-radius: 4px; background: var(--accent); display: block; }
 #flow td.warn { color: var(--warn, #b45309); }
 @container content (max-width: 900px) { .fl-side { order: -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: start; } }
+
+/* ---- ML signals */
+.ml-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; margin: 12px 0; }
+.ml-card table { width: 100%; } tr.ml-win td { font-weight: 600; }
+.ml-prob { display: flex; height: 10px; width: 140px; max-width: 100%; border-radius: 5px; overflow: hidden; background: var(--line); }
+.ml-prob i.up { background: var(--up); } .ml-prob i.down { background: var(--down); } .ml-prob i.dim { background: var(--line); }
+.ml-cm { display: grid; grid-template-columns: auto repeat(3, minmax(48px, 80px)); gap: 3px; align-items: center; margin: 8px 0; }
+.ml-cm span.mono { text-align: center; padding: 6px 0; border-radius: 4px; } .ml-cm b { text-align: center; color: var(--dim); }
+.ml-settings { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; } .ml-settings input[type=number] { width: 80px; }
+#ml > .fl-card { margin-bottom: 12px; }

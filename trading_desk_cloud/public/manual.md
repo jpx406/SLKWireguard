@@ -370,6 +370,48 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 ---
 
+## 16b. ML Signals
+
+Two computer models learn from price history: a **neural network** and **boosted decision trees**. They are trained on the older part of the history and judged on the newest part, which they never saw. That second step is what makes the numbers on this screen trustworthy: it is how the model would have done if you had switched it on back then.
+
+### The two jobs
+
+- **Direction model:** for each symbol, will the price rise by a meaningful amount before it falls by the same amount over the next five days? It answers **BUY**, **SELL** or **HOLD**. It says BUY or SELL only when it is at least 70% sure (you can change that number); otherwise HOLD.
+- **Candle-signal filter:** grades each candle signal the desk finds as **A**, **B**, **C** or **skip**, from how similar signals did before.
+
+### Display only, or proven
+
+Each model carries a badge:
+
+- **Display only:** on data it never saw, it did not beat chance clearly enough. You can look at its reads, but the desk does not act on them. Most direction models end up here, and that is the honest result: next week's direction is close to a coin toss from price data alone.
+- **Proven edge / useful:** it beat chance by a margin too large to be luck. Only then can it influence trades.
+
+When this manual was written, on real data, the direction model was display-only, and the filter for 5-minute stock signals was useful: the signals it graded *skip* lost more than twice as much as the rest.
+
+### Reading the direction table
+
+- **Confidence** is the model's probability for its strongest side.
+- The bar shows down (red), neither (grey) and up (green).
+- **Calls ≥ 70%** in the model card is how many confident calls it made in the test period, **Right** how often they were correct, and **Avg** the average result per trade after costs.
+
+### Reading the filter table
+
+Results are in **R**: 1R is the amount risked on a trade. "−0.88R" means the average signal in that group lost 88% of its risk. Compare *Grade skip* with *Kept*: the bigger the gap, the more the filter is worth.
+
+### Using it
+
+- Admin: press **Train** for stocks and for crypto once. After that the models retrain every Sunday.
+- Tick **Autopilot skips candle signals graded "skip"** to let the filter veto the worst signals. It only acts while the filter is marked useful.
+- Leave the confidence at 70% unless the confidence table (under "Confusion matrix, confidence levels…") shows a lower level was reliable over many calls.
+
+### Recommendations
+
+- Treat a display-only model as a curiosity, not advice.
+- The filter removes bad trades; it does not create good ones. In testing, candle signals alone lost money even after filtering. Use them together with a plan from a scan or Deep Analysis.
+- Check the card after each Sunday retrain. The line "Earlier model, on the days after it was trained" is the model's real record.
+
+---
+
 ## 17a. Options Flow
 
 Options traders often move before the stock does, and the dealers who take the other side of their trades have to hedge. **Options Flow** shows both: where the option money went today, and where dealer hedging is likely to slow the stock down or speed it up. Data comes from Cboe and is about 15 minutes delayed.

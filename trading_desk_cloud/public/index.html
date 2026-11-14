@@ -61,6 +61,7 @@
       <button type="button" class="nav-item" data-section="crypto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9 8h4.5a2 2 0 0 1 0 4H9zM9 12h5a2 2 0 0 1 0 4H9zM11 6v2M11 16v2"/></svg><span>Crypto</span></button>
       <button type="button" class="nav-item" data-section="learn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20h18"/><path d="M5 17V9M10 17V5M15 17v-6M20 17V8"/></svg><span>Performance</span></button>
       <button type="button" class="nav-item" data-section="journal"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M8 8h8M8 12h8"/></svg><span>Journal</span></button>
+      <button type="button" class="nav-item" data-section="ml"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 4M7 17l3-4M14 11l3-4M14 13l3 4"/></svg><span>ML Signals</span></button>
       <button type="button" class="nav-item" data-section="flow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7h12"/><path d="M3 12h18"/><path d="M3 17h8"/><path d="m17 5 2 2-2 2"/><path d="m13 15 2 2-2 2"/></svg><span>Options Flow</span></button>
       <button type="button" class="nav-item" data-section="thesis"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l1 4H8z"/><path d="M8 7h8v13a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1z"/><path d="M11 11h2M11 15h2"/></svg><span>Research</span></button>
       <button type="button" class="nav-item" data-section="kronos"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M14 7h3v3" /><path d="M3 21h18" stroke-dasharray="2 2"/></svg><span>Kronos</span></button>
@@ -162,6 +163,13 @@
       </div>
       <div id="deep" class="board-inner"><div class="dim">Loading…</div></div>
     </div>
+    <div class="pane board" data-section="ml" aria-label="Machine-learning signals">
+      <div class="pane-toolbar"><h2 class="pane-title">ML Signals</h2>
+        <div class="seg" id="mlMarket" role="group" aria-label="Market"><button type="button" data-k="stocks" class="on">Stocks</button><button type="button" data-k="crypto">Crypto</button></div>
+        <span class="spacer"></span><span class="dim small">Neural network + boosted trees</span>
+      </div>
+      <div id="ml" class="board-inner"><div class="dim">Loading…</div></div>
+    </div>
     <div class="pane board" data-section="flow" aria-label="Options flow and dealer gamma">
       <div class="pane-toolbar"><h2 class="pane-title">Options Flow</h2>
         <form id="flowForm" class="inline row gap"><input id="flowSym" class="sym-input mono" placeholder="SYMBOL" maxlength="6" aria-label="Symbol"><button class="ghost small">Load</button></form>
@@ -250,6 +258,7 @@
         <button type="button" class="more-item" data-section="crypto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9 8h4.5a2 2 0 0 1 0 4H9zM9 12h5a2 2 0 0 1 0 4H9zM11 6v2M11 16v2"/></svg><span>Crypto</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="learn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20h18"/><path d="M5 17V9M10 17V5M15 17v-6M20 17V8"/></svg><span>Performance</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="journal"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M8 8h8M8 12h8"/></svg><span>Journal</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="ml"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 4M7 17l3-4M14 11l3-4M14 13l3 4"/></svg><span>ML Signals</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="flow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7h12"/><path d="M3 12h18"/><path d="M3 17h8"/><path d="m17 5 2 2-2 2"/><path d="m13 15 2 2-2 2"/></svg><span>Options Flow</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="thesis"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l1 4H8z"/><path d="M8 7h8v13a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1z"/><path d="M11 11h2M11 15h2"/></svg><span>Research</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="kronos"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M14 7h3v3" /><path d="M3 21h18" stroke-dasharray="2 2"/></svg><span>Kronos</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -614,6 +623,7 @@
 <script src="/kronos.js"></script>
 <script src="/thesis.js"></script>
 <script src="/flow.js"></script>
+<script src="/ml.js"></script>
 <script src="/crypto.js"></script>
 <script src="/dashboard.js"></script>
 <script src="/quant.js"></script>

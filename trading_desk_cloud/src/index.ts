@@ -11,6 +11,7 @@ import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
 import { optionsFlow, setFlowBase } from "./flow";
+import { mlView, saveMlSettings, trainTask } from "./ml/engine";
 import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
@@ -253,6 +254,19 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
   }
   // Kronos forecasts (candlestick foundation model in the sandbox).
+  // ---- ML signals: direction model and candle-signal filter
+  if (path === "/ml" && m === "GET") return json(await mlView(env.DB, who.user));
+  if (path === "/ml/train" && m === "POST") {
+    if (who.role !== "admin") return bad("Only the admin trains the models.", 403);
+    const b = await body<{ task?: string; market?: string; fast?: boolean }>(req);
+    const r = await trainTask(env, b.task === "filter" ? "filter" : "direction", b.market === "crypto" ? "crypto" : "stocks", { fast: b.fast === true });
+    return r.error ? bad(r.error) : json(r);
+  }
+  if (path === "/ml/settings" && m === "PUT") {
+    if (who.role !== "admin") return bad("Only the admin changes how the models are used.", 403);
+    const err = await saveMlSettings(env.DB, await body<Record<string, unknown>>(req)); return err ? bad(err) : json({ ok: true });
+  }
+
   // ---- Options flow and dealer gamma (Cboe delayed chains)
   if (path === "/flow" && m === "GET") {
     try { return json(await optionsFlow(env, url.searchParams.get("symbol") || "SPY", url.searchParams.get("range") || "month")); }

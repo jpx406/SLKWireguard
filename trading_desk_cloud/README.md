@@ -207,6 +207,22 @@ The layout sizes itself to the room each panel has, not only to the window, so i
 
 * **The Six** (`src/agents.ts`): six rule-based analysts on real bars (NOVA ceiling and room, ORIN tail risk, VESK trend, LUMA flow, KIRA exit pressure, DASH opening drive) vote from -1 to +1; the consensus moves the Auto Trader verdict by up to 8 points and is shown as six cards on the selected symbol. `GET /api/council/:symbol`, cached five minutes. They are arithmetic, not language models, and the page says so.
 * **Market radar:** every Auto Trader symbol ranked by liquidity, tight bars, relative volume, one-sided flow and trend; the *Cleanest now* chip shows the top three.
+## ML Signals: a neural network and boosted trees
+
+`src/ml/` holds a complete machine-learning engine written in TypeScript, because the app runs on Cloudflare Workers, which have no Python runtime (so no PyTorch, XGBoost or FastAPI sidecar). The rules it follows are in `.claude/skills/ml-neural-trader/SKILL.md`.
+
+* **Models (`models.ts`):** a multi-layer perceptron (26 inputs → 32 → 16 → 3, ReLU, dropout, weight decay, Adam, trained by backpropagation) and gradient-boosted trees (softmax objective, second-order gains, shrinkage, row and column subsampling, histogram splits). Both stop early and are temperature-calibrated on a slice held out of the training period. A trained model is plain JSON in D1 (about 100 KB).
+* **Features (`features.ts`):** 26 causal inputs per bar: returns, RSI, ATR, distance from moving averages, Bollinger position, volume ratio, range position, candle shape, volatility ratio, MACD, gap, streak, and the market's own trend (SPY, or BTC for crypto). The same function builds training rows and the live row.
+* **Validation (`train.ts`):** the split is by time across all symbols (oldest 80% trains, newest 20% validates) with an embargo so no label looks past the cut; the scaler is fitted on training rows only; nothing is shuffled across the cut.
+* **Task 1, direction:** on daily bars, will price reach +1 ATR (at least 1%) before -1 ATR within 5 days? Output is BUY, SELL or HOLD, and BUY/SELL only at or above the confidence threshold (0.70 by default).
+* **Task 2, signal filter (meta-labelling):** every past candle signal is replayed with its stop and 2R target; the models learn which signals tend to fail and grade new ones A, B, C or *skip*.
+* **Earning the right to trade:** a model influences anything only if its validation result beats chance by a margin larger than twice its sampling error. Otherwise it is *display only*. A test trains on random-walk prices and checks that neither model is granted an edge.
+* **Where it acts:** with *Autopilot skips "skip" signals* on, the chart autopilot drops candle signals the filter grades *skip* (only while the filter is marked useful). A proven direction read moves the Auto Trader verdict by 6 points and adds a line to the scan prompts. Orders still go through the paper engine and its risk gate.
+* **Retraining:** every Sunday from 06:05 UTC, one task per ten minutes. Before a model is replaced it is scored on the bars that arrived after it was trained, and that record is shown.
+* **What real data showed (30 large US stocks, 3 crypto pairs, November 2026):** the direction model has no edge: about 44% accuracy against 45% for always saying "up", and no call reached 70% confidence. The signal filter is useful on 5-minute stock bars: signals it graded *skip* averaged -0.88R against -0.21R for the rest. The same replay shows the raw candle signals lose money on their own (-0.36R per trade); the filter makes them less bad, not profitable. On crypto the filter's gap was too small to trust.
+* **Cost:** no Claude usage. Training takes a few seconds of CPU and needs the Workers Paid plan.
+* API: `GET /api/ml`, `POST /api/ml/train {task, market}`, `PUT /api/ml/settings` (admin).
+
 ## Options Flow and dealer gamma
 
 An options-flow screen in the spirit of paid flow terminals (Skylit, Unusual Whales and similar), built on free data. Their code and data are proprietary and nothing of theirs is copied; the layout, names and scores here are the desk's own.

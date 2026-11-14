@@ -9,6 +9,7 @@ import { getSettings } from "./db";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
 import { closePosition, ensurePaper, getAccount, placeOrder, riskGate, type Side } from "./paper";
 import { patternAllowed } from "./learn";
+import { gradeSignal } from "./ml/engine";
 import { activeRules, ruleBlocks } from "./strategy";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
@@ -210,6 +211,9 @@ export async function runChartAuto(db: D1Database) {
           const h = allowed.sort((a, b) => b.strength - a.strength)[0], last = bars.at(-1)!;
           const patt = bars.slice(bars.length - h.bars);
           const side: Side = h.dir === "bullish" ? "long" : "short";
+          // Optional: the ML filter, once it has proven useful, vetoes signals it grades "skip".
+          let mlNote = "";
+          try { const g = await gradeSignal(db, r.symbol, bars, h); if (g) { if (g.enforce && g.grade === "skip") { await note(db, r, `Skipped ${h.label}: the ML filter grades it "skip" (signals like this lost money before)`); continue; } mlNote = ` · ML grade ${g.grade}`; } } catch { /* the filter never blocks on its own failure */ }
           // Optional: a fresh Kronos forecast that disagrees with the direction vetoes the entry.
           if (gate && (await kronosAgrees(db, r.symbol, side)) === false) { await note(db, r, `Skipped ${h.label}: the Kronos forecast disagrees with a ${side}`); continue; }
           const entry = last.close;
@@ -218,7 +222,7 @@ export async function runChartAuto(db: D1Database) {
           if (risk > 0 && risk / entry <= 0.05) {
             const target = r2(side === "long" ? entry + 2 * risk : entry - 2 * risk);
             const qty = isCrypto(r.symbol) ? Math.round((budget / entry) * 1e6) / 1e6 : Math.floor(budget / entry);
-            if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}` };
+            if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}${mlNote}` };
           }
         }
       }

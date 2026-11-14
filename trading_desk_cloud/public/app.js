@@ -407,7 +407,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["dashboard", "master", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "flow", "thesis", "kronos", "crypto", "learn", "journal", "more"];
+const MAIN_SECTIONS = ["dashboard", "master", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "ml", "flow", "thesis", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.live = { last: 0, prev: {}, source: null };
 /** Flash a price element green or red when its value changed since the last time this key was drawn. */
