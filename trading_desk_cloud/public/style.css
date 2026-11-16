@@ -926,3 +926,24 @@ tr.fl-fresh td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .ml-cm span.mono { text-align: center; padding: 6px 0; border-radius: 4px; } .ml-cm b { text-align: center; color: var(--dim); }
 .ml-settings { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; } .ml-settings input[type=number] { width: 80px; }
 #ml > .fl-card { margin-bottom: 12px; }
+
+/* ---- TV Strategies (strategy tester) */
+.st-chart { height: clamp(260px, 42vh, 460px); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); margin-bottom: 10px; }
+.st-chart > .dim { padding: 12px; }
+.st-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.st-pick { font-size: 1.154rem; font-weight: 700; padding: 6px 10px; border-radius: 8px; max-width: 100%; }
+.st-how { margin: 6px 0 8px; color: var(--dim); }
+.st-params { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 0 0 10px; }
+.st-params label { display: flex; flex-direction: column; gap: 3px; } .st-params input { width: 110px; }
+.st-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
+.st-tabs button { border: none; background: transparent; border-radius: 0; padding: 10px 14px; color: var(--dim); font-weight: 600; white-space: nowrap; border-bottom: 2px solid transparent; min-height: 44px; }
+.st-tabs button.on { color: var(--text); border-bottom-color: var(--accent); } .st-tabs button:hover { color: var(--text); }
+.st-pane { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; } .st-pane h4 { margin: 6px 0 0; } .st-pane p { margin: 0; }
+.st-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.st-kpi { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; background: var(--panel-2); }
+.st-kpi b { font-size: 1.385rem; line-height: 1.15; }
+.st-g { width: 100%; height: auto; display: block; max-width: 980px; }
+.st-scroll { max-height: 460px; overflow: auto; }
+tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } #strat tr[role=button] { cursor: pointer; }
+.st-auto-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; } .st-auto-form input { width: 120px; }
+.st-auto { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; } .st-auto-txt { flex: 1; min-width: 180px; }

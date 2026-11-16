@@ -370,6 +370,59 @@ Your own notes on real or paper trades, with statistics. Writing why you took a 
 
 ---
 
+## 16a. TV Strategies
+
+**TV Strategies** holds the 23 classic rule-based strategies found on TradingView (moving-average crosses, RSI, MACD, Supertrend, breakouts and others), a tester that shows how each would have done, and a switch to let one trade your paper account.
+
+### Testing a strategy
+
+1. Type a symbol and press **Load**. Choose the bar size (5m, 15m, 1h, 1D) and whether it may go long, short or both.
+2. Pick a strategy from the list under the chart. One sentence says how it trades.
+3. Change its settings if you like and press **Test**. **Standard settings** puts them back.
+
+The chart marks every entry with an arrow (green up for long, red down for short) and exits with the result.
+
+### The tabs
+
+- **Overview:** the five headline numbers and the account curve. The dashed grey line is simply holding the symbol. The red strip underneath is the drawdown: how far the account was below its best at each point.
+- **Performance:** the full table for all trades, longs and shorts.
+- **Trades analysis:** result by month (or by day on intraday bars), each trade in order, and how the results are spread.
+- **List of trades:** every trade with dates, prices and result.
+- **All strategies:** all 23 on your symbol, best first. Click one to test it.
+- **Auto trade:** let the strategy trade paper money.
+
+### The numbers
+
+| Number | Meaning | Good sign |
+|---|---|---|
+| Total P&L | growth of the account over the period | above buy & hold |
+| Max drawdown | largest fall from a peak | small enough that you would have stayed with it |
+| Profitable trades | share of winners | on its own means little: trend strategies win 30-40% of the time |
+| Profit factor | money won divided by money lost | above 1.3 over many trades |
+| Payoff ratio | average win divided by average loss | high when winners are few |
+
+### First 70% and last 30%
+
+Every result is split in two. A strategy that made money in the first part and lost in the last part has stopped working. The ranking sorts by the last 30% for that reason. Remember that the best of 23 strategies on past data is partly luck; prefer ones that are positive in both parts, with at least 20 to 30 trades.
+
+### Auto trade
+
+Set the money per trade and press **Start**. From then on, each time a bar finishes the desk checks which way the strategy is positioned. When it changes, the paper position is closed and a new one opened to match. It does not jump into a trade that is already running; it waits for the next change. Paper money only.
+
+- One strategy per symbol.
+- If the test shows the strategy lost money, the screen warns you before you start.
+- Entries go through the desk's safety layer (kill switch, drawdown guard, market regime).
+- The switch pauses it; **Remove** deletes it. An open paper position stays open until you close it or the strategy does.
+
+### Recommendations
+
+- Test on the daily chart first: more history, fewer false signals, lower costs.
+- Use **Long only** on stocks unless you have a reason to short.
+- Do not tune the settings until the result looks good. A setting that only works at one exact value will not work tomorrow.
+- Run an auto-trader for a few weeks on paper and compare it with the test before trusting it.
+
+---
+
 ## 16b. ML Signals
 
 Two computer models learn from price history: a **neural network** and **boosted decision trees**. They are trained on the older part of the history and judged on the newest part, which they never saw. That second step is what makes the numbers on this screen trustworthy: it is how the model would have done if you had switched it on back then.

@@ -11,6 +11,8 @@ import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
 import { optionsFlow, setFlowBase } from "./flow";
+import { catalog, rankStrategies, runStrategy, type Bar as SBar } from "./strategies";
+import { TV_DAYS, TV_INTERVALS, finished, listTvAuto, removeTvAuto, setTvAuto } from "./tvauto";
 import { mlView, saveMlSettings, trainTask } from "./ml/engine";
 import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
@@ -254,6 +256,25 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
   }
   // Kronos forecasts (candlestick foundation model in the sandbox).
+  // ---- TV Strategies: the classic rule-based strategies, their tester, and a paper auto-trader per symbol
+  if (path === "/strategies" && m === "GET") return json({ strategies: catalog(), intervals: TV_INTERVALS });
+  if ((path === "/strategies/run" || path === "/strategies/rank") && m === "GET") {
+    const q = url.searchParams, symbol = (q.get("symbol") || "SPY").trim().toUpperCase(), iv = q.get("interval") || "1d";
+    if (!SYMBOL_RE.test(symbol)) return bad("Bad symbol");
+    if (!(TV_INTERVALS as readonly string[]).includes(iv)) return bad("Bar size must be 5m, 15m, 1h or 1D.");
+    const dir = q.get("dir") === "long" || q.get("dir") === "short" ? (q.get("dir") as "long" | "short") : "both", fee = Math.min(1, Math.max(0, Number(q.get("fee") ?? 0.02) || 0));
+    try {
+      const bars = finished((await candles(symbol, iv, TV_DAYS[iv])) as SBar[], iv);
+      if (path === "/strategies/rank") { const rows = rankStrategies(bars, { direction: dir, commission_pct: fee }); return json({ symbol, interval: iv, bars: bars.length, buy_hold_pct: rows[0]?.buy_hold_pct ?? null, rows }); }
+      let params: Record<string, number> = {}; try { params = JSON.parse(q.get("p") || "{}"); } catch { params = {}; }
+      return json({ ...runStrategy(q.get("id") || "supertrend", bars, { params, direction: dir, commission_pct: fee }), symbol, interval: iv });
+    } catch (e) { return bad(String((e as Error).message || e).slice(0, 200)); }
+  }
+  if (path === "/tvauto" && m === "GET") return json(await listTvAuto(env.DB, who.user));
+  if (path === "/tvauto" && m === "PUT") { const err = await setTvAuto(env.DB, who.user, await body<Record<string, unknown>>(req)); return err ? bad(err) : json(await listTvAuto(env.DB, who.user)); }
+  const tva = path.match(/^\/tvauto\/([A-Za-z0-9.\-^=]{1,15})$/);
+  if (tva && m === "DELETE") { await removeTvAuto(env.DB, who.user, tva[1]); return json(await listTvAuto(env.DB, who.user)); }
+
   // ---- ML signals: direction model and candle-signal filter
   if (path === "/ml" && m === "GET") return json(await mlView(env.DB, who.user));
   if (path === "/ml/train" && m === "POST") {

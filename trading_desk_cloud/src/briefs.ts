@@ -14,6 +14,7 @@ import { evaluateForecasts, finalizeKronos, kronosContext } from "./kronos";
 import { checkWatches, finalizeTheses, thesisContext } from "./thesis";
 import { flowContext } from "./flow";
 import { mlContext, mlSchedule } from "./ml/engine";
+import { runTvAuto } from "./tvauto";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
@@ -313,6 +314,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   // Paper trading: fill/close against the latest 1-minute bars, then auto-trade any newly finished brief.
   try { await runEngine(env.DB); } catch (e) { console.error("paper engine", e); }
   try { await runChartAuto(env.DB); } catch (e) { console.error("chart autopilot", e); }
+  try { await runTvAuto(env.DB); } catch (e) { console.error("strategy auto", e); }
   try { await learnTick(env.DB); } catch (e) { console.error("learning", e); }
   if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return;
   await finalizeBriefs(env);

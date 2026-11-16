@@ -149,7 +149,7 @@ export const lastPrice = latestPrice;
 // --------------------------------------------------------------------------------------- orders
 export type OrderInput = {
   symbol: string; side: Side; type: OrderType; price?: number | null; qty?: number | null; amount_usd?: number | null;
-  stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto" | "chart"; brief_id?: string | null;
+  stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto" | "chart" | "tv"; brief_id?: string | null;
   exit_mode?: ExitMode | null;
 };
 
