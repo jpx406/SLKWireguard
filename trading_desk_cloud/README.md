@@ -239,6 +239,18 @@ The fifth view in TV Strategies executes Pine Script (version 5 or 6) on the des
 * **Sources of scripts:** paste one, pick one of the seven examples in `public/tv/samples/`, or press **Use on chart** in the Scripts view (also from the saved library, which works without TradingView).
 * **Limits:** not every Pine feature is supported and some scripts will fail with a message. It runs in the browser only, because Cloudflare Workers do not allow the code generation the engine needs, so a Pine strategy cannot be auto-traded by the server; use the Strategy tester's 23 for that.
 
+### Converting a Pine strategy into a desk strategy
+
+The Pine runner can only run in the browser, so a Pine strategy cannot be auto-traded as it is. **Convert** (shown under any Pine strategy's result) has Claude rewrite it as a desk strategy the server can test and auto-trade.
+
+* **A rule definition, not code (`src/dsl.ts`):** the server cannot run generated code, and should not run a stranger's. A conversion is data: named series built from a fixed list of about 55 functions (averages, RSI, ATR, MACD, Supertrend, crosses and so on) plus entry, exit, stop and target rules. The desk checks every definition before storing it.
+* **Never trusted on Claude's word (`src/pineconv.ts`):** after converting, the browser sends the trades the original script made in the Pine runner; the server replays the conversion on the same bars and counts trades with the same side whose entry and exit fall within one bar. A conversion is *verified* only with at least five trades on each side and a match score of 90% or more. Anything else stays test-only.
+* **What verified unlocks:** the strategy appears in the Strategy tester's list marked *converted*, with its own parameters, and can be auto-traded on paper like the 23 built-ins. Unverified conversions can be tested but the auto-trader refuses them.
+* **Honest refusals:** indicators are refused before any Claude run (they have no trading rules). Claude is told to say a script cannot be converted, rather than approximate, when it relies on state, loops, arrays, other symbols or timeframes, limit or stop entries, pyramiding or partial exits. Any known difference is listed and shown.
+* **Engine check:** the rule engine was compared with PineTS on two strategies across SPY daily, AAPL 5-minute and BTC hourly bars: 97% to 100% of trades matched. The remaining gap is a trade that enters and stops out inside the same bar.
+* **Limits:** one script at a time, each a Claude run counted toward the daily cap under *Pine conversion*; 40 conversions per user; the check uses trades reported by your own browser, which is enough to protect a paper account from a bad conversion but is not a security boundary. A converted strategy puts the whole account in each trade, whatever the script's own order size was.
+* API: `POST /api/pineconv`, `GET/DELETE /api/pineconv/:id`, `POST /api/pineconv/:id/verify`; converted strategies run as `id=c:<id>`.
+
 ## ML Signals: a neural network and boosted trees
 
 `src/ml/` holds a complete machine-learning engine written in TypeScript, because the app runs on Cloudflare Workers, which have no Python runtime (so no PyTorch, XGBoost or FastAPI sidecar). The rules it follows are in `.claude/skills/ml-neural-trader/SKILL.md`.

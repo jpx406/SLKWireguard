@@ -14,7 +14,7 @@ async function loadStrat(what = "all") {
   if (!S.symbol) S.symbol = state.symbol || "SPY";
   $("#stratSym").value = S.symbol;
   try {
-    if (!S.catalog) S.catalog = (await api("/api/strategies")).strategies;
+    if (!S.catalog || what === "all") await stratCatalog();
     S.busy = true; if (!S.res) renderStrat();
     const jobs = [api(`/api/strategies/run?${stQuery()}&id=${S.sel}&p=${encodeURIComponent(JSON.stringify(S.params[S.sel] || {}))}`)];
     if (what === "all") jobs.push(api(`/api/strategies/rank?${stQuery()}`), api("/api/tvauto").catch(() => []));
@@ -23,6 +23,13 @@ async function loadStrat(what = "all") {
     S.res = res; if (rank && rank.rows) S.rank = rank; if (Array.isArray(autos)) S.autos = autos;
   } catch (e) { S.busy = false; stratDispose(); $("#strat").innerHTML = ""; $("#strat").append(el("div", "msg err", e.message)); return; }
   S.busy = false; renderStrat();
+}
+/** The 23 built-ins plus this user's converted Pine strategies that are ready to run. */
+async function stratCatalog() {
+  const S = state.strat, d = await api("/api/strategies");
+  S.custom = d.custom || [];
+  S.catalog = [...d.strategies, ...S.custom.filter((c) => c.status === "ready" || c.status === "verified").map((c) => ({ id: c.strategy_id, name: c.name, kind: "Converted", how: c.how || "Converted from a Pine strategy.", adapted: null, params: c.params || [], converted: true, verified: c.status === "verified", verify: c.verify, differences: c.differences || [], script: c.script }))];
+  if (!S.catalog.some((c) => c.id === S.sel)) S.sel = "supertrend";
 }
 function stratDispose() { const S = state.strat; if (S.chart) { try { S.chart.remove(); } catch { /* gone */ } S.chart = null; S.series = null; } }
 
@@ -127,6 +134,7 @@ function stratAll(box) {
 }
 function stratAuto(box, r, def) {
   const S = state.strat, mine = S.autos.find((a) => a.symbol === S.symbol);
+  if (def.converted && !def.verified) { box.append(el("div", "msg err", "This converted strategy has not passed its check against the original Pine script, so it cannot auto-trade. Open it in the Pine runner and run the check on a symbol where it trades at least five times.")); return; }
   box.append(el("p", "small", "Let this strategy trade your paper account by itself. Each time a bar finishes the desk checks which way the strategy is positioned; when that changes, it closes the old paper position and opens the new one. It never jumps into a trade already running: it waits for the next change. Paper money only."));
   if (r && (r.net_pct <= 0 || r.out_sample.net_pct <= 0)) box.append(el("div", "msg err", `Careful: in the test above this strategy ${r.net_pct <= 0 ? "lost money over the whole period" : "lost money in the most recent 30%"} on ${S.symbol}. ${stratVerdict(r)}`));
   const f = el("form", "st-auto-form"), amt = el("input", "mono"); amt.type = "number"; amt.min = "50"; amt.step = "50"; amt.value = mine?.amount_usd ?? 1000; amt.setAttribute("aria-label", "Money per trade in dollars");
@@ -155,10 +163,12 @@ function renderStrat() {
   const cb = el("div", "st-chart"); host.append(cb);
   // Tester header: strategy picker, what it does, its settings
   const head = el("div", "st-head"), pick = el("select", "st-pick"); pick.setAttribute("aria-label", "Strategy");
-  for (const c of S.catalog) pick.append(new Option(c.name, c.id)); pick.value = S.sel; pick.onchange = () => { S.sel = pick.value; loadStrat("one"); };
+  for (const c of S.catalog) pick.append(new Option(c.converted ? `${c.name} (converted${c.verified ? ", verified" : ", not verified"})` : c.name, c.id)); pick.value = S.sel; pick.onchange = () => { S.sel = pick.value; loadStrat("one"); };
   head.append(pick, el("span", "badge muted", def.kind)); if (r?.open) head.append(el("span", `badge th-${r.open.side === "long" ? "up" : "down"}`, `now ${r.open.side}`)); else if (r) head.append(el("span", "badge th-muted", "now flat"));
   if (S.autos.some((a) => a.symbol === S.symbol && a.strategy === S.sel && a.enabled)) head.append(el("span", "badge th-up", "auto-trading"));
   host.append(head, el("p", "small st-how", def.how + (def.adapted ? ` (Adapted: ${def.adapted})` : "")));
+  if (def.converted) { const v = def.verify; host.append(el("p", `small ${def.verified ? "up" : "warn-text"}`, def.verified ? `Converted from the Pine strategy "${def.script}" and verified: ${v.matched} of ${v.pine} of the original's trades reproduced on ${v.symbol} (${v.interval === "60m" ? "1h" : v.interval}).` : `Converted from the Pine strategy "${def.script}" but NOT verified${v ? `: ${v.why}` : ""}. Test only; it cannot auto-trade.`));
+    if (def.differences.length) host.append(el("p", "small dim", `Known differences from the original: ${def.differences.join(" ")}`)); }
   if (def.params.length) {
     const f = el("form", "st-params"), cur = S.params[S.sel] || {};
     for (const p of def.params) { const l = el("label", "small"), i = el("input", "mono"); i.type = "number"; i.min = p.min; i.max = p.max; i.step = p.step; i.value = cur[p.key] ?? r?.params?.[p.key] ?? p.def; i.name = p.key; l.append(p.label, i); f.append(l); }

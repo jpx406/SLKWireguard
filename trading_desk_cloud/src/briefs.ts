@@ -15,6 +15,7 @@ import { checkWatches, finalizeTheses, thesisContext } from "./thesis";
 import { flowContext } from "./flow";
 import { mlContext, mlSchedule } from "./ml/engine";
 import { runTvAuto } from "./tvauto";
+import { finalizeConvert } from "./pineconv";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
@@ -324,6 +325,7 @@ export async function runSchedule(env: Env, now = clockNow()) {
   try { await finalizeStrategy(env); } catch (e) { console.error("strategy", e); }
   try { await finalizeTheses(env); await checkWatches(env); } catch (e) { console.error("thesis", e); }
   try { await mlSchedule(env, now); } catch (e) { console.error("ml", e); }
+  try { await finalizeConvert(env); } catch (e) { console.error("pine conversion", e); }
   const ny = nyNow(now);
   const ap = await getAutopilot(env.DB);
   if (!ap.enabled) return;

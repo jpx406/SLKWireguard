@@ -39,6 +39,7 @@ async function pineRun() {
   if (!src.trim()) { P.err = "Paste a Pine script, pick an example, or open one from Scripts."; P.res = null; pineRender(); return; }
   P.busy = true; P.err = null; pineRender();
   try {
+    if (P.source !== src) P.conv = null;
     P.source = src; try { localStorage.setItem("td.pine.src", src.slice(0, 200000)); localStorage.setItem("td.pine.name", P.name || ""); } catch { /* storage may be off */ }
     if (!S.symbol) S.symbol = state.symbol || "SPY";
     const raw = await api(`/api/candles/${encodeURIComponent(S.symbol)}?interval=${S.interval}&days=${ST_DAYS[S.interval]}`), step = PINE_STEP[S.interval], now = Date.now() / 1000;
@@ -114,6 +115,7 @@ function pineRender() {
     if (rows.length) { const det = el("details"); det.append(el("summary", "small", `List of trades (latest ${rows.length} of ${s.trades})`)); const w = el("div", "bd-table-wrap st-scroll"); w.append(table(["Side", "Entry", "Price", "Exit", "Price", "Profit", "Closed by"], rows)); det.append(w); host.append(det); }
     host.append(el("p", "small dim", "Strategy results come from the engine's own broker emulator, using the script's own settings (starting capital, order size, commission). They can differ from the Strategy tester tab, which uses the desk's rules."));
   }
+  if (r.strategy) host.append(pineConvertBox(r));
   const last = r.plots.filter((p) => p.any && !p.boolean).slice(0, 12).map((p) => { const v = p.values.filter((x) => x !== null).pop(); return `${p.title}: ${v == null ? "—" : fmt(v)}`; });
   if (last.length) host.append(el("p", "small mono dim", `Latest values · ${last.join(" · ")}`));
   requestAnimationFrame(() => { if (top.isConnected) pineCharts(top, bottom, r); });
@@ -139,4 +141,45 @@ function pineInit() {
   $("#pineClear").onclick = () => { $("#pineSrc").value = ""; $("#pineName").textContent = ""; state.pine.name = ""; state.pine.res = null; state.pine.err = null; pineRender(); $("#pineSrc").focus(); };
   try { const s = localStorage.getItem("td.pine.src"); if (s) { $("#pineSrc").value = s; state.pine.name = localStorage.getItem("td.pine.name") || ""; $("#pineName").textContent = state.pine.name; } } catch { /* storage may be off */ }
   pineRender();
+}
+
+/* ---- Convert a Pine strategy into a desk strategy (so the server can test and auto-trade it) */
+state.pine.conv = null; // { id, status, ... } of the conversion belonging to the script in the editor
+function pineConvertBox(r) {
+  const P = state.pine, box = el("section", "fl-card pine-conv"), c = P.conv; box.append(el("h4", null, "Convert to a desk strategy"));
+  box.append(el("p", "small", "Claude rewrites this Pine strategy as a desk strategy. The desk then replays it on these same bars and compares its trades with the ones above. If they match, it joins the Strategy tester's list and may auto-trade on paper."));
+  const go = el("button", "primary small ai-only", c && c.status === "converting" ? "Converting… (a minute or two)" : c ? "Convert again" : "Convert"); go.disabled = !!(c && c.status === "converting") || document.body.classList.contains("no-ai");
+  go.onclick = async () => { go.disabled = true; try { const j = await api("/api/pineconv", { method: "POST", body: JSON.stringify({ name: r.title || P.name || "Pine strategy", source: P.source, author: (document.querySelector("#pineName")?.textContent.match(/by (.+)$/) || [])[1] || "" }) }); P.conv = { id: j.id, status: "converting" }; pineRender(); pineConvPoll(); } catch (e) { showBanner(e.message); go.disabled = false; } };
+  box.append(go);
+  if (!c) return box;
+  if (c.status === "failed") { const m = el("div", "msg err"); m.append(c.error || "The conversion failed."); box.append(m); }
+  if (c.status === "ready" || c.status === "verified") {
+    const v = c.verify;
+    if (v) { const ok = v.passed, m = el("div", ok ? "msg" : "msg err"); m.append(el("b", null, ok ? "Verified. " : "Not verified. "), `${v.why} Match score ${Math.round(v.score * 100)}% on ${v.symbol} (${v.interval === "60m" ? "1h" : v.interval}): original ${v.pine} trades, conversion ${v.desk}, same ${v.matched}.`); box.append(m); }
+    if (c.differences?.length) box.append(el("p", "small dim", `Claude's notes on differences: ${c.differences.join(" ")}`));
+    const row = el("div", "fl-filters"), chk = el("button", "ghost small", v ? "Check again on this symbol" : "Check against the original"); chk.onclick = () => pineConvVerify(); row.append(chk);
+    const open = el("button", "ghost small", "Open in Strategy tester"); open.onclick = async () => { const S = state.strat; S.sel = `c:${c.id}`; S.rank = null; S.res = null; S.tab = v && v.passed ? "auto" : "overview"; await stratCatalog().catch(() => {}); S.sel = `c:${c.id}`; stratView("tester"); }; row.append(open);
+    box.append(row);
+    if (v && v.passed) box.append(el("p", "small dim", "It is now in the Strategy tester's list (marked converted) and can be auto-traded from its Auto trade tab."));
+    else if (v) box.append(el("p", "small dim", "It stays in the list for testing only. It cannot auto-trade until a check passes; try another symbol or bar size where it trades more, or convert again."));
+  }
+  return box;
+}
+async function pineConvPoll() {
+  const P = state.pine, id = P.conv?.id; if (!id) return;
+  for (let k = 0; k < 60; k++) {
+    await new Promise((r) => setTimeout(r, k < 3 ? 2500 : 8000));
+    if (P.conv?.id !== id) return;
+    let c; try { c = await api(`/api/pineconv/${id}`); } catch { continue; }
+    if (c.status !== "converting") { P.conv = c; if (c.status === "ready") await pineConvVerify(); else if (sectionVisible("strat") && state.strat.view === "pine") pineRender(); return; }
+  }
+}
+/** Send the trades the original made here; the server replays the conversion and counts the matches. */
+async function pineConvVerify() {
+  const P = state.pine, c = P.conv, r = P.res; if (!c || !r || !r.strategy) return;
+  try {
+    const j = await api(`/api/pineconv/${c.id}/verify`, { method: "POST", body: JSON.stringify({ symbol: r.symbol, interval: r.interval, from: r.candles[0].time, trades: r.strategy.closed.map((t) => ({ side: t.side, entry_time: t.entry_time, exit_time: t.exit_time })) }) });
+    P.conv = { ...c, status: j.status, verify: j.verify };
+  } catch (e) { showBanner(e.message); }
+  if (state.strat.view === "pine") pineRender();
 }

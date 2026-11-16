@@ -424,6 +424,8 @@ The buttons at the top of TV Strategies switch between four views.
 
 - **Pine runner:** runs a Pine script here, on this desk's price data. Paste a script, pick an example, or press **Use on chart** on a script in the Scripts view, then press **Run**. Indicators are drawn on the chart or in a pane below it; strategies also show their trades and results. The symbol and bar size at the top apply. Some scripts will not run: the engine does not support every feature, and labels, boxes and tables are not drawn. To change a script's settings, edit the numbers in its `input` lines. Scripts run in a sealed sandbox and cannot touch your account. A Pine strategy cannot be auto-traded; only the 23 in the Strategy tester can.
 
+- **Convert:** under a Pine *strategy's* result, press **Convert**. Claude rewrites it as a desk strategy (a minute or two, one Claude run). The desk then replays the conversion and compares its trades with the original's. If at least 90% match, it is marked **verified**, joins the Strategy tester's list, and can be auto-traded on paper. If not, it stays test-only. Indicators cannot be converted: they have no buy and sell rules. Some strategies cannot either, and the desk will say why.
+
 This data comes from TradingView's public pages through unofficial channels. It can be delayed or stop working without notice, so use it to find ideas, then confirm on the Chart and with a scan.
 
 ### Recommendations

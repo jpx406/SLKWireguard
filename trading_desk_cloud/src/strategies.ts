@@ -10,7 +10,7 @@ type Ord = { type: "market" | "stop"; price?: number };
 type Out = { long?: Ord | null; short?: Ord | null; exit?: { stop?: number; limit?: number } | null; close?: boolean };
 type Ctx = { pos: -1 | 0 | 1; entry: number };
 export type ParamDef = { key: string; label: string; def: number; min: number; max: number; step: number };
-type Def = { id: string; name: string; kind: string; how: string; adapted?: string; params: ParamDef[]; make: (b: Bar[], p: P) => (i: number, c: Ctx) => Out };
+export type Def = { id: string; name: string; kind: string; how: string; adapted?: string; params: ParamDef[]; make: (b: Bar[], p: P) => (i: number, c: Ctx) => Out };
 
 // ---------------------------------------------------------------------------------------------- indicators
 const N = NaN;
@@ -161,8 +161,10 @@ function part(trades: Trade[], eq: number[]): Part {
   return { net_pct: eq.length ? r2((eq[eq.length - 1] / eq[0] - 1) * 100) : 0, trades: trades.length, win_rate: trades.length ? r4(win.length / trades.length) : null, profit_factor: gl > 0 ? r2(gp / gl) : gp > 0 ? 99 : null, max_dd_pct: r2(dd * 100), avg_trade_pct: trades.length ? r2(trades.reduce((s, t) => s + t.pct, 0) / trades.length) : null };
 }
 
-export function runStrategy(id: string, bars: Bar[], o: { params?: P; direction?: "both" | "long" | "short"; commission_pct?: number } = {}): Result {
-  const def = STRATEGIES.find((s) => s.id === id); if (!def) throw new Error("Unknown strategy.");
+/** Run a built-in strategy by id, or any strategy definition (a converted one, for example). */
+export function runStrategy(idOrDef: string | Def, bars: Bar[], o: { params?: P; direction?: "both" | "long" | "short"; commission_pct?: number } = {}): Result {
+  const def = typeof idOrDef === "string" ? STRATEGIES.find((s) => s.id === idOrDef) : idOrDef; if (!def) throw new Error("Unknown strategy.");
+  const id = def.id;
   if (bars.length < 60) throw new Error("Not enough price history to test on.");
   const p: P = {}; for (const d of def.params) { const v = Number(o.params?.[d.key]); p[d.key] = Number.isFinite(v) ? Math.min(d.max, Math.max(d.min, v)) : d.def; }
   const dir = o.direction ?? "both", fee = (o.commission_pct ?? 0.02) / 100, step = def.make(bars, p);

@@ -8,7 +8,8 @@ import { isTradingDay, marketPhase, nyNow } from "./briefs";
 import { candles, isCrypto } from "./market";
 import { closePosition, ensurePaper, getAccount, placeOrder, riskGate } from "./paper";
 import { riskLog } from "./risk";
-import { STRATEGIES, runStrategy, type Bar } from "./strategies";
+import { STRATEGIES, runStrategy, type Bar, type Def } from "./strategies";
+import { customDef } from "./pineconv";
 
 export const TV_INTERVALS = ["5m", "15m", "60m", "1d"] as const;
 const STEP: Record<string, number> = { "5m": 300, "15m": 900, "60m": 3600, "1d": 86400 };
@@ -25,19 +26,22 @@ async function ensure(db: D1Database) {
 }
 /** Finished bars only: the bar still forming is dropped. */
 export function finished(b: Bar[], interval: string): Bar[] { return b.length && Date.now() / 1000 < b[b.length - 1].time + STEP[interval] ? b.slice(0, -1) : b; }
-const targetOf = (strategy: string, bars: Bar[], params: Record<string, number>, direction: string) => runStrategy(strategy, bars, { params, direction: direction as "both" | "long" | "short", commission_pct: 0 }).open?.side ?? "flat";
+/** A built-in strategy, or one of this user's converted strategies (only a verified one may auto-trade). */
+const defOf = async (db: D1Database, user: string, strategy: string): Promise<Def | null> => STRATEGIES.find((s) => s.id === strategy) ?? (await customDef(db, user, strategy, true));
+const targetOf = (strategy: Def, bars: Bar[], params: Record<string, number>, direction: string) => runStrategy(strategy, bars, { params, direction: direction as "both" | "long" | "short", commission_pct: 0 }).open?.side ?? "flat";
 
 export async function listTvAuto(db: D1Database, user: string) {
   await ensure(db);
   const { results } = await db.prepare("SELECT * FROM tv_auto WHERE user = ? ORDER BY created_at DESC").bind(user).all<TvAuto>();
-  return results.map((r) => ({ ...r, params: JSON.parse(r.params || "{}"), enabled: !!r.enabled, name: STRATEGIES.find((s) => s.id === r.strategy)?.name ?? r.strategy }));
+  const out = []; for (const r of results) out.push({ ...r, params: JSON.parse(r.params || "{}"), enabled: !!r.enabled, name: (await defOf(db, user, r.strategy))?.name ?? "(strategy no longer available)" });
+  return out;
 }
 
 export async function setTvAuto(db: D1Database, user: string, b: { symbol?: unknown; strategy?: unknown; interval?: unknown; params?: unknown; direction?: unknown; amount_usd?: unknown; enabled?: unknown }): Promise<string | null> {
   await ensure(db);
   const symbol = String(b.symbol ?? "").trim().toUpperCase(), strategy = String(b.strategy ?? ""), interval = String(b.interval ?? ""), amount = Number(b.amount_usd);
   if (!/^[A-Z0-9.\-^=]{1,15}$/.test(symbol)) return "Bad symbol";
-  const def = STRATEGIES.find((s) => s.id === strategy); if (!def) return "Unknown strategy.";
+  const def = await defOf(db, user, strategy); if (!def) return strategy.startsWith("c:") ? "Only a converted strategy that passed its check can auto-trade." : "Unknown strategy.";
   if (!(TV_INTERVALS as readonly string[]).includes(interval)) return "Bar size must be 5m, 15m, 1h or 1D.";
   if (!(amount >= 50 && amount <= 1_000_000)) return "Amount per trade: $50 to $1,000,000.";
   const direction = b.direction === "long" || b.direction === "short" ? b.direction : "both", params: Record<string, number> = {};
@@ -47,7 +51,7 @@ export async function setTvAuto(db: D1Database, user: string, b: { symbol?: unkn
   // Where the strategy stands right now: the auto-trader starts from there and acts on the next change only.
   let bars: Bar[]; try { bars = finished((await candles(symbol, interval, LIVE_DAYS[interval])) as Bar[], interval); } catch (e) { return String((e as Error).message || e).slice(0, 200); }
   if (bars.length < 80) return `Not enough ${interval} history for ${symbol}.`;
-  const target = targetOf(strategy, bars, params, direction), now = Math.floor(Date.now() / 1000), enabled = b.enabled === false ? 0 : 1;
+  const target = targetOf(def, bars, params, direction), now = Math.floor(Date.now() / 1000), enabled = b.enabled === false ? 0 : 1;
   await db.prepare(`INSERT INTO tv_auto (user, symbol, strategy, interval, params, direction, amount_usd, enabled, last_bar, last_target, last_note, last_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user, symbol) DO UPDATE SET strategy = excluded.strategy, interval = excluded.interval, params = excluded.params, direction = excluded.direction, amount_usd = excluded.amount_usd, enabled = excluded.enabled, last_bar = excluded.last_bar, last_target = excluded.last_target, last_note = excluded.last_note, last_at = excluded.last_at`)
     .bind(user, symbol, strategy, interval, JSON.stringify(params), direction, amount, enabled, bars[bars.length - 1].time, target, enabled ? `Armed. The strategy is ${target} now; the first paper trade comes at its next change.` : "Paused.", now, now).run();
@@ -72,7 +76,9 @@ export async function runTvAuto(db: D1Database): Promise<number> {
       if (r.interval === "1d" && ny.minutes % 10 !== 0 && !crypto) continue;
       const bars = finished((await candles(r.symbol, r.interval, LIVE_DAYS[r.interval])) as Bar[], r.interval), last = bars[bars.length - 1];
       if (!last || last.time <= r.last_bar) continue;
-      const target = targetOf(r.strategy, bars, JSON.parse(r.params || "{}"), r.direction), name = STRATEGIES.find((s) => s.id === r.strategy)?.name ?? r.strategy;
+      const def = await defOf(db, r.user, r.strategy);
+      if (!def) { await db.prepare("UPDATE tv_auto SET enabled = 0, last_note = ?, last_at = ? WHERE user = ? AND symbol = ?").bind("Paused: this strategy is no longer available or no longer verified.", now, r.user, r.symbol).run(); continue; }
+      const target = targetOf(def, bars, JSON.parse(r.params || "{}"), r.direction), name = def.name;
       const seen = `, last_bar = ${last.time}`;
       if (target === r.last_target) { await db.prepare("UPDATE tv_auto SET last_bar = ? WHERE user = ? AND symbol = ?").bind(last.time, r.user, r.symbol).run(); continue; }
       const mine = await db.prepare("SELECT id, side FROM paper_positions WHERE user = ? AND symbol = ? AND status = 'open' AND source = 'tv' LIMIT 1").bind(r.user, r.symbol).first<{ id: string; side: string }>();

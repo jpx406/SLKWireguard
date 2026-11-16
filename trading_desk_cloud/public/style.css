@@ -961,3 +961,5 @@ tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } 
 .pine-out { min-width: 0; display: flex; flex-direction: column; gap: 10px; } .pine-out p { margin: 0; }
 .pine-sub { height: clamp(140px, 22vh, 240px); }
 @container content (max-width: 900px) { .pine-edit textarea { min-height: 120px; height: 170px; } }
+
+.pine-conv .msg { margin: 8px 0; } .warn-text { color: var(--warn, #b45309); }

@@ -12,6 +12,7 @@ import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn
 import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
 import { optionsFlow, setFlowBase } from "./flow";
 import { tvProxy } from "./tvproxy";
+import { customDef, deleteConvert, finalizeConvert, getConvert, listConvert, startConvert, verifyConvert } from "./pineconv";
 import { catalog, rankStrategies, runStrategy, type Bar as SBar } from "./strategies";
 import { TV_DAYS, TV_INTERVALS, finished, listTvAuto, removeTvAuto, setTvAuto } from "./tvauto";
 import { mlView, saveMlSettings, trainTask } from "./ml/engine";
@@ -53,7 +54,7 @@ async function setupMarket(env: Env) {
 }
 
 // Claude-powered actions cost money: only the admin and users the admin allows may run them.
-const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/, /^\/strategy\/propose$/, /^\/thesis$/, /^\/thesis\/[a-z0-9]+\/update$/];
+const AI_ROUTES = [/^\/chat$/, /^\/briefs\/run$/, /^\/deep\/run$/, /^\/kronos\/run$/, /^\/crypto\/forecast$/, /^\/strategy\/propose$/, /^\/thesis$/, /^\/thesis\/[a-z0-9]+\/update$/, /^\/pineconv$/];
 // Shared settings: admin only.
 const ADMIN_WRITES = [/^\/settings$/, /^\/guide$/, /^\/autopilot$/, /^\/scan-filters$/, /^\/users/];
 
@@ -261,7 +262,13 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   { const tv = await tvProxy(env, req, url, path); if (tv) return tv; }
 
   // ---- TV Strategies: the classic rule-based strategies, their tester, and a paper auto-trader per symbol
-  if (path === "/strategies" && m === "GET") return json({ strategies: catalog(), intervals: TV_INTERVALS });
+  if (path === "/strategies" && m === "GET") { if (agentReady) await finalizeConvert(env).catch(() => {}); return json({ strategies: catalog(), intervals: TV_INTERVALS, custom: await listConvert(env.DB, who.user) }); }
+  // Pine conversion: Claude rewrites a Pine strategy as a rule definition; a check against the original decides if it may auto-trade.
+  if (path === "/pineconv" && m === "POST") { if (!agentReady) return bad("The Claude agent is not set up yet (run setup/setup-agent.mjs).", 503); const r = await startConvert(env, who.user, await body<Record<string, unknown>>(req)); return r.error ? bad(r.error) : json(r); }
+  const pcv = path.match(/^\/pineconv\/([a-z0-9]{6,32})(\/verify)?$/);
+  if (pcv && !pcv[2] && m === "GET") { if (agentReady) await finalizeConvert(env).catch(() => {}); const c = await getConvert(env.DB, who.user, pcv[1]); return c ? json(c) : bad("No such conversion.", 404); }
+  if (pcv && !pcv[2] && m === "DELETE") { await deleteConvert(env.DB, who.user, pcv[1]); return json({ ok: true }); }
+  if (pcv && pcv[2] && m === "POST") { const r = await verifyConvert(env.DB, who.user, pcv[1], await body<Record<string, unknown>>(req)); return r.error ? bad(r.error) : json(r); }
   if ((path === "/strategies/run" || path === "/strategies/rank") && m === "GET") {
     const q = url.searchParams, symbol = (q.get("symbol") || "SPY").trim().toUpperCase(), iv = q.get("interval") || "1d";
     if (!SYMBOL_RE.test(symbol)) return bad("Bad symbol");
@@ -271,7 +278,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       const bars = finished((await candles(symbol, iv, TV_DAYS[iv])) as SBar[], iv);
       if (path === "/strategies/rank") { const rows = rankStrategies(bars, { direction: dir, commission_pct: fee }); return json({ symbol, interval: iv, bars: bars.length, buy_hold_pct: rows[0]?.buy_hold_pct ?? null, rows }); }
       let params: Record<string, number> = {}; try { params = JSON.parse(q.get("p") || "{}"); } catch { params = {}; }
-      return json({ ...runStrategy(q.get("id") || "supertrend", bars, { params, direction: dir, commission_pct: fee }), symbol, interval: iv });
+      const sid = q.get("id") || "supertrend", cdef = sid.startsWith("c:") ? await customDef(env.DB, who.user, sid) : null;
+      if (sid.startsWith("c:") && !cdef) return bad("That converted strategy does not exist.");
+      return json({ ...runStrategy(cdef ?? sid, bars, { params, direction: dir, commission_pct: fee }), symbol, interval: iv });
     } catch (e) { return bad(String((e as Error).message || e).slice(0, 200)); }
   }
   if (path === "/tvauto" && m === "GET") return json(await listTvAuto(env.DB, who.user));
@@ -488,7 +497,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     }
     if ("engines" in patch) {
       const e = (patch.engines && typeof patch.engines === "object" ? patch.engines : {}) as Record<string, unknown>;
-      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos", "strategy", "thesis"]);
+      const keys = new Set([...SLOTS.map((x) => x.id as string), "chat", "deep", "kronos", "strategy", "thesis", "pineconv"]);
       await setSetting(env.DB, "engines", Object.fromEntries(Object.entries(e).filter(([k, v]) => keys.has(k) && isEngine(v) && v !== "default")));
     }
     if ("trader_config" in patch) {
