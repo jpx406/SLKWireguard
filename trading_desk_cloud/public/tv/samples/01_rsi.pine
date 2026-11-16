@@ -1,0 +1,9 @@
+//@version=5
+indicator("RSI with bands", overlay=false)
+len = input.int(14, "Length", minval=1)
+src = input.source(close, "Source")
+r = ta.rsi(src, len)
+plot(r, "RSI", color=color.purple)
+hline(70, "Upper")
+hline(30, "Lower")
+bgcolor(r > 70 ? color.new(color.red, 90) : r < 30 ? color.new(color.green, 90) : na)

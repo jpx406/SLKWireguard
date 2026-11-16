@@ -178,8 +178,8 @@ function renderStrat() {
   if (r) requestAnimationFrame(() => { if (cb.isConnected) stratChart(cb, r); }); else cb.append(el("div", "dim small", "Loading the chart…"));
 }
 
-$("#stratForm").onsubmit = (e) => { e.preventDefault(); state.strat.symbol = $("#stratSym").value.trim().toUpperCase() || "SPY"; state.strat.rank = null; state.strat.res = null; loadStrat(); };
-$$("#stratIv button").forEach((b) => (b.onclick = () => { $$("#stratIv button").forEach((x) => x.classList.toggle("on", x === b)); state.strat.interval = b.dataset.i; state.strat.rank = null; state.strat.res = null; loadStrat(); }));
+$("#stratForm").onsubmit = (e) => { e.preventDefault(); state.strat.symbol = $("#stratSym").value.trim().toUpperCase() || "SPY"; state.strat.rank = null; state.strat.res = null; if (state.strat.view === "pine") pineRun(); else loadStrat(); };
+$$("#stratIv button").forEach((b) => (b.onclick = () => { $$("#stratIv button").forEach((x) => x.classList.toggle("on", x === b)); state.strat.interval = b.dataset.i; state.strat.rank = null; state.strat.res = null; if (state.strat.view === "pine") pineRun(); else loadStrat(); }));
 $("#stratDir").onchange = (e) => { state.strat.dir = e.target.value; state.strat.rank = null; loadStrat(); };
 document.addEventListener("section", (e) => { if (e.detail === "strat") { if (!state.strat.symbol) state.strat.symbol = state.symbol; if ((state.strat.view || "tester") === "tester") loadStrat(state.strat.rank ? "one" : "all"); } else if (state.strat.chart && !sectionVisible("strat")) stratDispose(); });
 
@@ -197,9 +197,13 @@ function stratView(v) {
   const S = state.strat; S.view = v;
   $$("#stratView button").forEach((b) => { const on = b.dataset.v === v; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); });
   const tester = v === "tester";
-  for (const id of ["#stratForm", "#stratIv", "#stratDir"]) $(id).classList.toggle("hidden", !tester);
+  const pine = v === "pine";
+  for (const id of ["#stratForm", "#stratIv"]) $(id).classList.toggle("hidden", !tester && !pine);
+  $("#stratDir").classList.toggle("hidden", !tester);
   $("#strat").classList.toggle("hidden", !tester); $("#tvNote").classList.toggle("hidden", tester);
-  for (const [k, id] of [["screener", "#tvScreener"], ["yields", "#tvYields"], ["scripts", "#tvScripts"]]) $(id).classList.toggle("hidden", v !== k);
+  for (const [k, id] of [["screener", "#tvScreener"], ["yields", "#tvYields"], ["scripts", "#tvScripts"], ["pine", "#tvPine"]]) $(id).classList.toggle("hidden", v !== k);
+  if (!pine && typeof pineDispose === "function") pineDispose();
+  if (pine) { stratDispose(); $("#stratSym").value = S.symbol || state.symbol || "SPY"; pineInit(); if (state.pine.res) pineRender(); return; }
   if (tester) { loadStrat(S.rank ? "one" : "all"); return; }
   stratDispose();
   if (S.mods[v] || !window.TD) return;
@@ -209,7 +213,7 @@ function stratView(v) {
       onWatch: (row) => { const s = tvDeskSymbol(row); if (!s) { pkToastSafe(`${row._symbol} cannot be added to this desk's watchlist.`); return; } if (/-USD$/.test(s)) { pkToastSafe(`${s}: add crypto pairs on the Crypto screen.`); return; }
         if (state.settings.watchlist.includes(s)) pkToastSafe(`${s} is already on the watchlist.`); else { saveSettings({ watchlist: [...state.settings.watchlist, s] }); pkToastSafe(`${s} added to the watchlist.`); } } });
     if (v === "yields") S.mods[v] = TD.YieldCurve.mount($("#tvYields"), { countries: ["US", "DE", "SA"], compare: [7, 30, 365] });
-    if (v === "scripts") S.mods[v] = TD.Scripts.mount($("#tvScripts"), { onApply: async (s) => { pkToastSafe(`"${s.name}" is Pine code for TradingView: this desk cannot run it. Open it to read or copy the source.`); } });
+    if (v === "scripts") S.mods[v] = TD.Scripts.mount($("#tvScripts"), { onApply: (s) => pineOpen(s) });
   } catch (e) { showBanner(`Could not open this view: ${e.message}`); }
 }
 function pkToastSafe(text) { if (typeof pkToast === "function") pkToast(text); else showBanner(text); }

@@ -1,0 +1,19 @@
+//@version=5
+indicator("Squeeze Momentum (simplified)", overlay=false)
+length = input.int(20, "BB Length")
+mult = input.float(2.0, "BB Mult")
+lengthKC = input.int(20, "KC Length")
+multKC = input.float(1.5, "KC Mult")
+basis = ta.sma(close, length)
+dev = mult * ta.stdev(close, length)
+upperBB = basis + dev
+lowerBB = basis - dev
+ma = ta.sma(close, lengthKC)
+rangema = ta.sma(ta.tr, lengthKC)
+upperKC = ma + rangema * multKC
+lowerKC = ma - rangema * multKC
+sqzOn = (lowerBB > lowerKC) and (upperBB < upperKC)
+val = ta.linreg(close - math.avg(math.avg(ta.highest(high, lengthKC), ta.lowest(low, lengthKC)), ta.sma(close, lengthKC)), lengthKC, 0)
+bcolor = val > 0 ? (val > nz(val[1]) ? color.lime : color.green) : (val < nz(val[1]) ? color.red : color.maroon)
+plot(val, "Momentum", color=bcolor, style=plot.style_histogram, linewidth=4)
+plot(0, "Squeeze", color=sqzOn ? color.black : color.gray, style=plot.style_cross)

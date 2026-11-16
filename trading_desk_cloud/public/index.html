@@ -167,7 +167,7 @@
     </div>
     <div class="pane board" data-section="strat" aria-label="TV Strategies: strategy tester">
       <div class="pane-toolbar"><h2 class="pane-title">TV Strategies</h2>
-        <div class="seg" id="stratView" role="tablist" aria-label="TV Strategies view"><button type="button" role="tab" data-v="tester" class="on" aria-selected="true">Strategy tester</button><button type="button" role="tab" data-v="screener" aria-selected="false">Screener</button><button type="button" role="tab" data-v="yields" aria-selected="false">Yield curves</button><button type="button" role="tab" data-v="scripts" aria-selected="false">Scripts</button></div>
+        <div class="seg" id="stratView" role="tablist" aria-label="TV Strategies view"><button type="button" role="tab" data-v="tester" class="on" aria-selected="true">Strategy tester</button><button type="button" role="tab" data-v="screener" aria-selected="false">Screener</button><button type="button" role="tab" data-v="yields" aria-selected="false">Yield curves</button><button type="button" role="tab" data-v="scripts" aria-selected="false">Scripts</button><button type="button" role="tab" data-v="pine" aria-selected="false">Pine runner</button></div>
         <form id="stratForm" class="inline row gap"><input id="stratSym" class="sym-input mono" placeholder="SYMBOL" maxlength="15" aria-label="Symbol"><button class="ghost small">Load</button></form>
         <div class="seg" id="stratIv" role="group" aria-label="Bar size"><button type="button" data-i="5m">5m</button><button type="button" data-i="15m">15m</button><button type="button" data-i="60m">1h</button><button type="button" data-i="1d" class="on">1D</button></div>
         <select id="stratDir" class="small" aria-label="Direction"><option value="both">Long + short</option><option value="long">Long only</option><option value="short">Short only</option></select>
@@ -177,7 +177,19 @@
       <div id="tvScreener" class="board-inner tv-mod hidden" aria-label="Screener"></div>
       <div id="tvYields" class="board-inner tv-mod hidden" aria-label="Yield curves"></div>
       <div id="tvScripts" class="board-inner tv-mod hidden" aria-label="Community scripts"></div>
-      <p id="tvNote" class="dim tiny tv-note hidden">Screener, yield and script data come from TradingView's public pages through unofficial channels: they can be delayed, change or stop without notice, and are for personal research. Scripts are their authors' work under the Mozilla Public License 2.0; this desk cannot run Pine code. Not affiliated with TradingView.</p>
+      <div id="tvPine" class="board-inner tv-mod hidden" aria-label="Pine runner">
+        <div class="pine-body">
+          <form id="pineForm" class="pine-edit">
+            <div class="row gap" style="flex-wrap:wrap"><select id="pineSample" class="small" aria-label="Load an example script"><option value="">Examples…</option></select><span id="pineName" class="small dim"></span></div>
+            <label class="small" for="pineSrc">Pine Script (version 5 or 6)</label>
+            <textarea id="pineSrc" class="mono" rows="18" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="//@version=5&#10;indicator(&quot;My script&quot;)&#10;plot(ta.sma(close, 20))"></textarea>
+            <div class="row gap"><button id="pineRun" class="primary">Run</button><button type="button" id="pineClear" class="ghost small">Clear</button></div>
+            <p class="dim tiny">Runs in your browser on this desk's own bars for the symbol and bar size chosen above. The engine is <a href="https://github.com/LuxAlgo/PineTS" target="_blank" rel="noopener">PineTS</a> by LuxAlgo, open source under AGPL-3.0 (<a href="/tv/PINETS-LICENSE.txt" target="_blank" rel="noopener">licence</a>, <a href="/licenses.html" target="_blank" rel="noopener">notices and source</a>). Scripts run in an isolated sandbox with no access to your account. Not affiliated with TradingView.</p>
+          </form>
+          <div id="tvPineOut" class="pine-out"></div>
+        </div>
+      </div>
+      <p id="tvNote" class="dim tiny tv-note hidden">Screener, yield and script data come from TradingView's public pages through unofficial channels: they can be delayed, change or stop without notice, and are for personal research. Scripts are their authors' work under the Mozilla Public License 2.0; "Use on chart" runs one in the Pine runner. Not affiliated with TradingView.</p>
     </div>
     <div class="pane board" data-section="ml" aria-label="Machine-learning signals">
       <div class="pane-toolbar"><h2 class="pane-title">ML Signals</h2>
@@ -647,6 +659,7 @@
 <script src="/tv/td-yieldcurve.js"></script>
 <script src="/tv/td-scripts.js"></script>
 <script src="/strategies.js"></script>
+<script src="/pine.js"></script>
 <script src="/crypto.js"></script>
 <script src="/dashboard.js"></script>
 <script src="/quant.js"></script>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pine sandbox</title>
+<!-- This page runs other people's Pine Script. It is loaded in an iframe with sandbox="allow-scripts" only, so it has
+     no access to the desk: no cookies, no storage, no desk API (its origin is opaque). The policy below also forbids
+     every network request from the page and its worker except loading the runtime itself. Bars come in and results go
+     out by postMessage and nothing else. The script runs in a worker, so a runaway script can be stopped. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob: https: http://localhost:* http://127.0.0.1:*; worker-src blob:; connect-src 'none'; img-src 'none'; style-src 'none'; font-src 'none'; media-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+</head>
+<body>
+<script>
+"use strict";
+const RUNTIME = new URL("pinets.min.browser.js", location.href).href;
+const WORKER = `
+importScripts(${JSON.stringify(RUNTIME)});
+const num = (v) => (typeof v === "number" && isFinite(v) ? Math.round(v * 1e6) / 1e6 : v === true ? 1 : null);
+self.onmessage = async (e) => {
+  const { id, source, candles, symbol, timeframe } = e.data;
+  try {
+    if (typeof source !== "string" || source.length > 400000) throw new Error("The script is too large.");
+    // Only real Pine Script: the runtime's JavaScript syntax would be arbitrary code.
+    if (/^\\s*\\/\\/\\s*@PineTS/m.test(source) || !/\\/\\/\\s*@version\\s*=\\s*[3-6]/.test(source)) throw new Error("Only Pine Script with a //@version=5 or 6 line can run here.");
+    const t0 = Date.now(), ctx = await new PineTSLib.PineTS(candles, symbol, timeframe).run(source);
+    const times = candles.map((c) => c.openTime), at = new Map(times.map((t, i) => [t, i])), plots = [];
+    for (const [title, p] of Object.entries(ctx.plots || {})) {
+      if (title.startsWith("__") || plots.length >= 40 || !p || !Array.isArray(p.data)) continue;
+      const values = new Array(times.length).fill(null), colors = {}; let any = false;
+      for (const d of p.data) { const i = at.get(d.time); if (i === undefined) continue; const v = num(d.value); if (v !== null) { values[i] = v; any = true; } if (d.options && d.options.color && d.options.color !== (p.options || {}).color) colors[i] = String(d.options.color).slice(0, 30); }
+      const o = p.options || {};
+      plots.push({ title: String(title).slice(0, 60), style: String(o.style || "line").slice(0, 30), color: String(o.color || "").slice(0, 30), overlay: !!o.overlay, location: String(o.location || "").slice(0, 20), shape: String(o.shape || "").slice(0, 40), boolean: p.data.some((d) => typeof d.value === "boolean"), any, values, colors: Object.keys(colors).length > 4000 ? {} : colors });
+    }
+    const drawn = (k) => { try { return (ctx.plots[k].data || []).reduce((n, d) => n + (Array.isArray(d.value) ? d.value.filter((x) => x && !x._deleted).length : 0), 0); } catch { return 0; } };
+    const ind = ctx.indicator || {}, s = ctx.strategy, isStrategy = /^\\s*strategy\\s*\\(/m.test(source);
+    let strategy = null;
+    if (isStrategy && s) {
+      const tr = (t, open) => ({ side: t.size < 0 ? "short" : "long", entry_time: Math.round(t.entry_time / 1000), entry: num(t.entry_price), exit_time: open ? null : Math.round(t.exit_time / 1000), exit: open ? null : num(t.exit_price), profit: num(t.profit), size: num(Math.abs(t.size)), id: String(t.entry_id || "").slice(0, 40), exit_id: String(t.exit_id || "").slice(0, 60) });
+      const closed = (s.closedtrades || []).map((t) => tr(t, false));
+      strategy = { initial_capital: num(s.initial_capital), net_profit: num(s.netprofit), gross_profit: num(s.grossprofit), gross_loss: num(s.grossloss), equity: num(s.equity), max_drawdown: num(s.max_drawdown), max_drawdown_pct: num(s.max_drawdown_percent_value),
+        buy_hold_pct: num(s.buy_and_hold_per_gain), wins: num(s.wintrades), losses: num(s.losstrades), trades: closed.length, closed: closed.slice(-400), open: (s.opentrades || []).slice(0, 10).map((t) => tr(t, true)) };
+    }
+    self.postMessage({ type: "result", id, ok: true, result: { title: String(ind.title || "").slice(0, 120), overlay: !!ind.overlay, kind: isStrategy ? "strategy" : "indicator", bars: times.length, ms: Date.now() - t0, plots, strategy,
+      drawings: { labels: drawn("__labels__"), lines: drawn("__lines__"), boxes: drawn("__boxes__"), tables: drawn("__tables__") }, warnings: (ctx.warnings || []).slice(0, 8).map((w) => String(w && w.message || w).slice(0, 200)) } });
+  } catch (err) { self.postMessage({ type: "result", id, ok: false, error: String(err && err.message || err).slice(0, 500) }); }
+};`;
+let worker = null;
+function stop() { if (worker) { worker.terminate(); worker = null; } }
+addEventListener("message", (e) => {
+  if (e.source !== parent || !e.data) return;
+  if (e.data.type === "stop") { stop(); return; }
+  if (e.data.type !== "run") return;
+  stop();
+  try {
+    worker = new Worker(URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" })));
+    worker.onmessage = (m) => parent.postMessage(m.data, "*");
+    worker.onerror = (er) => { parent.postMessage({ type: "result", id: e.data.id, ok: false, error: "The Pine runtime could not start: " + (er.message || "worker error") }, "*"); stop(); };
+    worker.postMessage(e.data);
+  } catch (er) { parent.postMessage({ type: "result", id: e.data.id, ok: false, error: "The Pine runtime could not start: " + er.message }, "*"); }
+});
+parent.postMessage({ type: "ready" }, "*");
+</script>
+</body>
+</html>

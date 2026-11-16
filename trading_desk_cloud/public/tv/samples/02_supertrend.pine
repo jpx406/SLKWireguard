@@ -1,0 +1,10 @@
+//@version=5
+indicator("Supertrend", overlay=true)
+atrPeriod = input.int(10, "ATR Length")
+factor = input.float(3.0, "Factor", step=0.1)
+[supertrend, direction] = ta.supertrend(factor, atrPeriod)
+upTrend = plot(direction < 0 ? supertrend : na, "Up Trend", color=color.green, style=plot.style_linebr)
+downTrend = plot(direction < 0 ? na : supertrend, "Down Trend", color=color.red, style=plot.style_linebr)
+plotshape(ta.change(direction) < 0, "Buy", shape.triangleup, location.belowbar, color.green)
+plotshape(ta.change(direction) > 0, "Sell", shape.triangledown, location.abovebar, color.red)
+alertcondition(ta.change(direction) < 0, "Buy", "Supertrend buy")

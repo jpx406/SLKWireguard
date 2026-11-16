@@ -422,6 +422,8 @@ The buttons at the top of TV Strategies switch between four views.
 - **Yield curves:** the interest rate a government pays for each loan length. A normal curve slopes up. When short rates are above long rates (an *inverted* curve, flagged in red), markets are expecting a slowdown. The dotted lines show where the curve was a week, a month or a year ago.
 - **Scripts:** indicators and strategies published by the TradingView community. You can read and copy the code; the desk cannot run it.
 
+- **Pine runner:** runs a Pine script here, on this desk's price data. Paste a script, pick an example, or press **Use on chart** on a script in the Scripts view, then press **Run**. Indicators are drawn on the chart or in a pane below it; strategies also show their trades and results. The symbol and bar size at the top apply. Some scripts will not run: the engine does not support every feature, and labels, boxes and tables are not drawn. To change a script's settings, edit the numbers in its `input` lines. Scripts run in a sealed sandbox and cannot touch your account. A Pine strategy cannot be auto-traded; only the 23 in the Strategy tester can.
+
 This data comes from TradingView's public pages through unofficial channels. It can be delayed or stop working without notice, so use it to find ideas, then confirm on the Chart and with a scan.
 
 ### Recommendations

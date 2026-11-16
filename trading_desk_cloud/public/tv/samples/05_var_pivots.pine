@@ -1,0 +1,23 @@
+//@version=5
+indicator("Pivot levels with state", overlay=true)
+left = input.int(5, "Left")
+right = input.int(5, "Right")
+ph = ta.pivothigh(high, left, right)
+pl = ta.pivotlow(low, left, right)
+var float lastHigh = na
+var float lastLow = na
+var int breaks = 0
+if not na(ph)
+    lastHigh := ph
+if not na(pl)
+    lastLow := pl
+breakUp = ta.crossover(close, lastHigh)
+if breakUp
+    breaks += 1
+plot(lastHigh, "Resistance", color.red, style=plot.style_stepline)
+plot(lastLow, "Support", color.green, style=plot.style_stepline)
+plotchar(breakUp, "Break", "▲", location.belowbar, color.blue)
+f_dist(a, b) =>
+    d = math.abs(a - b) / b * 100
+    d
+plot(f_dist(close, lastLow), "Dist %", display=display.data_window)

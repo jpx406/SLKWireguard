@@ -1,0 +1,12 @@
+//@version=5
+strategy("RSI mean reversion with stops", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+len = input.int(2, "RSI length")
+r = ta.rsi(close, len)
+atr = ta.atr(14)
+longCond = r < 10 and close > ta.sma(close, 200)
+if longCond and strategy.position_size == 0
+    strategy.entry("L", strategy.long)
+    strategy.exit("X", "L", stop=close - 2 * atr, limit=close + 3 * atr)
+if r > 80
+    strategy.close("L")
+plot(ta.sma(close, 200), "SMA200")

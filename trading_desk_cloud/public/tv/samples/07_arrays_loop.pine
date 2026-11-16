@@ -1,0 +1,16 @@
+//@version=5
+indicator("Rolling z-score with arrays", overlay=false)
+n = input.int(30, "Window")
+var a = array.new_float(0)
+array.push(a, close)
+if array.size(a) > n
+    array.shift(a)
+m = array.avg(a)
+s = array.stdev(a)
+z = s == 0 ? 0 : (close - m) / s
+cnt = 0
+for i = 0 to n - 1
+    if close[i] > open[i]
+        cnt += 1
+plot(z, "Z")
+plot(cnt / n, "UpShare")
