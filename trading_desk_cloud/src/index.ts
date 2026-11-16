@@ -11,6 +11,7 @@ import { listAuto, planFor, removeAuto, setAuto } from "./autochart";
 import { backtestSignals, buildPlaybook, evaluatePicks, learnSummary, paperLearn, patternStats } from "./learn";
 import { addWatch, deleteThesis, deleteWatch, finalizeTheses, getThesis, listTheses, startThesis, updateThesis } from "./thesis";
 import { optionsFlow, setFlowBase } from "./flow";
+import { tvProxy } from "./tvproxy";
 import { catalog, rankStrategies, runStrategy, type Bar as SBar } from "./strategies";
 import { TV_DAYS, TV_INTERVALS, finished, listTvAuto, removeTvAuto, setTvAuto } from "./tvauto";
 import { mlView, saveMlSettings, trainTask } from "./ml/engine";
@@ -256,6 +257,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, interval: iv, bars: done.length, strengths, holds, grid });
   }
   // Kronos forecasts (candlestick foundation model in the sandbox).
+  // ---- TradingView modules (screener, yield curves, community scripts): fetched by the desk for signed-in users
+  { const tv = await tvProxy(env, req, url, path); if (tv) return tv; }
+
   // ---- TV Strategies: the classic rule-based strategies, their tester, and a paper auto-trader per symbol
   if (path === "/strategies" && m === "GET") return json({ strategies: catalog(), intervals: TV_INTERVALS });
   if ((path === "/strategies/run" || path === "/strategies/rank") && m === "GET") {

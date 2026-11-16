@@ -218,6 +218,16 @@ The rule-based strategies that ship as built-ins on TradingView, written from th
 * **Auto trade (`src/tvauto.ts`, paper only):** one strategy per symbol. Each time a bar finishes the desk replays the strategy and checks whether it is long, short or flat; when that changes, the paper position is closed and reopened to match, sized from the amount you set. Switching it on never jumps into a running trade: it waits for the next change. Entries pass the same risk gate as other automatic orders, positions are tagged `tv`, and it will not add to a position opened by something else. Stocks act in the regular session only.
 * API: `GET /api/strategies`, `GET /api/strategies/run?symbol&interval&id&dir&fee&p`, `GET /api/strategies/rank?symbol&interval`, `GET/PUT /api/tvauto`, `DELETE /api/tvauto/:symbol`. No Claude usage.
 
+### Screener, Yield curves and Scripts (inside TV Strategies)
+
+Three more views sit beside the strategy tester, from the supplied TradingView modules (`public/tv/td-*.js`, `public/tv/td-modules.css`):
+
+* **Screener:** stocks, ETFs, crypto, forex and bonds, with column sets (Overview, Performance, Technicals, Valuation and more), filter chips, presets, sorting and paging. Clicking a symbol opens it in the strategy tester; "+" adds a stock to the desk watchlist.
+* **Yield curves:** government curves for 12 benchmark countries plus derived GCC curves, earlier curves as ghosts, the usual spreads with inversion flags, and a tenor table.
+* **Scripts:** the community's open-source indicators and strategies, with search, categories and a Pine source viewer. The desk cannot run Pine code; this view is for reading and copying.
+* **Backend (`src/tvproxy.ts`):** the module's five proxy routes are ported into the Worker, behind the desk login and with edge caching: `POST /api/tv/:market/scan`, `GET /api/tv/scripts`, `GET /api/tv/pine/:id/:version`, `GET /api/yields/US`, `GET /api/yields/US/history`. The browser only ever talks to the desk for data (logos and script thumbnails still load as images from TradingView's image hosts). Optional: `npx wrangler secret put FRED_API_KEY` for yield history from FRED; without it the US Treasury file is used.
+* **Read before relying on it:** these are unofficial TradingView endpoints. They can change, be rate-limited or blocked without notice, and using them is subject to TradingView's terms of use; this is fine for personal research but not something to build a commercial multi-user service on. Community scripts are their authors' work under the Mozilla Public License 2.0, and the licence header and author stay with each script.
+
 ## ML Signals: a neural network and boosted trees
 
 `src/ml/` holds a complete machine-learning engine written in TypeScript, because the app runs on Cloudflare Workers, which have no Python runtime (so no PyTorch, XGBoost or FastAPI sidecar). The rules it follows are in `.claude/skills/ml-neural-trader/SKILL.md`.

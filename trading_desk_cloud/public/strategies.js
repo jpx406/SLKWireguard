@@ -181,4 +181,36 @@ function renderStrat() {
 $("#stratForm").onsubmit = (e) => { e.preventDefault(); state.strat.symbol = $("#stratSym").value.trim().toUpperCase() || "SPY"; state.strat.rank = null; state.strat.res = null; loadStrat(); };
 $$("#stratIv button").forEach((b) => (b.onclick = () => { $$("#stratIv button").forEach((x) => x.classList.toggle("on", x === b)); state.strat.interval = b.dataset.i; state.strat.rank = null; state.strat.res = null; loadStrat(); }));
 $("#stratDir").onchange = (e) => { state.strat.dir = e.target.value; state.strat.rank = null; loadStrat(); };
-document.addEventListener("section", (e) => { if (e.detail === "strat") { if (!state.strat.symbol) state.strat.symbol = state.symbol; loadStrat(state.strat.rank ? "one" : "all"); } else if (state.strat.chart && !sectionVisible("strat")) stratDispose(); });
+document.addEventListener("section", (e) => { if (e.detail === "strat") { if (!state.strat.symbol) state.strat.symbol = state.symbol; if ((state.strat.view || "tester") === "tester") loadStrat(state.strat.rank ? "one" : "all"); } else if (state.strat.chart && !sectionVisible("strat")) stratDispose(); });
+
+/* ---- Screener, Yield curves and Scripts (TradingView modules), mounted on first visit */
+state.strat.view = "tester"; state.strat.mods = {};
+/** "NASDAQ:AAPL" -> "AAPL"; "BINANCE:BTCUSDT" or "CRYPTO:BTCUSD" -> "BTC-USD"; anything the desk cannot chart -> null. */
+function tvDeskSymbol(row) {
+  const raw = String(row?._symbol || ""), [ex, t0] = raw.includes(":") ? raw.split(":") : ["", raw], t = (row?._ticker || t0 || "").toUpperCase();
+  const c = t.match(/^([A-Z0-9]{2,10}?)(USDT|USDC|USD)$/);
+  if (c && /BINANCE|COINBASE|CRYPTO|BITSTAMP|KRAKEN|BYBIT|OKX|CRYPTOCAP/.test(ex)) return `${c[1]}-USD`;
+  if (/^FX|OANDA|FOREX|TVC|ECONOMICS/.test(ex)) return null;
+  return /^[A-Z][A-Z0-9.\-]{0,9}$/.test(t) ? t : null;
+}
+function stratView(v) {
+  const S = state.strat; S.view = v;
+  $$("#stratView button").forEach((b) => { const on = b.dataset.v === v; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); });
+  const tester = v === "tester";
+  for (const id of ["#stratForm", "#stratIv", "#stratDir"]) $(id).classList.toggle("hidden", !tester);
+  $("#strat").classList.toggle("hidden", !tester); $("#tvNote").classList.toggle("hidden", tester);
+  for (const [k, id] of [["screener", "#tvScreener"], ["yields", "#tvYields"], ["scripts", "#tvScripts"]]) $(id).classList.toggle("hidden", v !== k);
+  if (tester) { loadStrat(S.rank ? "one" : "all"); return; }
+  stratDispose();
+  if (S.mods[v] || !window.TD) return;
+  try {
+    if (v === "screener") S.mods[v] = TD.Screener.mount($("#tvScreener"), { product: "stocks", pageSize: 50,
+      onSymbol: (row) => { const s = tvDeskSymbol(row); if (!s) { pkToastSafe(`${row._symbol} cannot be charted on this desk (stocks, ETFs and major crypto only).`); return; } S.symbol = s; S.rank = null; S.res = null; stratView("tester"); },
+      onWatch: (row) => { const s = tvDeskSymbol(row); if (!s) { pkToastSafe(`${row._symbol} cannot be added to this desk's watchlist.`); return; } if (/-USD$/.test(s)) { pkToastSafe(`${s}: add crypto pairs on the Crypto screen.`); return; }
+        if (state.settings.watchlist.includes(s)) pkToastSafe(`${s} is already on the watchlist.`); else { saveSettings({ watchlist: [...state.settings.watchlist, s] }); pkToastSafe(`${s} added to the watchlist.`); } } });
+    if (v === "yields") S.mods[v] = TD.YieldCurve.mount($("#tvYields"), { countries: ["US", "DE", "SA"], compare: [7, 30, 365] });
+    if (v === "scripts") S.mods[v] = TD.Scripts.mount($("#tvScripts"), { onApply: async (s) => { pkToastSafe(`"${s.name}" is Pine code for TradingView: this desk cannot run it. Open it to read or copy the source.`); } });
+  } catch (e) { showBanner(`Could not open this view: ${e.message}`); }
+}
+function pkToastSafe(text) { if (typeof pkToast === "function") pkToast(text); else showBanner(text); }
+$$("#stratView button").forEach((b) => (b.onclick = () => stratView(b.dataset.v)));

@@ -414,6 +414,16 @@ Set the money per trade and press **Start**. From then on, each time a bar finis
 - Entries go through the desk's safety layer (kill switch, drawdown guard, market regime).
 - The switch pauses it; **Remove** deletes it. An open paper position stays open until you close it or the strategy does.
 
+### Screener, Yield curves and Scripts
+
+The buttons at the top of TV Strategies switch between four views.
+
+- **Screener:** find symbols by what they are doing. Pick Stocks, ETFs, Crypto, Forex or Bonds, add filters (market cap, change, volume, P/E, RSI and others) or a preset such as unusual volume, and sort by any column. Click a symbol to open it in the strategy tester; press **+** to add a stock to your watchlist.
+- **Yield curves:** the interest rate a government pays for each loan length. A normal curve slopes up. When short rates are above long rates (an *inverted* curve, flagged in red), markets are expecting a slowdown. The dotted lines show where the curve was a week, a month or a year ago.
+- **Scripts:** indicators and strategies published by the TradingView community. You can read and copy the code; the desk cannot run it.
+
+This data comes from TradingView's public pages through unofficial channels. It can be delayed or stop working without notice, so use it to find ideas, then confirm on the Chart and with a scan.
+
 ### Recommendations
 
 - Test on the daily chart first: more history, fewer false signals, lower costs.

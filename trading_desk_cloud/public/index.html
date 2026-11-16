@@ -15,6 +15,7 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="stylesheet" href="/tv/td-modules.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -166,12 +167,17 @@
     </div>
     <div class="pane board" data-section="strat" aria-label="TV Strategies: strategy tester">
       <div class="pane-toolbar"><h2 class="pane-title">TV Strategies</h2>
+        <div class="seg" id="stratView" role="tablist" aria-label="TV Strategies view"><button type="button" role="tab" data-v="tester" class="on" aria-selected="true">Strategy tester</button><button type="button" role="tab" data-v="screener" aria-selected="false">Screener</button><button type="button" role="tab" data-v="yields" aria-selected="false">Yield curves</button><button type="button" role="tab" data-v="scripts" aria-selected="false">Scripts</button></div>
         <form id="stratForm" class="inline row gap"><input id="stratSym" class="sym-input mono" placeholder="SYMBOL" maxlength="15" aria-label="Symbol"><button class="ghost small">Load</button></form>
         <div class="seg" id="stratIv" role="group" aria-label="Bar size"><button type="button" data-i="5m">5m</button><button type="button" data-i="15m">15m</button><button type="button" data-i="60m">1h</button><button type="button" data-i="1d" class="on">1D</button></div>
         <select id="stratDir" class="small" aria-label="Direction"><option value="both">Long + short</option><option value="long">Long only</option><option value="short">Short only</option></select>
         <span class="spacer"></span><span class="dim small">23 classic strategies · paper only</span>
       </div>
       <div id="strat" class="board-inner"><div class="dim">Loading…</div></div>
+      <div id="tvScreener" class="board-inner tv-mod hidden" aria-label="Screener"></div>
+      <div id="tvYields" class="board-inner tv-mod hidden" aria-label="Yield curves"></div>
+      <div id="tvScripts" class="board-inner tv-mod hidden" aria-label="Community scripts"></div>
+      <p id="tvNote" class="dim tiny tv-note hidden">Screener, yield and script data come from TradingView's public pages through unofficial channels: they can be delayed, change or stop without notice, and are for personal research. Scripts are their authors' work under the Mozilla Public License 2.0; this desk cannot run Pine code. Not affiliated with TradingView.</p>
     </div>
     <div class="pane board" data-section="ml" aria-label="Machine-learning signals">
       <div class="pane-toolbar"><h2 class="pane-title">ML Signals</h2>
@@ -635,6 +641,11 @@
 <script src="/thesis.js"></script>
 <script src="/flow.js"></script>
 <script src="/ml.js"></script>
+<script>window.TD_CONFIG = { proxyBase: "/api", scannerBase: "/api/tv", label: "trading-desk" };</script>
+<script src="/tv/td-data.js"></script>
+<script src="/tv/td-screener.js"></script>
+<script src="/tv/td-yieldcurve.js"></script>
+<script src="/tv/td-scripts.js"></script>
 <script src="/strategies.js"></script>
 <script src="/crypto.js"></script>
 <script src="/dashboard.js"></script>

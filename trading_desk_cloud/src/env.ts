@@ -1,6 +1,8 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  FRED_API_KEY?: string; // optional secret: yield-curve history from FRED (without it, the US Treasury file is used)
+  TV_DEV_BASE?: string; // tests only: a local stand-in for the TradingView and Treasury upstreams
   FLOW_DATA_BASE?: string; // tests only: another base for the option chains (default: Cboe delayed quotes)
   CF_VERSION_METADATA?: { id?: string; tag?: string; timestamp?: string }; // this deploy's id (wrangler.toml [version_metadata])
   ANTHROPIC_API_KEY: string;
