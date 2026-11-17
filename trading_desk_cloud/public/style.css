@@ -966,3 +966,12 @@ tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } 
 
 .q-corr { border-collapse: collapse; width: 100%; font-size: 11px; margin: 6px 0; table-layout: fixed; }
 .q-corr th { color: #5b6678; font-weight: 400; padding: 3px 2px; overflow: hidden; text-overflow: ellipsis; } .q-corr td { text-align: center; padding: 5px 2px; color: #fff; border: 1px solid #05070a; }
+
+/* ---- Pine drawings over the chart */
+.pine-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; }
+.pine-table { position: absolute; z-index: 4; pointer-events: none; max-width: 70%; max-height: 80%; overflow: hidden; }
+.pine-table table { border-collapse: collapse; background: color-mix(in srgb, var(--panel) 88%, transparent); font-family: ui-monospace, Menlo, Consolas, monospace; }
+.pine-table td { padding: 2px 6px; white-space: pre; color: var(--text); }
+.pine-top_right { top: 6px; right: 70px; } .pine-top_left { top: 6px; left: 6px; } .pine-top_center { top: 6px; left: 50%; transform: translateX(-50%); }
+.pine-middle_right { top: 50%; right: 70px; transform: translateY(-50%); } .pine-middle_left { top: 50%; left: 6px; transform: translateY(-50%); } .pine-middle_center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.pine-bottom_right { bottom: 34px; right: 70px; } .pine-bottom_left { bottom: 34px; left: 6px; } .pine-bottom_center { bottom: 34px; left: 50%; transform: translateX(-50%); }

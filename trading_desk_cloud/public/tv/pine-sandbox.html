@@ -23,9 +23,20 @@ self.onmessage = async (e) => {
     // Only real Pine Script: the runtime's JavaScript syntax would be arbitrary code.
     if (/^\\s*\\/\\/\\s*@PineTS/m.test(source) || !/\\/\\/\\s*@version\\s*=\\s*[3-6]/.test(source)) throw new Error("Only Pine Script with a //@version=5 or 6 line can run here.");
     const t0 = Date.now(), ctx = await new PineTSLib.PineTS(candles, symbol, timeframe).run(source);
-    const times = candles.map((c) => c.openTime), at = new Map(times.map((t, i) => [t, i])), plots = [];
+    const times = candles.map((c) => c.openTime), at = new Map(times.map((t, i) => [t, i])), plots = [], barcolors = {}, bgcolors = {};
+    const col = (c) => (typeof c === "string" && (/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(c) || /^rgba?\\([\\d\\s.,%]+\\)$/.test(c)) ? c : "");
+    const txt = (t, n) => String(t == null ? "" : t).replace(/[\\u0000-\\u0009\\u000b-\\u001f]/g, " ").slice(0, n), fin = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+    // x is a bar index ("bi") or a time in ms ("bt"): turn both into a bar index, which may lie past either end.
+    const xi = (x, xloc) => { if (xloc !== "bt") return fin(x); const i = at.get(x); if (i !== undefined) return i; const step = times.length > 1 ? times[times.length - 1] - times[times.length - 2] : 60000; return fin((x - times[times.length - 1]) / step + times.length - 1); };
+    const live = (k) => { try { const d = ctx.plots[k].data; return (d[d.length - 1].value || []).filter((x) => x && !x._deleted); } catch { return []; } };
     for (const [title, p] of Object.entries(ctx.plots || {})) {
       if (title.startsWith("__") || plots.length >= 40 || !p || !Array.isArray(p.data)) continue;
+      const st0 = String((p.options || {}).style || "");
+      if (st0 === "barcolor" || st0 === "background") { // candle colours and background bands: one colour per bar
+        const tgt = st0 === "barcolor" ? barcolors : bgcolors, base = col((p.options || {}).color);
+        for (const d of p.data) { const i = at.get(d.time); if (i === undefined || d.value === false) continue; const c = col(d.options && d.options.color) || (d.value ? base : ""); if (c) tgt[i] = c; }
+        continue;
+      }
       const values = new Array(times.length).fill(null), colors = {}; let any = false;
       for (const d of p.data) { const i = at.get(d.time); if (i === undefined) continue; const v = num(d.value); if (v !== null) { values[i] = v; any = true; } if (d.options && d.options.color && d.options.color !== (p.options || {}).color) colors[i] = String(d.options.color).slice(0, 30); }
       const o = p.options || {};
@@ -41,7 +52,14 @@ self.onmessage = async (e) => {
         buy_hold_pct: num(s.buy_and_hold_per_gain), wins: num(s.wintrades), losses: num(s.losstrades), trades: closed.length, closed: closed.slice(-400), open: (s.opentrades || []).slice(0, 10).map((t) => tr(t, true)) };
     }
     self.postMessage({ type: "result", id, ok: true, result: { title: String(ind.title || "").slice(0, 120), overlay: !!ind.overlay, kind: isStrategy ? "strategy" : "indicator", bars: times.length, ms: Date.now() - t0, plots, strategy,
-      drawings: { labels: drawn("__labels__"), lines: drawn("__lines__"), boxes: drawn("__boxes__"), tables: drawn("__tables__") }, warnings: (ctx.warnings || []).slice(0, 8).map((w) => String(w && w.message || w).slice(0, 200)) } });
+      drawings: { labels: drawn("__labels__"), lines: drawn("__lines__"), boxes: drawn("__boxes__"), tables: drawn("__tables__") }, barcolors, bgcolors,
+      draw: {
+        labels: live("__labels__").slice(-600).map((l) => ({ x: xi(l.x, l.xloc), y: fin(l.y), yl: txt(l.yloc, 4), text: txt(l.text, 160), color: col(l.color), tc: col(l.textcolor), style: txt(l.style, 40), size: txt(l.size, 10) })).filter((l) => l.x !== null),
+        lines: live("__lines__").slice(-600).map((l) => ({ x1: xi(l.x1, l.xloc), y1: fin(l.y1), x2: xi(l.x2, l.xloc), y2: fin(l.y2), ext: txt(l.extend, 6), color: col(l.color), style: txt(l.style, 30), width: Math.min(6, Math.max(1, fin(l.width) || 1)) })).filter((l) => l.x1 !== null && l.x2 !== null && l.y1 !== null && l.y2 !== null),
+        boxes: live("__boxes__").slice(-300).map((b) => ({ l: xi(b.left, b.xloc), r: xi(b.right, b.xloc), t: fin(b.top), b: fin(b.bottom), ext: txt(b.extend, 6), bc: col(b.border_color), bg: col(b.bgcolor), bw: Math.min(4, Math.max(0, fin(b.border_width) || 0)), text: txt(b.text, 80), tc: col(b.text_color) })).filter((b) => b.l !== null && b.r !== null && b.t !== null && b.b !== null),
+        tables: live("__tables__").slice(0, 4).map((t) => ({ pos: txt(t.position, 20), bg: col(t.bgcolor), frame: col(t.frame_color), border: col(t.border_color), bw: Math.min(3, fin(t.border_width) || 0),
+          cells: (t.cells || []).slice(0, 12).map((c2) => (c2 || []).slice(0, 40).map((c) => (c ? { text: txt(c.text, 120), tc: col(c.text_color), bg: col(c.bgcolor), al: txt(c.text_halign, 8), size: txt(c.text_size, 10) } : null))) })),
+      }, warnings: (ctx.warnings || []).slice(0, 8).map((w) => String(w && w.message || w).slice(0, 200)) } });
   } catch (err) { self.postMessage({ type: "result", id, ok: false, error: String(err && err.message || err).slice(0, 500) }); }
 };`;
 let worker = null;

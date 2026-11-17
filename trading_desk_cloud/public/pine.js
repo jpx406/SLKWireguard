@@ -52,18 +52,84 @@ async function pineRun() {
   P.busy = false; pineRender();
 }
 
-function pineDispose() { for (const c of state.pine.charts) { try { c.remove(); } catch { /* gone */ } } state.pine.charts = []; }
+function pineDispose() { cancelAnimationFrame(state.pine.raf || 0); state.pine.raf = 0; for (const c of state.pine.charts) { try { c.remove(); } catch { /* gone */ } } state.pine.charts = []; }
+
+/* ---- What a script draws itself: labels, lines, boxes, tables and background bands, laid over the price chart.
+   A canvas sits on top of the chart and is redrawn whenever the chart moves; tables are ordinary HTML in a corner. */
+const PINE_SIZE = { tiny: 9, small: 10, normal: 12, large: 14, huge: 18, auto: 11 };
+function pineOverlay(box, chart, series, r) {
+  const d = r.draw || { labels: [], lines: [], boxes: [], tables: [] }, bg = r.bgcolors || {};
+  if (!d.labels.length && !d.lines.length && !d.boxes.length && !d.tables.length && !Object.keys(bg).length) return;
+  box.style.position = "relative";
+  const cv = document.createElement("canvas"); cv.className = "pine-layer"; cv.setAttribute("aria-hidden", "true"); box.append(cv);
+  const g = cv.getContext("2d"), ink = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#888", n = r.candles.length;
+  const X = (i) => chart.timeScale().logicalToCoordinate(i), Y = (p) => series.priceToCoordinate(p);
+  // Tables: plain elements, text only.
+  for (const t of d.tables) {
+    const wrap = document.createElement("div"); wrap.className = `pine-table pine-${t.pos.replace(/[^a-z_]/g, "")}`; const tb = document.createElement("table");
+    if (t.bg) tb.style.background = t.bg; if (t.frame) tb.style.outline = `1px solid ${t.frame}`;
+    // cells are stored column by column: turn them into rows
+    const cols = t.cells.length, rows = Math.max(0, ...t.cells.map((c) => c.length));
+    for (let y = 0; y < rows; y++) { const tr = document.createElement("tr"); let any = false; for (let x = 0; x < cols; x++) { const c = t.cells[x][y], td = document.createElement("td"); if (c) { td.textContent = c.text; if (c.text) any = true; if (c.tc) td.style.color = c.tc; if (c.bg) td.style.background = c.bg; td.style.textAlign = c.al === "left" || c.al === "right" ? c.al : "center"; td.style.fontSize = `${PINE_SIZE[c.size] || 11}px`; if (t.border && t.bw) td.style.border = `${t.bw}px solid ${t.border}`; } tr.append(td); } if (any) tb.append(tr); }
+    if (tb.rows.length) { wrap.append(tb); box.append(wrap); }
+  }
+  let sig = "";
+  const paint = () => {
+    state.pine.raf = requestAnimationFrame(paint);
+    if (!cv.isConnected) { cancelAnimationFrame(state.pine.raf); return; }
+    const vr = chart.timeScale().getVisibleLogicalRange(); if (!vr) return;
+    const W = box.clientWidth, H = box.clientHeight, pw = W - chart.priceScale("right").width(), ph = H - chart.timeScale().height(), ref = Y(r.candles[n - 1].close), s2 = `${W}|${H}|${vr.from.toFixed(2)}|${vr.to.toFixed(2)}|${ref}|${pw}`;
+    if (s2 === sig) return; sig = s2;
+    const dpr = window.devicePixelRatio || 1; if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.width = `${W}px`; cv.style.height = `${H}px`; }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H); g.save(); g.beginPath(); g.rect(0, 0, pw, ph); g.clip();
+    const from = Math.floor(vr.from) - 2, to = Math.ceil(vr.to) + 2, bw = Math.max(1, (X(1) ?? 0) - (X(0) ?? 0));
+    for (let i = Math.max(0, from); i <= Math.min(n - 1, to); i++) if (bg[i]) { const x = X(i); if (x != null) { g.fillStyle = bg[i]; g.fillRect(x - bw / 2, 0, bw + 0.5, ph); } }
+    for (const b of d.boxes) {
+      if (Math.max(b.l, b.r) < from && b.ext !== "r" && b.ext !== "b") continue; if (Math.min(b.l, b.r) > to && b.ext !== "l" && b.ext !== "b") continue;
+      let x1 = X(Math.min(b.l, b.r)), x2 = X(Math.max(b.l, b.r)); const y1 = Y(Math.max(b.t, b.b)), y2 = Y(Math.min(b.t, b.b)); if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+      if (b.ext === "r" || b.ext === "b") x2 = pw; if (b.ext === "l" || b.ext === "b") x1 = 0;
+      if (b.bg) { g.fillStyle = b.bg; g.fillRect(x1, y1, x2 - x1, y2 - y1); } if (b.bw && b.bc) { g.strokeStyle = b.bc; g.lineWidth = b.bw; g.setLineDash([]); g.strokeRect(x1, y1, x2 - x1, y2 - y1); }
+      if (b.text) { g.fillStyle = b.tc || ink; g.font = "11px ui-monospace, Menlo, Consolas, monospace"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(b.text, (x1 + x2) / 2, (y1 + y2) / 2, Math.max(10, x2 - x1 - 4)); }
+    }
+    for (const l of d.lines) {
+      if (Math.max(l.x1, l.x2) < from && l.ext === "none") continue; if (Math.min(l.x1, l.x2) > to && l.ext === "none") continue;
+      let x1 = X(l.x1), y1 = Y(l.y1), x2 = X(l.x2), y2 = Y(l.y2); if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+      const dx = x2 - x1, dy = y2 - y1; // extend along its own slope to the edge of the pane
+      if ((l.ext === "r" || l.ext === "b") && dx !== 0) { y2 = y2 + (dy / dx) * ((dx > 0 ? pw : 0) - x2); x2 = dx > 0 ? pw : 0; }
+      if ((l.ext === "l" || l.ext === "b") && dx !== 0) { y1 = y1 - (dy / dx) * (x1 - (dx > 0 ? 0 : pw)); x1 = dx > 0 ? 0 : pw; }
+      g.strokeStyle = l.color || ink; g.lineWidth = l.width; g.setLineDash(/dash/.test(l.style) ? [6, 4] : /dot/.test(l.style) ? [2, 3] : []); g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+    }
+    g.setLineDash([]);
+    for (const l of d.labels) {
+      if (l.x < from || l.x > to) continue; const x = X(l.x); if (x == null) continue;
+      const bar = r.candles[Math.round(l.x)], price = l.yl === "ab" ? bar?.high : l.yl === "bl" ? bar?.low : l.y; if (price == null) continue; const y0 = Y(price); if (y0 == null) continue;
+      const fs = PINE_SIZE[l.size] || 12, lines = l.text.split("\n").slice(0, 6); g.font = `${fs}px ui-monospace, Menlo, Consolas, monospace`;
+      const tw = Math.max(4, ...lines.map((t) => g.measureText(t).width)), w = tw + 8, h = lines.length * (fs + 2) + 6, plain = /none|text_outline/.test(l.style) || !l.color;
+      // where the bubble sits relative to its anchor: "label_down" hangs above the point and points down at it
+      const up = /label_up|arrowup|triangleup/.test(l.style) || (l.yl === "bl" && !/label_down/.test(l.style)), left = /label_left/.test(l.style), right = /label_right/.test(l.style), mid = /label_center|circle|square|diamond|cross|xcross|flag/.test(l.style) || plain;
+      let bx = x - w / 2, by = up ? y0 + 6 : y0 - h - 6; if (left) { bx = x + 6; by = y0 - h / 2; } else if (right) { bx = x - w - 6; by = y0 - h / 2; } else if (mid && l.yl === "pr") by = y0 - h / 2; else if (plain) by = l.yl === "bl" ? y0 + 4 : y0 - h - 4;
+      if (!plain) { g.fillStyle = l.color; g.beginPath(); if (g.roundRect) g.roundRect(bx, by, w, h, 3); else g.rect(bx, by, w, h); g.fill();
+        if (!left && !right && !mid) { g.beginPath(); g.moveTo(x - 4, up ? by : by + h); g.lineTo(x + 4, up ? by : by + h); g.lineTo(x, up ? by - 5 : by + h + 5); g.closePath(); g.fill(); } }
+      g.fillStyle = l.tc || (plain ? ink : "#fff"); g.textAlign = "center"; g.textBaseline = "top"; lines.forEach((t, k) => g.fillText(t, bx + w / 2, by + 3 + k * (fs + 2)));
+    }
+    g.restore();
+  };
+  paint();
+}
 function pineCharts(top, bottom, r) {
   pineDispose(); if (!window.LightweightCharts) return;
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim(), LW = LightweightCharts, times = r.candles.map((b) => b.time);
   const base = { autoSize: true, layout: { background: { color: "transparent" }, textColor: css("--dim"), fontSize: 11 }, grid: { vertLines: { color: css("--grid") || css("--line") }, horzLines: { color: css("--grid") || css("--line") } }, rightPriceScale: { borderColor: css("--line") }, timeScale: { borderColor: css("--line"), timeVisible: r.interval !== "1d", secondsVisible: false }, crosshair: { mode: 0 } };
   const main = LW.createChart(top, base); state.pine.charts.push(main);
   const cs = main.addCandlestickSeries({ upColor: css("--up"), downColor: css("--down"), borderVisible: false, wickUpColor: css("--up"), wickDownColor: css("--down") });
-  cs.setData(r.candles.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+  const bcol = r.barcolors || {}; // barcolor(): the script's own colour for a candle
+  cs.setData(r.candles.map((b, k) => (bcol[k] ? { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, color: bcol[k], wickColor: bcol[k], borderColor: bcol[k] } : { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+  pineOverlay(top, main, cs, r);
   // A plot belongs on the price chart when its values live in the price range; otherwise it gets the lower pane.
   const lo = Math.min(...r.candles.map((b) => b.low)) * 0.5, hi = Math.max(...r.candles.map((b) => b.high)) * 1.5, marks = [], lower = [];
   r.plots.forEach((p, i) => {
     const col = pineColor(p.color, i);
+    if (/barcolor|background/.test(p.style)) return;
     if (p.boolean || /shape|char|arrow/.test(p.style)) { // plotshape / plotchar: a marker on each bar where it is true
       const up = !/above/i.test(p.location) && !/down/i.test(p.shape);
       p.values.forEach((v, k) => { if (v) marks.push({ time: times[k], position: /above/i.test(p.location) ? "aboveBar" : "belowBar", color: col, shape: /down/i.test(p.shape) ? "arrowDown" : /up/i.test(p.shape) ? "arrowUp" : "circle", text: p.title.slice(0, 12), _up: up }); });
@@ -102,8 +168,8 @@ function pineRender() {
   const head = el("div", "st-head"); head.append(el("h3", null, r.title || P.name || "Script"), el("span", "badge muted", r.kind), el("span", "small dim", `${r.symbol} · ${r.interval === "60m" ? "1h" : r.interval} · ${r.bars.toLocaleString()} finished bars · ${r.ms} ms`)); host.append(head);
   const top = el("div", "st-chart"), bottom = el("div", "st-chart pine-sub"); host.append(top, bottom);
   const dr = r.drawings, drawn = dr.labels + dr.lines + dr.boxes + dr.tables;
-  if (drawn) host.append(el("p", "small dim", `The script also draws ${[dr.labels && `${dr.labels} labels`, dr.lines && `${dr.lines} lines`, dr.boxes && `${dr.boxes} boxes`, dr.tables && `${dr.tables} tables`].filter(Boolean).join(", ")}. Those are not shown here: only plots, shapes and trades are.`));
-  if (!r.plots.some((p) => p.any) && !r.strategy) host.append(el("p", "small dim", "The script ran but produced no plots."));
+  if (drawn) host.append(el("p", "small dim", `Drawn by the script on the chart: ${[dr.labels && `${dr.labels} labels`, dr.lines && `${dr.lines} lines`, dr.boxes && `${dr.boxes} boxes`, dr.tables && `${dr.tables} table${dr.tables > 1 ? "s" : ""}`].filter(Boolean).join(", ")}. Zoom in if labels overlap. A script keeps only its most recent few hundred drawings, as on TradingView.`));
+  if (!r.plots.some((p) => p.any && !/barcolor|background/.test(p.style)) && !r.strategy && !drawn && !Object.keys(r.barcolors || {}).length) host.append(el("p", "small dim", "The script ran but produced nothing to draw."));
   for (const w of r.warnings) host.append(el("p", "small dim", `Engine note: ${w}`));
   if (r.strategy) {
     const s = r.strategy, pct = (v) => (s.initial_capital ? (v / s.initial_capital) * 100 : 0), k = el("div", "st-kpis"), tile = (label, value, cls = "", sub = "") => { const b = el("div", "st-kpi"); b.append(el("span", "small dim", label), el("b", `mono ${cls}`, String(value))); if (sub) b.append(el("span", "tiny dim", sub)); return b; };
