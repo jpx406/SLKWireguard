@@ -6,8 +6,8 @@
 // each trade, and a commission is charged on every fill.
 export type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type P = Record<string, number>;
-type Ord = { type: "market" | "stop"; price?: number };
-type Out = { long?: Ord | null; short?: Ord | null; exit?: { stop?: number; limit?: number } | null; close?: boolean };
+type Ord = { type: "market" | "stop" | "close"; price?: number }; // "close" fills at the close of the signal bar itself
+type Out = { long?: Ord | null; short?: Ord | null; exit?: { stop?: number; limit?: number } | null; close?: boolean; closeNow?: boolean };
 type Ctx = { pos: -1 | 0 | 1; entry: number };
 export type ParamDef = { key: string; label: string; def: number; min: number; max: number; step: number };
 export type Def = { id: string; name: string; kind: string; how: string; adapted?: string; params: ParamDef[]; make: (b: Bar[], p: P) => (i: number, c: Ctx) => Out };
@@ -133,6 +133,11 @@ export const STRATEGIES: Def[] = [
     make: (b, p) => { const s = supertrend(b, p.atr, p.factor); return (i) => (i < 1 || !s.dir[i - 1] ? {} : s.dir[i] === 1 && s.dir[i - 1] === -1 ? { long: MKT } : s.dir[i] === -1 && s.dir[i - 1] === 1 ? { short: MKT } : {}); } },
   { id: "tech_ratings", name: "Technical Ratings", kind: "Composite", how: "Scores a dozen moving averages and eight oscillators from strong sell to strong buy, buys on a strong buy and sells short on a strong sell.", adapted: "Uses a shorter list of indicators than the original rating.", params: [pr("level", "Strong level", 0.5, 0.1, 0.9, 0.05)],
     make: (b, p) => { const r = technicalRating(b); return (i) => (Number.isNaN(r[i]) ? {} : r[i] > p.level ? { long: MKT } : r[i] < -p.level ? { short: MKT } : {}); } },
+  { id: "triple_rsi", name: "Triple RSI", kind: "Mean reversion", how: "Buys a pullback in an up-trend: the 5-day RSI is under 30, has fallen three days in a row, was under 60 three days ago, and price is above its 200-day average. Buys at that day's close and sells at the close when RSI is back above 50. Long only.",
+    adapted: "A published end-of-day system (QuantifiedStrategies). It was designed for daily bars of a stock index; the win rate people quote for it comes from that one market.",
+    params: [pr("length", "RSI length", 5, 2, 30), pr("entry", "RSI below", 30, 5, 50), pr("prior", "RSI three bars ago below", 60, 30, 90), pr("exit", "Exit when RSI above", 50, 30, 90), pr("ma", "Trend average", 200, 20, 400)],
+    make: (b, p) => { const c = C(b), r = rsiOf(c, p.length), m = sma(c, p.ma); return (i, x) => { if (i < 3 || Number.isNaN(m[i]) || Number.isNaN(r[i - 3])) return {}; if (x.pos === 1) return r[i] > p.exit ? { closeNow: true } : {};
+      return r[i] < p.entry && r[i] < r[i - 1] && r[i - 1] < r[i - 2] && r[i - 2] < r[i - 3] && r[i - 3] < p.prior && c[i] > m[i] ? { long: { type: "close" } } : {}; }; } },
   { id: "volty_expan", name: "Volty Expan Close", kind: "Breakout", how: "A volatility breakout: every bar it places a buy order a fraction of the average range above the close and a short order the same distance below.", params: [pr("length", "Length", 5, 2, 50), pr("atrs", "Distance (average ranges)", 0.75, 0.1, 5, 0.05)],
     make: (b, p) => { const a = sma(trueRange(b), p.length); return (i) => (Number.isNaN(a[i]) ? {} : { long: stop(b[i].close + a[i] * p.atrs), short: stop(b[i].close - a[i] * p.atrs) }); } },
 ];
@@ -186,6 +191,11 @@ export function runStrategy(idOrDef: string | Def, bars: Bar[], o: { params?: P;
     if (pos) inBars++;
     eq.push(pos === 0 ? cash : pos === 1 ? qty * b.close : qty * (2 * entry - b.close));
     pend = step(i, { pos, entry }) || {};
+    // "At the close" orders: the rule is read from this bar's close and filled at that same close (the usual
+    // assumption for end-of-day systems; in real trading it means placing the order in the last minutes).
+    if (pend.closeNow && pos) { close(b.close, i, "exit"); eq[eq.length - 1] = cash; }
+    if (pend.long?.type === "close") { open(1, b.close, i); pend.long = null; eq[eq.length - 1] = pos === 0 ? cash : pos === 1 ? qty * b.close : qty * (2 * entry - b.close); }
+    else if (pend.short?.type === "close") { open(-1, b.close, i); pend.short = null; eq[eq.length - 1] = pos === 0 ? cash : pos === 1 ? qty * b.close : qty * (2 * entry - b.close); }
   }
   const cut = Math.floor(bars.length * 0.7), cutT = bars[cut].time, last = bars[bars.length - 1];
   let pk = eq[0]; const ddv = eq.map((e) => { if (e > pk) pk = e; return (e / pk - 1) * 100; });

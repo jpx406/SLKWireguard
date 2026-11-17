@@ -84,3 +84,42 @@ export async function riskLog(db: D1Database, user: string, symbol: string, acti
 export async function recentRiskLog(db: D1Database, user: string, limit = 30) {
   try { return (await db.prepare("SELECT at, symbol, action, reason FROM risk_log WHERE user = ? ORDER BY id DESC LIMIT ?").bind(user, limit).all()).results; } catch { return []; }
 }
+
+// ------------------------------------------------------------------------------------------ portfolio risk
+// Value at risk, expected shortfall and correlation, by historical simulation: take the last year of daily returns
+// of each holding, apply today's weights, and read the bad days off the result. No distribution is assumed.
+export type PortfolioRisk = {
+  basis: "positions" | "watchlist"; symbols: string[]; days: number; exposure_usd: number; equity: number;
+  var95_pct: number; var99_pct: number; es95_pct: number; var95_usd: number; es95_usd: number; worst_day_pct: number; vol_ann_pct: number; beta: number | null; max_dd_pct: number;
+  weights: { symbol: string; weight: number; side: string }[];
+  corr: { symbols: string[]; matrix: number[][]; avg_now: number | null; avg_year: number | null; together: boolean; note: string };
+};
+const pearson = (a: number[], b: number[]) => { const n = Math.min(a.length, b.length); if (n < 10) return NaN; let sa = 0, sb = 0; for (let i = 0; i < n; i++) { sa += a[i]; sb += b[i]; } const ma = sa / n, mb = sb / n; let c = 0, va = 0, vb = 0; for (let i = 0; i < n; i++) { c += (a[i] - ma) * (b[i] - mb); va += (a[i] - ma) ** 2; vb += (b[i] - mb) ** 2; } return va && vb ? c / Math.sqrt(va * vb) : NaN; };
+/** Pure calculation, so it can be tested: holdings as signed dollar amounts, closes per symbol keyed by day. */
+export function riskFrom(holdings: { symbol: string; usd: number }[], closes: Record<string, { day: string; close: number }[]>, equity: number, benchmark = "SPY", basis: "positions" | "watchlist" = "positions"): PortfolioRisk | null {
+  const syms = holdings.map((h) => h.symbol).filter((s) => (closes[s] || []).length > 60); if (!syms.length) return null;
+  // Days every holding traded (crypto trades at weekends; stocks do not), most recent 250 of them.
+  let days = closes[syms[0]].map((c) => c.day); for (const s of syms.slice(1)) { const set = new Set(closes[s].map((c) => c.day)); days = days.filter((d) => set.has(d)); }
+  days = days.slice(-251); if (days.length < 40) return null;
+  const ret: Record<string, number[]> = {}; for (const s of [...syms, benchmark]) { const m = new Map((closes[s] || []).map((c) => [c.day, c.close])); ret[s] = days.slice(1).map((d, i) => { const a = m.get(days[i]), b = m.get(d); return a && b ? b / a - 1 : 0; }); }
+  const gross = holdings.filter((h) => syms.includes(h.symbol)).reduce((q, h) => q + Math.abs(h.usd), 0) || 1, base = Math.max(equity, gross);
+  const w = holdings.filter((h) => syms.includes(h.symbol)).map((h) => ({ symbol: h.symbol, weight: h.usd / base, side: h.usd >= 0 ? "long" : "short" }));
+  const port = ret[syms[0]].map((_, i) => w.reduce((q, x) => q + x.weight * ret[x.symbol][i], 0)), sorted = port.slice().sort((a, b) => a - b), n = sorted.length;
+  const q = (p: number) => sorted[Math.max(0, Math.floor(n * p) - 0)] ?? sorted[0], v95 = -q(0.05), v99 = -q(0.01), tail = sorted.slice(0, Math.max(1, Math.floor(n * 0.05))), es = -tail.reduce((a, b) => a + b, 0) / tail.length;
+  const mean = port.reduce((a, b) => a + b, 0) / n, sd = Math.sqrt(port.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  let eq = 1, pk = 1, dd = 0; for (const r of port) { eq *= 1 + r; if (eq > pk) pk = eq; dd = Math.max(dd, (pk - eq) / pk); }
+  const bm = ret[benchmark] || [], vb = bm.length ? bm.reduce((a, b) => a + (b - bm.reduce((x, y) => x + y, 0) / bm.length) ** 2, 0) / bm.length : 0, rho = pearson(port, bm), beta = vb && !Number.isNaN(rho) ? (rho * sd) / Math.sqrt(vb) : null;
+  const r3 = (v: number) => Math.round(v * 1e3) / 1e3, pct = (v: number) => Math.round(v * 1e4) / 100;
+  const cs = syms.slice(0, 10), matrix = cs.map((a) => cs.map((b) => (a === b ? 1 : r3(pearson(ret[a], ret[b]))))), avgOf = (len: number) => { const v: number[] = []; for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) { const c = pearson(ret[cs[i]].slice(-len), ret[cs[j]].slice(-len)); if (!Number.isNaN(c)) v.push(c); } return v.length ? r3(v.reduce((a, b) => a + b, 0) / v.length) : null; };
+  const now = avgOf(20), year = avgOf(250), together = now != null && year != null && (now >= 0.7 || now - year >= 0.2);
+  return { basis, symbols: syms, days: n, exposure_usd: Math.round(gross), equity: Math.round(equity), var95_pct: pct(v95), var99_pct: pct(v99), es95_pct: pct(es), var95_usd: Math.round(v95 * base), es95_usd: Math.round(es * base), worst_day_pct: pct(-sorted[0]), vol_ann_pct: pct(sd * Math.sqrt(252)), beta: beta == null ? null : r3(beta), max_dd_pct: pct(dd), weights: w.map((x) => ({ ...x, weight: r3(x.weight) })),
+    corr: { symbols: cs, matrix, avg_now: now, avg_year: year, together, note: cs.length < 2 ? "One holding: nothing to correlate." : together ? `Your holdings are moving together (average correlation ${now} over the last month against ${year} over the year): diversification is not protecting you right now.` : `Average correlation ${now ?? "n/a"} over the last month, ${year ?? "n/a"} over the year: holdings are behaving normally relative to each other.` } };
+}
+/** Risk of the open paper positions; with none open, of an equal-weight basket of the watchlist (what it WOULD be). */
+export async function portfolioRisk(positions: { symbol: string; side: string; qty: number; entry: number; last?: number | null }[], watchlist: string[], equity: number): Promise<PortfolioRisk | null> {
+  const basis = positions.length ? "positions" as const : "watchlist" as const;
+  const holdings = positions.length ? positions.slice(0, 15).map((p) => ({ symbol: p.symbol, usd: (p.side === "short" ? -1 : 1) * p.qty * (p.last || p.entry) })) : watchlist.slice(0, 8).map((s) => ({ symbol: s.toUpperCase(), usd: equity / Math.max(1, Math.min(8, watchlist.length)) }));
+  const closes: Record<string, { day: string; close: number }[]> = {}, bench = holdings.every((h) => isCrypto(h.symbol)) ? "BTC-USD" : "SPY";
+  await Promise.all([...new Set([...holdings.map((h) => h.symbol), bench])].map(async (s) => { try { closes[s] = ((await candles(s, "1d", 400)) as { time: number; close: number }[]).map((b) => ({ day: new Date(b.time * 1000).toISOString().slice(0, 10), close: b.close })); } catch { closes[s] = []; } }));
+  return riskFrom(holdings, closes, equity, bench, basis);
+}

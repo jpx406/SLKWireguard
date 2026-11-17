@@ -20,7 +20,7 @@ import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, lat
 import { isCrypto } from "./market";
 import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
 import { summary as paperSummary, setKillSwitch } from "./paper";
-import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy } from "./risk";
+import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy, portfolioRisk } from "./risk";
 import { masterApply, masterView } from "./master";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
@@ -244,7 +244,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     return json({ symbol, account: ps.account, settings: { kill_switch: ps.settings.kill_switch, kill_reason: ps.settings.kill_reason, max_drawdown_pct: ps.settings.max_drawdown_pct, regime_sizing: ps.settings.regime_sizing, sizing: ps.settings.sizing, auto_trade: ps.settings.auto_trade, auto_max_daily_loss: ps.settings.auto_max_daily_loss },
       curve: ps.curve, positions: ps.positions.length, drawdown_pct: Math.round(dd * 100) / 100, peak_equity: peak,
       learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, sharpe: learn.sharpe_per_trade, picks: learn.picks, settled: learn.settled, curve: learn.curve.slice(-200) },
-      outcomes: rs.map((o) => ({ r: o.r_result, mfe: o.mfe_r, mae: o.mae_r })), plans, regime, regime_accuracy: acc, kelly: await kellyRead(env.DB), risk_log: await recentRiskLog(env.DB, who.user, 12),
+      outcomes: rs.map((o) => ({ r: o.r_result, mfe: o.mfe_r, mae: o.mae_r })), plans, regime, regime_accuracy: acc, kelly: await kellyRead(env.DB), risk_log: await recentRiskLog(env.DB, who.user, 12), portfolio_risk: await portfolioRisk(ps.positions as never, who.role === "admin" ? (await getSettings(env.DB)).watchlist : await getSetting<string[]>(env.DB, `watchlist:${who.user}`, (await getSettings(env.DB)).watchlist), ps.account.equity).catch(() => null),
       active_rules: await activeRules(env.DB), forecast: (await latestForecasts(env.DB, [symbol]))[symbol] ?? null, watchlist: (await getSettings(env.DB)).watchlist });
   }
   if (path === "/learn/sweep" && m === "POST") {

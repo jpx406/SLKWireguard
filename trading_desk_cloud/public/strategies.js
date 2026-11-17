@@ -126,7 +126,7 @@ function stratTrades(box, r) {
 }
 function stratAll(box) {
   const S = state.strat, rows = S.rank?.rows || [];
-  box.append(el("p", "small dim", S.rank ? `All 23 on ${S.rank.symbol} with their standard settings, best first by the last 30% of the history (the part most like "now"). Buy & hold: ${stPct(S.rank.buy_hold_pct)}. Click one to test it.` : "Testing all 23…"));
+  box.append(el("p", "small dim", S.rank ? `All ${rows.length} built-in strategies on ${S.rank.symbol} with their standard settings, best first by the last 30% of the history (the part most like "now"). Buy & hold: ${stPct(S.rank.buy_hold_pct)}. Click one to test it.` : "Testing all of them…"));
   const trs = rows.map((x) => { const tr = el("tr"); if (x.id === S.sel) tr.classList.add("st-on"); tr.tabIndex = 0; tr.setAttribute("role", "button"); const nm = td(x.name, "sym"); nm.append(el("div", "dim tiny", x.kind));
     tr.append(nm, td(stPct(x.out_net_pct), `num ${stCls(x.out_net_pct)}`), td(stPct(x.net_pct), `num ${stCls(x.net_pct)}`), td(x.profit_factor ?? "—", "num dim"), td(stPct(-x.max_dd_pct, false), "num dim"), td(x.trades, "num dim"), td(x.position, `small ${x.position === "long" ? "up" : x.position === "short" ? "down" : "dim"}`));
     const pick = () => { S.sel = x.id; S.tab = "overview"; loadStrat("one"); }; tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } }; return tr; });
@@ -184,7 +184,7 @@ function renderStrat() {
   const pane = el("div", "st-pane"); host.append(tabs, pane);
   if (!r && S.tab !== "all" && S.tab !== "auto") pane.append(el("div", "dim", S.busy ? "Testing…" : "No result."));
   else if (S.tab === "overview") stratOverview(pane, r); else if (S.tab === "performance") stratPerformance(pane, r); else if (S.tab === "analysis") stratAnalysis(pane, r); else if (S.tab === "trades") stratTrades(pane, r); else if (S.tab === "all") stratAll(pane); else stratAuto(pane, r, def);
-  host.append(el("p", "dim tiny", "How a test runs: the strategy sees only finished bars and its orders fill on the next bar (market orders at the open, stop orders when price trades through them). The whole account goes into each trade. A backtest is the past: the best of 23 strategies on old data is partly luck, which is why the most recent 30% is shown on its own. These are the classic public strategy rules; this desk is not affiliated with TradingView. Research, not advice."));
+  host.append(el("p", "dim tiny", "How a test runs: the strategy sees only finished bars and its orders fill on the next bar (market orders at the open, stop orders when price trades through them). The whole account goes into each trade. A backtest is the past: the best of two dozen strategies on old data is partly luck, which is why the most recent 30% is shown on its own. These are the classic public strategy rules; this desk is not affiliated with TradingView. Research, not advice."));
   if (r) requestAnimationFrame(() => { if (cb.isConnected) stratChart(cb, r); }); else cb.append(el("div", "dim small", "Loading the chart…"));
 }
 

@@ -428,6 +428,10 @@ The buttons at the top of TV Strategies switch between four views.
 
 This data comes from TradingView's public pages through unofficial channels. It can be delayed or stop working without notice, so use it to find ideas, then confirm on the Chart and with a scan.
 
+### Triple RSI
+
+One extra strategy sits in the list beside the 23 classics: **Triple RSI**, a published end-of-day system that buys a sharp pullback inside an up-trend and sells when the bounce comes. It wins most of its trades (about three in four on the daily charts tested, not the 90% often advertised) but trades rarely and spends most of the time in cash, so it earns much less than simply holding. Use it on **1D** bars; it was not designed for intraday.
+
 ### Recommendations
 
 - Test on the daily chart first: more history, fewer false signals, lower costs.

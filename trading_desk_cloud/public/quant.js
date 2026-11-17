@@ -214,6 +214,25 @@ function renderQuant() {
   const p10 = qPanel("BAYESIAN UPDATE", "P(WIN)", [[`EV ${all.avg_r == null ? "—" : `${all.avg_r >= 0 ? "+" : ""}${qFmt(all.avg_r, 2)}R`}`, "amber"], [`EDGE ${wins + losses ? `${((2 + wins) / (4 + wins + losses) - 0.5) * 100 >= 0 ? "+" : ""}${qFmt(((2 + wins) / (4 + wins + losses) - 0.5) * 100, 1)}pp` : "—"}`, "green"]]);
   const by = qEl("div", "q-cv q-tall"), byFoot = qEl("div", "q-note"); p10.body.append(by, byFoot); grid.append(p10);
   // Footer
+  // Portfolio risk: value at risk, expected shortfall and how much the holdings move together.
+  const pr = d.portfolio_risk;
+  if (pr) {
+    const g2 = qEl("div", "q-grid"); root.append(g2);
+    const p11 = qPanel("PORTFOLIO RISK", pr.basis === "positions" ? "OPEN PAPER POSITIONS" : "WATCHLIST BASKET · IF HELD EQUALLY", [[`${pr.days}D HISTORY`, "dim"], [`VAR 95 ${qFmt(pr.var95_pct)}%`, pr.var95_pct > 3 ? "red" : pr.var95_pct > 1.5 ? "amber" : "green"]]);
+    const st = qEl("div", "q-stats"); st.append(qStat("1-day VaR 95%", `-$${Math.abs(pr.var95_usd).toLocaleString()}`, "red"), qStat("Expected shortfall", `-$${Math.abs(pr.es95_usd).toLocaleString()}`, "red"), qStat("VaR 99%", `-${qFmt(pr.var99_pct)}%`), qStat("Worst day", `-${qFmt(pr.worst_day_pct)}%`),
+      qStat("Volatility / yr", `${qFmt(pr.vol_ann_pct, 1)}%`), qStat("Beta", pr.beta == null ? "—" : qFmt(pr.beta)), qStat("Max drawdown", `-${qFmt(pr.max_dd_pct, 1)}%`), qStat("Exposure", `$${pr.exposure_usd.toLocaleString()}`));
+    p11.body.append(st, qEl("div", "q-note", `On 19 trading days out of 20 this ${pr.basis === "positions" ? "portfolio" : "basket"} would not have lost more than ${qFmt(pr.var95_pct)}% ($${Math.abs(pr.var95_usd).toLocaleString()}) in a day; on the 20th, the average loss was ${qFmt(pr.es95_pct)}%. Read from the last ${pr.days} days of real prices with today's weights, no model assumed. The next year can be worse.`));
+    g2.append(p11);
+    const c = pr.corr, p12 = qPanel("CORRELATION", "DO THEY MOVE TOGETHER", [[c.together ? "MOVING TOGETHER" : "NORMAL", c.together ? "red" : "green"]]);
+    if (c.symbols.length > 1) {
+      const t = qEl("table", "q-corr"); t.setAttribute("aria-label", "Correlation of daily returns between holdings");
+      const hr = qEl("tr"); hr.append(qEl("th", null, "")); for (const s of c.symbols) hr.append(qEl("th", null, s.replace("-USD", ""))); t.append(hr);
+      c.matrix.forEach((row, i) => { const tr = qEl("tr"); tr.append(qEl("th", null, c.symbols[i].replace("-USD", ""))); row.forEach((v, j) => { const td = qEl("td", null, i === j ? "" : v == null || isNaN(v) ? "—" : v.toFixed(2)); if (i !== j && !isNaN(v)) { td.style.background = v >= 0 ? `rgba(255,59,74,${Math.min(0.75, Math.abs(v) * 0.75)})` : `rgba(46,229,157,${Math.min(0.75, Math.abs(v) * 0.75)})`; td.title = `${c.symbols[i]} and ${c.symbols[j]}: ${v.toFixed(2)}`; } tr.append(td); }); t.append(tr); });
+      p12.body.append(t);
+    }
+    p12.body.append(qEl("div", "q-note", `${c.note} 1.00 = always move together, 0 = unrelated, negative = move opposite. Red pairs give no diversification.`));
+    g2.append(p12);
+  }
   const foot = qEl("div", "q-foot"); root.append(foot);
 
   // Draw after layout.
