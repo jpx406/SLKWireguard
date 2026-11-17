@@ -28,6 +28,7 @@ function qPanel(title, sub, tags = []) {
 const qStat = (label, value, cls = "") => { const d = qEl("div", "q-stat"); d.append(qEl("span", "q-lbl", label), qEl("span", `q-val ${cls}`, value)); return d; };
 
 async function loadQuant() {
+  if (state.quant.view === "pairs" && typeof loadPairs === "function") return loadPairs();
   const sym = state.symbol;
   try {
     const [d, bars] = await Promise.all([api(`/api/quant?symbol=${encodeURIComponent(sym)}`), api(`/api/candles/${encodeURIComponent(sym)}?interval=5m&days=30`).catch(() => [])]);
@@ -149,6 +150,7 @@ function drawBayes(host, wins, losses) {
 
 /* ---------- page ---------- */
 function renderQuant() {
+  if (state.quant.view === "pairs" && typeof renderPairs === "function") return renderPairs();
   const host = $("#quant"), d = state.quant.data, bars = state.quant.bars; if (!d) return;
   for (const t of state.quant.timers) clearInterval(t); state.quant.timers = [];
   if (state.quant.chart) { try { state.quant.chart.remove(); } catch { /* gone */ } state.quant.chart = null; }
@@ -163,7 +165,7 @@ function renderQuant() {
   const killBtn = qEl("button", `q-kill ${kill ? "on" : ""}`, kill ? "KILL SWITCH ON" : "KILL SWITCH"); killBtn.title = kill ? d.settings.kill_reason || "manual" : "Cancel working orders, flatten every paper position and stop automatic entries";
   killBtn.onclick = async () => { if (!kill && !(await askConfirm({ title: "Trip the kill switch?", message: "Working orders are cancelled, every open paper position is closed and automatic entries stop until you re-arm it.", confirm: "Flatten and Stop", destructive: true }))) return; try { await api("/api/paper/kill", { method: "POST", body: JSON.stringify({ on: !kill }) }); loadQuant(); } catch (e) { showBanner(e.message); } };
   const clock = qEl("span", "q-clock", ""); const tick = () => { clock.textContent = new Date().toLocaleTimeString([], { hour12: false }); }; tick(); state.quant.timers.push(setInterval(tick, 1000));
-  top.append(logo, qEl("b", "q-title", "CLAUDE × QUANT"), qEl("span", "q-sub", `HUNTER 05 · ${d.symbol} · PAPER AGENT`), qEl("span", "q-sp"), qEl("span", "q-mode", "REGIME · ANALOG · KELLY"), killBtn, qEl("span", `q-tag ${kill ? "red" : "green"}`, kill ? "HALTED" : "LIVE · PAPER"), clock);
+  top.append(logo, qEl("b", "q-title", "CLAUDE × QUANT"), qEl("span", "q-sub", `HUNTER 05 · ${d.symbol} · PAPER AGENT`), qEl("span", "q-sp"), qEl("span", "q-mode", "REGIME · ANALOG · KELLY"), ...(typeof qViewToggle === "function" ? [qViewToggle()] : []), killBtn, qEl("span", `q-tag ${kill ? "red" : "green"}`, kill ? "HALTED" : "LIVE · PAPER"), clock);
   root.append(top);
   const strip = qEl("div", "q-strip"); const rg = d.regime;
   strip.append(qEl("span", "amber", `▼ REGIME ${rg.regime.replace("_", " ")}`), qEl("span", null, `SIZE ×${rg.size_mult}`), qEl("span", null, `${rg.index} VOL ${qFmt(rg.vol_ann, 1)}%`), qEl("span", null, `TREND ${rg.trend > 0 ? "+" : ""}${qFmt(rg.trend, 2)}σ`),
@@ -263,4 +265,4 @@ document.addEventListener("section", (e) => {
   if (e.detail === "quant") { loadQuant(); state.quant.poll = setInterval(() => { if (sectionVisible("quant") && !document.hidden) loadQuant(); }, 30000); }
   else { for (const t of state.quant.timers) clearInterval(t); state.quant.timers = []; }
 });
-let _qResize; addEventListener("resize", () => { clearTimeout(_qResize); _qResize = setTimeout(() => { if (state.quant.data && sectionVisible("quant")) renderQuant(); }, 250); });
+let _qResize; addEventListener("resize", () => { clearTimeout(_qResize); _qResize = setTimeout(() => { if ((state.quant.data || state.quant.view === "pairs") && sectionVisible("quant")) renderQuant(); }, 250); });

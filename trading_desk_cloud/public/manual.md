@@ -169,6 +169,21 @@ The **Cleanest now** chip is the market radar: every symbol ranked by liquidity,
 
 **Honesty note.** The tape-pressure panel is an estimate from bars and the range panel replaces an order book the desk does not have. Both are labelled.
 
+### Pairs view
+
+Press **PAIRS** in the terminal header (TERMINAL takes you back; the desk remembers your choice). A pairs trade buys one stock and shorts a related one, betting that the gap between them closes. The view answers three questions before it shows any signal, one panel each, on up to three years of daily prices:
+
+1. **Engle-Granger: is it really cointegrated?** The desk fits `log A = alpha + beta × log B + spread`. Beta is the hedge ratio. It then tests whether the spread keeps returning to a level or wanders off like a random walk. The test statistic must be −3.34 or lower (the 5% level). The gauge also shows the same test on the first and second half of the history; a pair that passes only on the whole sample is marked *caution*. Two stocks that move together day to day (high correlation) can still drift apart for good, so correlation alone proves nothing.
+2. **Ornstein-Uhlenbeck: how fast does it revert?** The **half-life** is the number of trading days in which half of a gap closes. Between 2 and 60 days is tradable on daily bars. Shorter is eaten by costs; longer ties up money while the relationship may change.
+3. **Kalman filter: is the hedge ratio still right?** The cyan line is the ratio re-estimated one day at a time; the dashed line is the ratio fixed on the first 60% of the history. A drift above 15% means the fixed ratio is stale.
+4. **Z-score rule: fade the extremes, exit near the mean.** Z is how many typical gaps the spread is from its recent mean. Beyond +2 the desk would short the spread (short A, buy B); below −2 it would buy it (buy A, short B); it closes when z is back inside ±0.5, and gives up beyond ±4 or after four half-lives. You can change the entry and exit levels. The table tests the rule on the last 40% of the history, which the fixed ratio never saw, with fills at the next day's open and 0.02% cost per leg.
+
+The line under the verdict is today's reading: **long spread**, **short spread**, **flat**, **wait** or **no trade**, with how many dollars of B to hold per dollar of A. When the pair fails the cointegration test, or the hedge ratio is negative, it always says *no trade*.
+
+**Pair scanner.** Below the panels, about twenty classic pairs (KO/PEP, XOM/CVX, V/MA…) and the pairs of your first eight watchlist symbols are ranked by the test, strongest first. Select a row to open it. Results are kept for 30 minutes.
+
+**Honesty notes.** Signals only: the Pairs view places no orders, and the paper account cannot yet hold a two-leg position as one trade. The test ignores the cost of borrowing the short leg. Scanning many pairs finds some that pass by luck (about 1 in 20), which is why a pair must also pass in both halves. On the last three years of data most famous pairs do **not** pass: that is the usual result, not a fault.
+
 ---
 
 ## 6. Chart

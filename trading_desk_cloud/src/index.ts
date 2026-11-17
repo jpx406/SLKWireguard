@@ -22,6 +22,7 @@ import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersio
 import { summary as paperSummary, setKillSwitch } from "./paper";
 import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy, portfolioRisk } from "./risk";
 import { masterApply, masterView } from "./master";
+import { pairDetail, scanPairs } from "./pairs";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
@@ -230,6 +231,16 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   // Kill switch: on = cancel working orders, flatten every position, no automatic entries; off = re-arm.
   if (path === "/paper/kill" && m === "POST") return json(await setKillSwitch(env.DB, who.user, (await body<{ on?: unknown }>(req)).on === true, "manual"));
   // Quant terminal: everything the terminal-style dashboard draws, from real desk data.
+  // Pairs trading: cointegration test, reversion speed, drifting hedge ratio and the z-score rule. Analysis and signals only.
+  if (path === "/pairs/scan" && m === "GET") {
+    const wl = who.role === "admin" ? (await getSettings(env.DB)).watchlist : await getSetting<string[]>(env.DB, `watchlist:${who.user}`, (await getSettings(env.DB)).watchlist);
+    return json(await scanPairs(wl || []));
+  }
+  if (path === "/pairs" && m === "GET") {
+    const a = (url.searchParams.get("a") || "").toUpperCase(), b = (url.searchParams.get("b") || "").toUpperCase(), num = (k: string) => { const v = url.searchParams.get(k); return v === null || v === "" || !Number.isFinite(+v) ? undefined : +v; };
+    if (!SYMBOL_RE.test(a) || !SYMBOL_RE.test(b)) return bad("Bad symbol"); if (a === b) return bad("Choose two different symbols.");
+    try { return json(await pairDetail(a, b, { entry: num("entry"), exit: num("exit"), stop: num("stop"), fee_pct: num("fee") })); } catch (e) { return bad(e instanceof Error ? e.message : "Could not analyse that pair."); }
+  }
   if (path === "/quant" && m === "GET") {
     const symbol = (url.searchParams.get("symbol") || "SPY").toUpperCase();
     const crypto = isCrypto(symbol);

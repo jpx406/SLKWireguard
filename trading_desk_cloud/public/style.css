@@ -975,3 +975,21 @@ tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } 
 .pine-top_right { top: 6px; right: 70px; } .pine-top_left { top: 6px; left: 6px; } .pine-top_center { top: 6px; left: 50%; transform: translateX(-50%); }
 .pine-middle_right { top: 50%; right: 70px; transform: translateY(-50%); } .pine-middle_left { top: 50%; left: 6px; transform: translateY(-50%); } .pine-middle_center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
 .pine-bottom_right { bottom: 34px; right: 70px; } .pine-bottom_left { bottom: 34px; left: 6px; } .pine-bottom_center { bottom: 34px; left: 50%; transform: translateX(-50%); }
+
+/* Quant Terminal: pairs view */
+.q-view { display: inline-flex; border: 1px solid #1b2330; border-radius: 4px; overflow: hidden; }
+.q-view button { font: inherit; background: transparent; color: #8b97a8; border: 0; padding: 3px 12px; min-height: 26px; cursor: pointer; letter-spacing: .12em; }
+.q-view button.on { background: #f5b82e; color: #000; font-weight: 700; } .q-view button:focus-visible, .q-go:focus-visible, .q-in:focus-visible, .q-ptbl tr:focus-visible { outline: 2px solid #36d6e7; outline-offset: 1px; }
+.q-pform { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; padding: 6px 2px 8px; }
+.q-fld { display: flex; flex-direction: column; gap: 2px; } .q-in { font: inherit; font-size: 16px; width: 104px; background: #0d1117; color: #fff; border: 1px solid #1b2330; border-radius: 4px; padding: 5px 8px; min-height: 34px; text-transform: uppercase; }
+.q-go { font: inherit; background: #f5b82e; color: #000; border: 0; border-radius: 4px; padding: 0 14px; min-height: 34px; font-weight: 700; letter-spacing: .1em; cursor: pointer; } .q-go:disabled { opacity: .5; cursor: default; }
+.q-verdict { white-space: normal; overflow: visible; flex-wrap: wrap; gap: 10px; } .q-verdict.ok { border-bottom-color: #2ee59d; } .q-verdict.mid { border-bottom-color: #f5b82e; } .q-vtext { text-transform: none; color: #c8d2e0; }
+.q-signal { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; margin-top: 8px; padding: 7px 10px; border: 1px solid #1b2330; border-left: 3px solid #5b6678; background: #0a0d12; color: #c8d2e0; font-size: 12px; }
+.q-signal b { color: #fff; letter-spacing: .1em; } .q-signal.green { border-left-color: #2ee59d; } .q-signal.green b { color: #2ee59d; } .q-signal.red { border-left-color: #ff3b4a; } .q-signal.red b { color: #ff3b4a; }
+.q-grid.q-pairs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .q-cv.q-gauge { height: 86px; } .q-cv.q-mid { height: 150px; }
+.q-scroll { overflow-x: auto; margin-top: 6px; } .q-ptbl { border-collapse: collapse; width: 100%; font-size: 11px; white-space: nowrap; }
+.q-ptbl th { color: #5b6678; font-weight: 400; text-align: left; padding: 4px 8px 4px 0; text-transform: uppercase; } .q-ptbl td { padding: 4px 8px 4px 0; color: #c8d2e0; border-top: 1px solid #141a23; } .q-ptbl tr > th:first-child { color: #fff; }
+.q-scan { margin-top: 8px; } .q-scan-t tr[role=button] { cursor: pointer; } .q-scan-t tr[role=button]:hover td, .q-scan-t tr[role=button]:hover th { background: #0d1117; } .q-scan-t tr.ok th { color: #2ee59d; }
+.q-note.amber { color: #f5b82e; }
+@media (max-width: 900px) { .q-grid.q-pairs { grid-template-columns: minmax(0, 1fr); } .q-in { width: 88px; } }
+.q-ptbl th, .q-ptbl td { background: transparent; } .q-pairs .q-note, .q-scan .q-note { text-transform: none; font-size: 11px; line-height: 1.45; color: #8b97a8; }
