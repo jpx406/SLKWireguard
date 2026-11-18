@@ -38,3 +38,13 @@ ANTHROPIC_WORKSPACE = "default"
 # Every minute (UTC): paper-trading engine (crypto trades at weekends too) + autopilot briefs (mapped to New York time).
 [triggers]
 crons = ["* * * * *"]
+
+# Live price stream: one Durable Object holds the single Alpaca websocket and fans trades out to open pages.
+# Needs the Workers Paid plan. Keep this block at the end of the file.
+[[durable_objects.bindings]]
+name = "QUOTE_HUB"
+class_name = "QuoteHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["QuoteHub"]

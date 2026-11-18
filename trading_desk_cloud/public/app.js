@@ -373,7 +373,7 @@ function renderWatchlist() {
   const box = $("#watchlist"); box.innerHTML = "";
   for (const sym of state.settings.watchlist) {
     const q = state.quotes[sym] || {}; const cls = q.change_pct > 0 ? "up" : q.change_pct < 0 ? "down" : "";
-    const row = el("div", `w-row${sym === state.symbol ? " active" : ""}`);
+    const row = el("div", `w-row${sym === state.symbol ? " active" : ""}`); row.dataset.sym = sym;
     row.append(el("span", "w-sym", sym), flashEl(el("span", "w-px", fmt(q.last)), "w:" + sym, q.last), el("span", "w-chg " + cls, q.change_pct == null ? "" : `${q.change_pct > 0 ? "+" : ""}${fmt(q.change_pct)}%`));
     row.setAttribute("aria-label", `${sym}${q.last == null ? "" : `, ${fmt(q.last)}`}${q.change_pct == null ? "" : `, ${q.change_pct > 0 ? "up" : "down"} ${fmt(Math.abs(q.change_pct))} percent`}`);
     const pop = el("button", "w-del w-pop"); pop.innerHTML = icon("popout"); pop.title = `Open ${sym} in its own window`; pop.setAttribute("aria-label", `Open ${sym} in its own window`);

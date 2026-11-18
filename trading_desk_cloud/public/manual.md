@@ -614,6 +614,21 @@ Add a watch for any symbol: rises to a price, falls to a price, or moves up or d
 
 ---
 
+## 17c. Live prices: the stream
+
+The small indicator at the top right says how fresh the prices are.
+
+- **Live stream** with a ring pulsing around the dot: trades are pushed to your screen as they happen. The watchlist, the price in the header, prices in tables and the last candle of the chart move by themselves and flash green or red.
+- **Real-time** or **Yahoo feed**, no pulse: prices are re-read every 10 seconds.
+- **Stocks closed**: the US market is shut, so stock prices do not move.
+- **No update for…** in amber: nothing has arrived for 45 seconds; check your connection.
+
+Hover (or long-press) the indicator to see what is streaming and why not, if it is not.
+
+The stream needs Alpaca keys (Settings). On Alpaca's free plan it covers trades on the **IEX exchange** only, so a busy stock ticks many times a second and a quiet one may not tick for a while, and at most **30 symbols** at once (your watchlist and whatever is on screen come first). Anything outside that still refreshes every 10 seconds. Alpaca allows one stream per account: if you also stream with the same keys from another program, the desk goes back to 10-second refreshes and says so in the tooltip.
+
+The stream only reads prices. It cannot place orders.
+
 ## 18. The safety layer
 
 These run in plain code before every automatic order.

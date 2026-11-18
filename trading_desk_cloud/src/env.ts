@@ -16,6 +16,8 @@ export interface Env {
   ANTHROPIC_WORKSPACE?: string; // workspace id for Console trace links; "default" if unset
   ALPACA_KEY_ID?: string; // secret: Alpaca market-data key (real-time quotes and bars)
   ALPACA_SECRET_KEY?: string; // secret
+  QUOTE_HUB?: DurableObjectNamespace; // the live price stream hub (src/stream.ts); absent = prices are polled
+  ALPACA_STREAM_BASE?: string; // tests only: mock Alpaca stream server
   ALPACA_DATA_BASE?: string; // tests only: mock Alpaca data server
   MARKET_DATA_BASE?: string; // tests only: mock market-data server
   DEV_ORIGIN?: string; // local wrangler dev only: the page's real origin (http://localhost:8787), for passkeys

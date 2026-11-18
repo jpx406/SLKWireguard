@@ -562,7 +562,24 @@ npm run typecheck
 
 ## How live the screens are
 
-Prices are polled, not streamed. `public/live.js` runs one loop every 10 seconds while the tab is visible: it refreshes the watchlist, the active quote and every element tagged with `liveTag(node, symbol)`, flashes a price green or red when it changes, and drives the indicator in the top bar (source and seconds since the last data arrived; amber after 45 seconds without data). Charts refresh every 20 seconds, Dashboard, Crypto and Quant Terminal every 30, Auto Trader every 60. Stock prices do not move while the US market is closed; without Alpaca keys the source is Yahoo, which can lag.
+**Live stream (new).** With Alpaca keys set, trades are pushed to the page as they happen instead of being polled. `src/stream.ts` defines a Durable Object, `QuoteHub`, that holds the single websocket Alpaca allows per account and fans trades out to every open page:
+
+```
+browser --ws--> Worker /api/stream (signed-in users, same-origin only) --> QuoteHub --ws--> stream.data.alpaca.markets
+```
+
+* Pages tell the hub which symbols are on screen (watchlist, the open chart, every `liveTag` element). The hub subscribes to the union, keeps the newest trade per symbol and sends changes four times a second.
+* The page patches the watchlist row, the header quote and tagged prices in place (they flash), and moves the chart's last candle.
+* The API keys stay in the Worker. The stream is read-only market data.
+* When the last page closes, the hub drops the Alpaca connection after 30 seconds, so nothing runs while nobody is looking. If Alpaca drops the connection the hub reconnects (2 s to 2 min back-off).
+* The 10-second poll remains for anything the stream does not carry and whenever no trade has arrived for 15 seconds (market closed); while trades are flowing for everything on screen it drops to every 30 seconds.
+* Without Alpaca keys, or with Yahoo chosen as the source, nothing changes: the page asks once, gets "not available" and keeps polling.
+
+Limits to know: the free Alpaca plan streams the **IEX exchange only** (a few percent of US volume, so quiet stocks tick rarely) and at most **30 symbols**; the hub keeps the 30 that most pages ask for. Alpaca allows **one stream connection per account**: if another program uses the same keys for streaming, the indicator's tooltip says so and the desk falls back to polling, retrying every five minutes. Crypto pairs use Alpaca's crypto stream, whose prices can differ slightly from the Yahoo figures used for the candles.
+
+Needs the **Workers Paid** plan (Durable Objects). The `[[durable_objects.bindings]]` and `[[migrations]]` blocks at the end of `wrangler.toml` create it on the next deploy; no setup script run is needed.
+
+Without the stream, prices are polled. `public/live.js` runs one loop every 10 seconds while the tab is visible: it refreshes the watchlist, the active quote and every element tagged with `liveTag(node, symbol)`, flashes a price green or red when it changes, and drives the indicator in the top bar (source and seconds since the last data arrived; amber after 45 seconds without data). Charts refresh every 20 seconds, Dashboard, Crypto and Quant Terminal every 30, Auto Trader every 60. Stock prices do not move while the US market is closed; without Alpaca keys the source is Yahoo, which can lag.
 
 ## New versions and open pages
 

@@ -24,6 +24,7 @@ import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy, portfolioRisk }
 import { masterApply, masterView } from "./master";
 import { pairDetail, scanPairs } from "./pairs";
 import { calibrateExits, exitsView, sanitizeExit } from "./exits";
+import { QuoteHub, streamRoute } from "./stream";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
@@ -182,6 +183,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // Live price stream (websocket) for signed-in users; a plain GET says whether it is available.
+  if (path === "/stream" && m === "GET") return streamRoute(req, env, marketInfo().active);
   // Exit engine: the stop / target policy in force, what was learned from the desk's own plans, and the edge guard.
   if (path === "/exits" && m === "GET") return json(await exitsView(env.DB));
   if (path === "/exits" && m === "PUT") {
@@ -712,4 +715,4 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-export { DEFAULT_SETTINGS };
+export { DEFAULT_SETTINGS, QuoteHub };
