@@ -10,6 +10,7 @@ async function loadKronos() {
   try { d = await api("/api/kronos"); } catch (e) { $("#kronos").innerHTML = ""; $("#kronos").append(el("div", "msg err", e.message)); return; }
   state.kronos.runs = d.runs; state.kronos.latest = d.latest || {}; state.kronos.ready = d.ready;
   state.kronos.score = d.score || null;
+  state.kronos.stats = d.stats || null;
   $("#kronosNote").textContent = d.ready ? (d.kronos_gate ? "Gate on: the chart autopilot skips signals that disagree with a fresh forecast" : "") : "Agent not configured.";
   renderKronos();
   if (d.runs.some((r) => r.status === "running" || r.status === "starting")) { clearTimeout(state.kronos.timer); state.kronos.timer = setTimeout(loadKronos, 30000); }
@@ -27,6 +28,14 @@ function renderKronos() {
   cards.append(stat("Forecasts scored", String(sc?.n ?? 0), "", "after their horizon passed"), stat("Direction hit rate", sc?.hit_rate == null ? "—" : `${fmt(sc.hit_rate, 0)}%`, (sc?.hit_rate ?? 0) > 55 ? "up" : (sc?.n ?? 0) >= 10 && (sc?.hit_rate ?? 0) < 50 ? "down" : "", "50% = coin flip"),
     stat("Brier score", sc?.brier == null ? "—" : fmt(sc.brier, 3), (sc?.brier ?? 1) < 0.22 ? "up" : (sc?.n ?? 0) >= 10 && (sc?.brier ?? 0) > 0.25 ? "down" : "", "0 perfect · 0.25 coin flip"), stat("Expected vs actual move", sc?.avg_abs_error_pct == null ? "—" : `${fmt(sc.avg_abs_error_pct)}%`, "", "average absolute error"));
   host.append(cards);
+  // Cost and reliability of the paid model, and the pause that stops it from spending on runs that cannot finish.
+  const ks = state.kronos.stats;
+  if (ks) {
+    const bmK = (sc?.by_model || {}).Kronos, line = el("div", `msg ${ks.health.disabled ? "err" : "ok"} small`);
+    line.append(el("b", null, ks.health.disabled ? "Kronos is paused · " : "Kronos · "), `${ks.paid_runs} paid run${ks.paid_runs === 1 ? "" : "s"}, ${ks.completed} returned a forecast, ${ks.failed} failed; cost to date $${fmt(ks.cost_usd)}. Direction hits: ${bmK ? `${bmK.hit_rate}% of ${bmK.n} scored (Brier ${bmK.brier}; a coin flip is 0.25)` : "none scored yet"}.${ks.health.disabled ? ` Paused because ${ks.health.reason}. Forecasts use the free built-in model meanwhile.` : " Each run starts with a self-test and stops at once if the sandbox is not ready."}`);
+    if (ks.health.disabled && state.me?.role === "admin") { const b = el("button", "ghost small", "Try Kronos again"); b.style.marginLeft = "8px"; b.onclick = async () => { b.disabled = true; try { await api("/api/kronos/rearm", { method: "POST", body: "{}" }); loadKronos(); } catch (e) { showBanner(e.message); b.disabled = false; } }; line.append(b); }
+    host.append(line, el("div", "dim small", "Kronos may influence trades only after 30 scored forecasts with at least 55% direction hits and a Brier score under 0.22. Until then it is information only (the gate is off)."));
+  }
   const bm = sc?.by_model || {};
   if (Object.keys(bm).length) host.append(el("div", "small", Object.entries(bm).map(([k, v]) => `${k}: ${v.n} scored, ${v.hit_rate}% direction hits, Brier ${v.brier}`).join("  ·  ")));
   host.append(el("p", "dim small", "Two models. Kronos runs in the agent's sandbox (minutes, costs a session). The built-in forecast runs instantly and free in the app: it resamples blocks of this symbol's own past returns (a bootstrap), so it is an honest baseline with no opinion beyond recent drift and volatility. When a Kronos run fails, the row shows why and falls back to the built-in forecast so the chart still gets a band. Kronos is only worth its cost if its track record beats the built-in one."));

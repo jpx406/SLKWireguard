@@ -3,6 +3,7 @@
 // manager, giving a 5-tier rating (Buy / Overweight / Hold / Underweight / Sell). The trader-* skills stay the
 // intraday desk; this is the slower, multi-day second opinion on a name, run on demand or on the top picks of
 // the full scan. The LLM calls run in the sandbox with the ANTHROPIC_API_KEY credential from the vault.
+import { stampPrice } from "./deepscore";
 import type { Env } from "./env";
 import { client, configContext, createSession, deleteFile, uploadText } from "./agent";
 import { capBlocks, isEngine, recordSpend } from "./cost";
@@ -51,13 +52,15 @@ End your answer with ONE fenced \`\`\`json block (nothing after it):
  "summary": "3-4 sentences: the portfolio manager's decision and the reasons that carried it",
  "bull_case": "the bull researcher's strongest points, 2-3 sentences",
  "bear_case": "the bear researcher's strongest points, 2-3 sentences",
- "trader_action": "Buy | Hold | Sell",
+ "trader_action": "Buy | Hold | Sell | Short",
+ "position_note": "one sentence in the manager's words: full position, a staged size such as '35-40% of a normal position', or 'stay in cash / avoid entry'",
  "entry": 131.25, "stop": 124.0, "targets": [140.0, 148.0], "horizon_days": 5,
  "risks": ["one line each"],
  "analysts_run": ["market","news","fundamentals","sentiment"],
  "report_path": "/workspace/ta/results/..../complete_report.md"
 }
-Numbers come from the reports (null when the reports give none; never invented).`;
+Numbers come from the reports (null when the reports give none; never invented).
+trader_action "Sell" means exit or stay out of a long; write "Short" ONLY when the report recommends opening a short position. Finish every sentence: never cut a note off mid-phrase.`;
 
 /** The instructions the sandbox agent follows for one deep run. */
 export function deepPrompt(symbol: string, date: string, rawConfig: string, engine: { deep: string; quick: string; effort: string }, extras: { portfolio: boolean; memory: boolean }) {
@@ -168,6 +171,7 @@ export async function finalizeDeep(env: Env) {
         for (const f of (() => { try { return JSON.parse(r.files || "[]") as string[]; } catch { return []; } })()) await deleteFile(env, f);
         await env.DB.prepare("UPDATE deep_runs SET status = ?, content = ?, data = ?, rating = ?, cost = ?, error = ?, finished_at = datetime('now') WHERE id = ?")
           .bind(status, content, data ? JSON.stringify(data) : null, (data?.rating as string | null) ?? null, cost, error, r.id).run();
+        if (status === "done" && data?.rating) await stampPrice(env.DB, r.id, r.symbol); // the price this rating was made at, for the scorecard
       };
       if (idleReason === "requires_action") {
         const pending = [...asks].filter((x) => !answered.has(x));

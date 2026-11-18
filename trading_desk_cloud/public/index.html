@@ -20,6 +20,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/invest.css">
 <script src="/vendor/lightweight-charts.standalone.production.js"></script>
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/purify.min.js"></script>
@@ -51,6 +52,7 @@
   <nav class="panel sidebar" aria-label="Sections">
     <div class="nav-list">
       <button type="button" class="nav-item" data-section="dashboard"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span>Dashboard</span></button>
+      <button type="button" class="nav-item" data-section="invest"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v18M7 8l5-5 5 5"/><path d="M5 21h14"/></svg><span>Invest</span></button>
       <button type="button" class="nav-item" data-section="master"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="7" width="20" height="10" rx="5"/><circle cx="16" cy="12" r="3"/></svg><span>Auto Trader</span></button>
       <button type="button" class="nav-item" data-section="quant"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M13 15h4"/></svg><span>Quant Terminal</span></button>
       <button type="button" class="nav-item" data-section="chart"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></svg><span>Chart</span></button>
@@ -206,6 +208,10 @@
       </div>
       <div id="flow" class="board-inner"><div class="dim">Loading…</div></div>
     </div>
+    <div class="pane board" data-section="invest" aria-label="Invest: what to buy, from everything the desk knows">
+      <div class="pane-toolbar"><h2 class="pane-title">Invest</h2><span class="dim small" id="investNote"></span><span class="spacer"></span><button type="button" class="ghost small" id="investRefresh">Refresh</button></div>
+      <div id="invest" class="board-inner"><div class="dim">Loading…</div></div>
+    </div>
     <div class="pane board" data-section="thesis" aria-label="Research: thesis tracker and price watches">
       <div class="pane-toolbar"><h2 class="pane-title">Research</h2>
         <form id="thesisForm" class="inline row gap"><input id="thSym" class="sym-input mono" placeholder="SYMBOL" maxlength="15" required aria-label="Symbol for a new thesis">
@@ -252,6 +258,10 @@
     <div class="pane" data-section="journal" aria-label="Journal">
       <div class="pane-toolbar"><h2 class="pane-title">Journal</h2></div>
       <div class="journal">
+          <h3 class="jr-h">Closed paper trades <span class="dim small">logged automatically, newest first</span></h3>
+          <div id="tradeLogStats" class="stats jr-stats" aria-label="Summary of closed paper trades"></div>
+          <div id="tradeLog" class="jr-log"><div class="dim small pad">Loading…</div></div>
+          <h3 class="jr-h">Manual entries <span class="dim small">trades you made elsewhere and type in yourself</span></h3>
           <form id="tradeForm" class="trade-form">
             <input name="date" type="date">
             <input name="symbol" placeholder="Sym" maxlength="15" required>
@@ -289,6 +299,7 @@
         <button type="button" class="more-item" data-section="strat"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20h18"/><path d="M6 16V9M6 6V4M6 9h0"/><rect x="4.5" y="6" width="3" height="6" rx="0.5"/><rect x="10.5" y="9" width="3" height="7" rx="0.5"/><path d="M12 9V6M12 19v-3"/><rect x="16.5" y="4" width="3" height="8" rx="0.5"/><path d="M18 4V2M18 15v-3"/></svg><span>TV Strategies</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="ml"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M7 7l3 4M7 17l3-4M14 11l3-4M14 13l3 4"/></svg><span>ML Signals</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="flow"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7h12"/><path d="M3 12h18"/><path d="M3 17h8"/><path d="m17 5 2 2-2 2"/><path d="m13 15 2 2-2 2"/></svg><span>Options Flow</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
+        <button type="button" class="more-item" data-section="invest"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v18M7 8l5-5 5 5"/><path d="M5 21h14"/></svg><span>Invest</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="thesis"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l1 4H8z"/><path d="M8 7h8v13a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1z"/><path d="M11 11h2M11 15h2"/></svg><span>Research</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-section="kronos"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M14 7h3v3" /><path d="M3 21h18" stroke-dasharray="2 2"/></svg><span>Kronos</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
         <button type="button" class="more-item" data-action="help"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h.01"/></svg><span>Help &amp; Skills</span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -645,6 +656,8 @@
 <script src="/board.js"></script>
 <script src="/app.js"></script>
 <script src="/paper.js"></script>
+<script src="/journal.js"></script>
+<script src="/ops.js"></script>
 <script src="/passkey.js"></script>
 <script src="/deep.js"></script>
 <script src="/winners.js"></script>
@@ -665,6 +678,8 @@
 <script src="/quant.js"></script>
 <script src="/pairs.js"></script>
 <script src="/master.js"></script>
+<script src="/config.js"></script>
+<script src="/invest.js"></script>
 <script src="/live.js"></script>
 </body>
 </html>

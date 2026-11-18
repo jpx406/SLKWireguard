@@ -67,6 +67,24 @@ function ladder(p) {
   return g;
 }
 
+/** Reward / risk of one pick from its own levels; null when a level is missing or on the wrong side of the entry.
+ *  (The server normalises picks the same way; this covers results that come straight from a Copilot answer.) */
+function pickRR(p) {
+  const e = nv(p.entry), s = nv(p.stop), t = nv((p.targets || [])[0] ?? p.target);
+  if (e === null || s === null || t === null || e === s) return null;
+  const sg = /short|sell|bear/i.test(p.bias || "") ? -1 : /long|buy|bull/i.test(p.bias || "") ? 1 : s < e ? 1 : -1, risk = (e - s) * sg, reward = (t - e) * sg;
+  return risk > 0 && reward > 0 ? reward / risk : null;
+}
+/** "Showing the scan from Oct 30, 19 days ago" when the brief on the board is not from today (New York date). */
+function scanAgeNote(b) {
+  const today = (typeof state !== "undefined" && state.briefData?.ny_date) || new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+  if (!b?.day || !/^\d{4}-\d{2}-\d{2}$/.test(b.day) || b.day >= today) return null;
+  const days = Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${b.day}T12:00:00Z`)) / 86400000);
+  const when = new Date(`${b.day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC", ...(b.day.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) });
+  const n = el("div", `scan-age${days >= 2 ? " old" : ""}`); n.setAttribute("role", "status");
+  n.append(el("b", null, `Showing the ${b.slot === "fullscan" ? "scan" : "brief"} from ${when}, ${days === 1 ? "1 day ago" : `${days} days ago`}.`), ` Prices, levels and picks are from that day, not today.${b.slot === "fullscan" ? " Run Full Scan for a current one." : ""}`);
+  return n;
+}
 const briefTime = (b) => (b?.created_at ? Date.parse(b.created_at.replace(" ", "T") + "Z") / 1000 : null);
 
 function planPick(p) {
@@ -85,7 +103,8 @@ function picksTable(picks, { compact = false, time = null } = {}) {
     : [["#", "rank"], ["Symbol", "symbol"], ["Bias", "bias"], ["Setup", "setup"], ["Score", "score"], ["Conf.", "confidence"], ["Catalyst", "catalyst"],
        ["PM %", "premarket_change_pct"], ["RVOL", "rvol"], ["Entry", "entry"], ["Stop", "stop"], ["T1", "t1"], ["T2", "t2"], ["R:R", "rr"], ["Size", "size_shares"]];
   const rows = picks.map((p, i) => ({ ...p, _t: time, rank: nv(p.rank) ?? i + 1, t1: (p.targets || [])[0], t2: (p.targets || [])[1],
-    rr: nv(p.rr) ?? (nv(p.entry) !== null && nv(p.stop) !== null && (p.targets || [])[0] != null ? Math.abs(p.targets[0] - p.entry) / Math.abs(p.entry - p.stop || 1) : null) }));
+    // R:R of THIS row from its own entry, stop and first target (not the one figure a plan states for all its rows).
+    rr: pickRR(p) }));
   let sortKey = "rank", asc = true;
   const table = el("table", "bd-table"), thead = el("thead"), tbody = el("tbody"), hr = el("tr");
   for (const [label, key] of cols) {
@@ -98,9 +117,10 @@ function picksTable(picks, { compact = false, time = null } = {}) {
     const v = p[key];
     if (key === "symbol") {
       const td = el("td", "sym"); td.append(el("b", null, String(v || "?").toUpperCase()));
-      if (p.horizon === "swing") td.append(el("span", "pill swing", "swing"));
+      // A space between the ticker and each badge, so copied or read-aloud text is "UPBD swing", never "UPBDSWING".
+      if (p.horizon === "swing") td.append(" ", el("span", "pill swing", "swing"));
       const dr = typeof state !== "undefined" && state.deep?.ratings?.[String(v || "").toUpperCase()];
-      if (dr && typeof ratingBadge === "function") td.append(ratingBadge(dr.rating));
+      if (dr && typeof ratingBadge === "function") { const rb = ratingBadge(dr.rating); rb.title ||= `Deep Analysis rating: ${dr.rating}`; td.append(" ", rb); }
       if (p.name && !compact) td.append(el("div", "dim tiny", p.name)); return td;
     }
     if (key === "bias") return el("td", biasCls(v), String(v || "—"));
@@ -176,6 +196,7 @@ function renderBoard(host, b) {
   head.append(el("span", "dim small", `${b.day} · ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${b.cost ? ` · ${formatCost(b.cost)}` : ""}`));
   if (b.status !== "done") head.append(el("span", `pill ${b.status}`, b.status === "error" ? "error" : "working…"));
   host.append(head);
+  const age = scanAgeNote(b); if (age) host.append(age);
   if (b.error) host.append(el("div", "msg err small", b.error));
   if (m.summary) host.append(el("p", "bd-summary", m.summary));
   const used = b.filters || d.filters;

@@ -17,6 +17,7 @@ async function loadDeep() {
   state.deep.runs = d.runs; state.deep.ratings = d.ratings || {}; state.deep.ready = d.ready;
   $("#deepNote").textContent = !d.ready ? (d.vault ? "Agent not configured." : "Needs setup: run setup/setup-agent.mjs again to add the sandbox credential (VAULT_ID).")
     : d.deep_min_score ? `Autopilot: every pick scoring ≥ ${d.deep_min_score} after any brief (max ${d.deep_max_per_brief} per brief)` : "On demand";
+  state.deep.scorecard = d.scorecard || null;
   renderDeep();
   if (d.runs.some((r) => r.status === "running" || r.status === "starting")) { clearTimeout(state.deep.timer); state.deep.timer = setTimeout(loadDeep, 30000); }
 }
@@ -25,6 +26,18 @@ function renderDeep() {
   const host = $("#deep"); host.innerHTML = "";
   const intro = el("p", "dim small", "TradingAgents (TauricResearch, MIT) runs four analysts (market, news, fundamentals, sentiment), a bull-vs-bear debate, a trader, a risk desk and a portfolio manager on one ticker, and ends with a 5-tier rating. It is a slower, multi-day second opinion; your trader-* skills stay the intraday desk. A run takes 5-15 minutes and about 15 model calls.");
   host.append(intro);
+  // Scorecard: were the ratings right 5, 10 and 20 sessions later? It decides how much weight a Deep Analysis plan gets.
+  const sc = state.deep.scorecard;
+  if (sc) {
+    const box = el("section", "deep-score"); box.append(el("h3", "small", `Scorecard: ${sc.scored} of ${sc.runs} ratings checked so far`));
+    const g = el("div", `msg ${sc.gate.mult >= 1 ? "ok" : sc.gate.mult <= 0 ? "err" : "sys"} small`); g.append(el("b", null, sc.gate.mult >= 1 ? "Full size · " : sc.gate.mult <= 0 ? "Not auto-traded · " : "Half size · "), sc.gate.text); box.append(g);
+    if (sc.by.length) { const t = el("table", "grid small"); t.setAttribute("aria-label", "Hit rate by rating"); const h = el("tr"); for (const x of ["Rating", "Runs", "Right after 5 sessions", "after 10", "after 20", "Average move after 5"]) h.append(el("th", null, x)); t.append(h);
+      const cell = (c) => (c.n ? `${c.hit_pct}% of ${c.n}` : "—");
+      for (const r of sc.by) { const tr = el("tr"); tr.append(el("td", null, r.rating), el("td", "num", String(r.runs)), el("td", "num", cell(r.d5)), el("td", "num", cell(r.d10)), el("td", "num", cell(r.d20)), el("td", `num ${r.d5.avg_pct > 0 ? "up" : r.d5.avg_pct < 0 ? "down" : ""}`, r.d5.avg_pct == null ? "—" : `${r.d5.avg_pct > 0 ? "+" : ""}${r.d5.avg_pct}%`)); t.append(tr); }
+      const w = el("div", "table-wrap"); w.style.overflowX = "auto"; w.append(t); box.append(w); }
+    box.append(el("div", "dim small", `${sc.note} An order from a rating also needs the manager and the trader to agree: "Sell" closes or blocks a long and is a short only when the trader says Short and the manager does not say cash.`));
+    host.append(box);
+  }
   if (!state.deep.runs.length) { host.append(el("div", "bd-empty", "No deep analyses yet. Type a symbol above and click Run Deep Analysis, or use the Deep Analysis button on a recommendation.")); return; }
   const sec = section(`Runs (${state.deep.runs.length})`);
   sec.append(table(["Symbol", "Date", "Rating", "Conf.", "Trader", "Entry", "Stop", "Targets", "Days", "Status", "Cost", ""], state.deep.runs.flatMap((r) => {

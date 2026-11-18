@@ -8,8 +8,10 @@
    study) and volume confirmation (a spike of 1.3x the 20-bar average adds a star). Strength is 1-3 stars. */
 
 const SIGNAL_LABELS = {
-  hammer: "Hammer", bullishHammer: "Bull Hammer", bearishHammer: "Bear Hammer",
-  invertedHammer: "Inv. Hammer", bullishInvertedHammer: "Bull Inv. Hammer", bearishInvertedHammer: "Bear Inv. Hammer",
+  // A hammer or inverted hammer is a BULLISH reversal whatever the colour of its body. The pattern library names the
+  // colour variants "bullish…" / "bearish…" after the body, so the label names the candle colour, not a direction.
+  hammer: "Hammer", bullishHammer: "Hammer (green candle)", bearishHammer: "Hammer (red candle)",
+  invertedHammer: "Inv. Hammer", bullishInvertedHammer: "Inv. Hammer (green candle)", bearishInvertedHammer: "Inv. Hammer (red candle)",
   bullishEngulfing: "Bull Engulfing", bearishEngulfing: "Bear Engulfing", bullishHarami: "Bull Harami", bearishHarami: "Bear Harami",
   bullishKicker: "Bull Kicker", bearishKicker: "Bear Kicker", hangingMan: "Hanging Man", shootingStar: "Shooting Star",
   piercingLine: "Piercing Line", darkCloudCover: "Dark Cloud", doji: "Doji", morningStar: "Morning Star", eveningStar: "Evening Star",
@@ -18,6 +20,14 @@ const SIGNAL_LABELS = {
   bullishSpinningTop: "Bull Spinning Top", bearishSpinningTop: "Bear Spinning Top", tweezersTop: "Tweezers Top", tweezersBottom: "Tweezers Bottom",
   ...(window.TDCandles ? window.TDCandles.LABELS : {}),
 };
+/** The label of a signal, never contradicting its direction: a "Bear …" name on a bullish signal (or the reverse)
+ *  means the word describes the candle's colour, so it is reworded. The arrow always comes from the direction. */
+function signalLabel(pattern, dir) {
+  const l = SIGNAL_LABELS[pattern] || pattern, m = /^(Bear|Bull) (.+)$/.exec(l);
+  if (m && ((m[1] === "Bear" && dir === "bullish") || (m[1] === "Bull" && dir === "bearish"))) return `${m[2]} (${m[1] === "Bear" ? "red" : "green"} candle)`;
+  return l;
+}
+const signalArrow = (dir) => (dir === "bearish" ? "▼" : dir === "bullish" ? "▲" : "•");
 // Variants that only restate a parent pattern (the generic one already fires); skipped to avoid double markers.
 const SIGNAL_SKIP = new Set(["hammer", "invertedHammer", "marubozu", "spinningTop", "bullishSpinningTop", "bearishSpinningTop"]);
 // Weak, very frequent patterns: not drawn on the chart or notified by default (they still count in the feed when
@@ -116,7 +126,7 @@ function createSignalEngine(opts = {}) {
         }
         const volume = models.volume && X ? X.volumeSpike(done, h.endIdx) : false;
         const strength = 1 + (h.fits ? 1 : 0) + (volume ? 1 : 0);
-        const sig = { key, time: bar.time, price: bar.close, pattern: h.pattern, label: SIGNAL_LABELS[h.pattern] || h.pattern, dir: h.dir,
+        const sig = { key, time: bar.time, price: bar.close, pattern: h.pattern, label: signalLabel(h.pattern, h.dir), dir: h.dir,
           fit: h.fit, trend: h.trend, bars: h.bars, volume, strength, strong: SIGNAL_STRONG.has(h.pattern), model: h.model,
           low: Math.min(...done.slice(h.endIdx - h.bars + 1, h.endIdx + 1).map((b) => b.low)), high: Math.max(...done.slice(h.endIdx - h.bars + 1, h.endIdx + 1).map((b) => b.high)) };
         seen.set(key, sig); fresh.push(sig);
@@ -151,7 +161,7 @@ function renderSignalFeed(host, signals, { fmtTime, fmtPrice, limit = 8, onPick,
     const stars = s.strength >= 3 ? "★★" : s.strength === 2 ? "★" : "";
     const st = stats?.[s.pattern];
     const hist = st && st.n >= 15 ? `<span class="hist ${st.verdict}" title="This pattern on this chart: ${st.n} past signals, ${st.win_rate}% wins, ${st.avg_r >= 0 ? "+" : ""}${st.avg_r}R (walk-forward)">${Math.round(st.win_rate)}%</span>` : "";
-    chip.innerHTML = `<b>${s.dir === "bearish" ? "▼" : s.dir === "bullish" ? "▲" : "•"} ${s.label}</b>${stars ? ` <span class="stars">${stars}</span>` : ""}${hist} <span class="mono">${fmtPrice ? fmtPrice(s.price) : s.price}</span> <span class="dim">${fmtTime ? fmtTime(s.time) : ""}</span>`;
+    chip.innerHTML = `<b>${signalArrow(s.dir)} ${s.label}</b>${stars ? ` <span class="stars">${stars}</span>` : ""}${hist} <span class="mono">${fmtPrice ? fmtPrice(s.price) : s.price}</span> <span class="dim">${fmtTime ? fmtTime(s.time) : ""}</span>`;
     if (st?.verdict === "bad") chip.classList.add("unreliable");
     chip.title = `${s.label} (${s.dir}, ${s.model} model) on the ${s.bars}-bar pattern ending ${fmtTime ? fmtTime(s.time) : s.time}${s.trend ? `, after a ${s.trend}` : ""}.` +
       ` Strength ${s.strength}/3: ${[s.trend && ((s.dir === "bullish" && s.trend === "downtrend") || (s.dir === "bearish" && s.trend === "uptrend")) ? "trend fits" : "trend neutral", s.volume ? "volume spike" : "normal volume"].join(", ")}.`;

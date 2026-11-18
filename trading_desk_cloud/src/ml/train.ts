@@ -8,7 +8,7 @@
 //     TRAINING period, never the validation period, so the validation numbers are untouched until the final score.
 //  4. A model may drive trades only if its confident calls beat the base rate by a margin on enough validation
 //     signals and made money after costs. Otherwise it is shown but marked as having no proven edge.
-import { CLASSES, FEATURES, SIGNAL_EXTRA, WARMUP, featureRows, labelAt, type Bar, type LabelSpec } from "./features";
+import { CLASSES, FEATURES, SIGNAL_FEATURES, WARMUP, featureRows, labelAt, type Bar, type LabelSpec } from "./features";
 import { K, fitTemperature, gbdtLogits, gbdtPredict, mlpLogits, mlpPredict, trainGbdt, trainMlp, type GbdtJson, type MlpJson } from "./models";
 
 export type Profile = { id: "swing" | "intraday"; interval: "1d" | "60m"; days: number; label: LabelSpec; title: string };
@@ -115,14 +115,32 @@ export function trainAll(profile: Profile, samples: Sample[], o: { threshold?: n
 // Meta-labelling: the desk's candle signals are the primary strategy; the models learn which of them tend to fail.
 // A signal's score is P(win) - P(loss). The cut points come from the held-out slice of the training period; how
 // the slices actually performed is measured on the validation period. Result in R (multiples of the risk taken).
+// The label is the REALIZED R of the trade at a FIXED horizon, not "win / loss": the signal is entered at its bar's
+// close with the live stop rule (the pattern's stop, never closer than the exit policy's share of the daily ATR)
+// and the live target, and is closed at the latest after a fixed number of bars (24 five-minute bars = 2 hours for
+// stocks, 12 one-hour bars for crypto; learn.ts walkSignalExit). `r` is that result after costs. Signals whose fixed
+// window had not finished when the data ended are not used. The three classes only bin that R for the classifiers:
+// 2 = at least +0.5R, 0 = at most -0.5R, 1 = in between; every score, grade and report is measured in R itself.
 export type FilterSample = { t: number; end: number; sym: string; x: number[]; r: number; y: number };
 export const outcomeClass = (r: number) => (r >= 0.5 ? 2 : r <= -0.5 ? 0 : 1);
 export type Slice = { n: number; avg_r: number | null; win_rate: number | null };
+/** Expectancy of a set of results in R with its sampling error: `low` = mean − 1.96 × SE (null under 2 results). */
+export type Expect = { n: number; avg_r: number | null; se: number | null; low: number | null };
+export function expectOf(rs: number[]): Expect {
+  const n = rs.length; if (!n) return { n, avg_r: null, se: null, low: null };
+  const mean = rs.reduce((a, b) => a + b, 0) / n; if (n < 2) return { n, avg_r: r4(mean), se: null, low: null };
+  const se = Math.sqrt(rs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) / n); return { n, avg_r: r4(mean), se: r4(se), low: r4(mean - 1.96 * se) };
+}
+export const GRADES = ["A", "B", "C", "skip"] as const;
 export type FilterModel = { features: string[]; patterns: string[]; scaler: Scaler; mlp: MlpJson; gbdt: GbdtJson; winner: ModelJson["winner"]; cuts: { skip: number; good: number; top: number } };
 export type FilterReport = {
   title: string; interval: string; trained_at: number; symbols: number; samples: { train: number; inner: number; valid: number }; period: Report["period"];
   all: Slice; skip: Slice; keep: Slice; good: Slice; top: Slice; by_model: Record<string, { skip: Slice; keep: Slice; top: Slice }>; winner: ModelJson["winner"];
   useful: boolean; reason: string; importance: Report["importance"]; mlp_epochs: number; gbdt_rounds: number; train_ms: number;
+  /** Validation expectancy of each grade on its own (A = top tenth, B = rest of the better half, C = next quarter, skip = worst quarter). */
+  grades?: Record<string, Expect>; label?: string; features?: string[];
+  /** What the fit actually did: passes run and the pass kept (best on the held-out slice), weight updates, boosting rounds run and kept. */
+  fit?: { mlp_passes: number; mlp_best_pass: number; mlp_updates: number; gbdt_rounds_run: number; gbdt_rounds_kept: number; rows: number; features: number };
 };
 const slice = (a: FilterSample[]): Slice => ({ n: a.length, avg_r: a.length ? r4(a.reduce((s, v) => s + v.r, 0) / a.length) : null, win_rate: a.length ? r4(a.filter((v) => v.r > 0).length / a.length) : null });
 export function filterScore(m: FilterModel, x: number[], which: ModelJson["winner"] = m.winner) { const p = predict({ ...m, threshold: 1 } as unknown as ModelJson, x, which); return p[2] - p[0]; }
@@ -136,9 +154,10 @@ export function trainFilter(title: string, interval: string, samples: FilterSamp
   if (o.max_train && train.length > o.max_train) train = train.slice(train.length - o.max_train);
   const scaler = fitScaler(train.map((s) => s.x)), Z = (a: FilterSample[]) => a.map((s) => scale(scaler, s.x)), Y = (a: FilterSample[]) => a.map((s) => s.y);
   const Xt = Z(train), Xi = Z(inner), yt = Y(train), yi = Y(inner);
-  const nn = trainMlp(Xt, yt, Xi, yi, { seed: o.seed ?? 7, epochs: o.fast ? 12 : 60 }), gb = trainGbdt(Xt, yt, Xi, yi, { seed: (o.seed ?? 7) + 4, rounds: o.fast ? 40 : 200 });
+  if (Xt[0].length !== SIGNAL_FEATURES.length) throw new Error(`Signal rows have ${Xt[0].length} features, the model expects ${SIGNAL_FEATURES.length}.`);
+  const nn = trainMlp(Xt, yt, Xi, yi, { seed: o.seed ?? 7, ...FILTER_FIT.mlp, ...(o.fast ? { epochs: 12 } : {}) }), gb = trainGbdt(Xt, yt, Xi, yi, { seed: (o.seed ?? 7) + 4, ...FILTER_FIT.gbdt, ...(o.fast ? { rounds: 40 } : {}) });
   nn.model.T = fitTemperature(Xi.map((x) => mlpLogits(nn.model, x)), yi); gb.model.T = fitTemperature(Xi.map((x) => gbdtLogits(gb.model, x)), yi);
-  const features = [...FEATURES, ...SIGNAL_EXTRA], base = { features, patterns, scaler, mlp: nn.model, gbdt: gb.model, cuts: { skip: 0, good: 0, top: 0 } };
+  const features = [...SIGNAL_FEATURES], base = { features, patterns, scaler, mlp: nn.model, gbdt: gb.model, cuts: { skip: 0, good: 0, top: 0 } };
   const names = ["mlp", "gbdt", "ensemble"] as const, q = (v: number[], f: number) => v.slice().sort((a, b) => a - b)[Math.min(v.length - 1, Math.floor(v.length * f))];
   const built = names.map((n) => { const m: FilterModel = { ...base, winner: n, cuts: { skip: 0, good: 0, top: 0 } }; const si = inner.map((s) => filterScore(m, s.x, n)); m.cuts = { skip: q(si, 0.25), good: q(si, 0.5), top: q(si, 0.9) };
     const sepInner = (slice(inner.filter((_, i) => si[i] > m.cuts.skip)).avg_r ?? 0) - (slice(inner.filter((_, i) => si[i] <= m.cuts.skip)).avg_r ?? 0);
@@ -157,6 +176,15 @@ export function trainFilter(title: string, interval: string, samples: FilterSamp
   const baseSep = sep(Xs), importance = features.map((feature, f) => { const col = Xs.map((r) => r[f]); const perm = Xs.map((r, i) => { const c = r.slice(); c[f] = col[(i * 7919 + 13) % col.length]; return c; }); return { feature, gbdt_gain: r4(gb.model.gain[f]), mlp_drop: r4(Math.max(0, baseSep - sep(perm))) }; }).sort((a, b) => b.gbdt_gain - a.gbdt_gain);
   return { model: m, report: { title, interval, trained_at: Math.floor(Date.now() / 1000), symbols: new Set(S.map((s) => s.sym)).size, samples: { train: train.length, inner: inner.length, valid: valid.length },
     period: { train_from: train[0].t, train_to: train[train.length - 1].t, valid_from: valid[0].t, valid_to: valid[valid.length - 1].t }, all, skip: w.skip, keep: w.keep, good, top: w.top,
-    by_model: Object.fromEntries(built.map((b) => [b.n, part(b)])), winner: win.n, useful, reason, importance, mlp_epochs: nn.epochs, gbdt_rounds: gb.rounds, train_ms: Date.now() - t0 } };
+    by_model: Object.fromEntries(built.map((b) => [b.n, part(b)])), winner: win.n, useful, reason, importance, mlp_epochs: nn.epochs, gbdt_rounds: gb.rounds, train_ms: Date.now() - t0,
+    grades: Object.fromEntries(GRADES.map((g) => [g, expectOf(valid.filter((_, i) => gradeOf(m, sv[i]) === g).map((s) => s.r))])), features,
+    label: `Result in R of each signal traded the desk's way: stop at the pattern's extreme but never closer than the exit policy's share of the daily ATR, the policy's target, and closed after a fixed ${interval === "60m" ? "12 one-hour bars" : "24 five-minute bars (2 hours)"} at the latest, after costs.`,
+    fit: { mlp_passes: nn.epochs, mlp_best_pass: nn.best_epoch, mlp_updates: nn.updates, gbdt_rounds_run: gb.rounds_run, gbdt_rounds_kept: gb.rounds, rows: train.length, features: features.length } } };
 }
+/** How the two filter models are fitted. The signal problem is small and noisy (a few thousand rows, weak signal), so
+ *  the steps are small and early stopping cannot end the fit before a minimum number of passes / rounds. */
+export const FILTER_FIT = {
+  mlp: { epochs: 80, min_epochs: 20, patience: 10, lr: 0.002, batch: 64, dropout: 0.3, decay: 1e-3, hidden: [24, 12] },
+  gbdt: { rounds: 300, min_rounds: 60, patience: 30, lr: 0.03, depth: 3, min_hess: 5 },
+};
 export { WARMUP };

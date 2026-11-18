@@ -17,7 +17,7 @@ async function loadStrat(what = "all") {
     if (!S.catalog || what === "all") await stratCatalog();
     S.busy = true; if (!S.res) renderStrat();
     const jobs = [api(`/api/strategies/run?${stQuery()}&id=${S.sel}&p=${encodeURIComponent(JSON.stringify(S.params[S.sel] || {}))}`)];
-    if (what === "all") jobs.push(api(`/api/strategies/rank?${stQuery()}`), api("/api/tvauto").catch(() => []));
+    if (what === "all") { jobs.push(api(`/api/strategies/rank?${stQuery()}`), api("/api/tvauto").catch(() => [])); stratLoadPromoted(); }
     const key = `${S.symbol}|${S.interval}`; if (S.barsKey !== key) jobs.push(api(`/api/candles/${encodeURIComponent(S.symbol)}?interval=${S.interval}&days=${ST_DAYS[S.interval]}`).then((b) => { S.bars = b.candles || b; S.barsKey = key; }));
     const [res, rank, autos] = await Promise.all(jobs);
     S.res = res; if (rank && rank.rows) S.rank = rank; if (Array.isArray(autos)) S.autos = autos;
@@ -132,6 +132,59 @@ function stratAll(box) {
     const pick = () => { S.sel = x.id; S.tab = "overview"; loadStrat("one"); }; tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } }; return tr; });
   const w = el("div", "bd-table-wrap"); w.append(table(["Strategy", "Last 30%", "Whole period", "Profit factor", "Max drawdown", "Trades", "Now"], trs)); box.append(w);
 }
+/* ---- Promote to rule: a tested strategy stored with its in-sample / out-of-sample numbers; the admin decides. */
+async function stratLoadPromoted() {
+  const S = state.strat;
+  try { S.promoted = await api("/api/strategies/promoted"); S.promotedErr = null; } catch (e) { S.promotedErr = e.message; }
+  if (S.tab === "promoted" && sectionVisible("strat") && (S.view || "tester") === "tester") renderStrat();
+}
+const stIv = (iv) => (iv === "60m" ? "1h" : iv === "1d" ? "1D" : iv);
+const stDirWords = (d) => (d === "both" ? "long + short" : `${d} only`);
+/** The button and its explanation, shown under a tested strategy. */
+function stratPromoteBox(r, def) {
+  const S = state.strat, box = el("div", "st-promote"), go = el("button", "ghost small", "Promote to rule"), note = el("span", "small dim");
+  go.type = "button"; go.setAttribute("aria-label", `Promote ${def.name} on ${S.symbol} to a proposed rule`);
+  const enough = r.out_sample.trades >= 30, positive = r.out_sample.net_pct > 0;
+  note.textContent = enough && positive ? `Saves this test (settings, ${S.symbol}, ${stIv(S.interval)}, ${stDirWords(S.dir)}) as a proposed rule for the admin to approve. Approving does not start trading.`
+    : `Can be saved as a proposal, but it will be marked "not validated" and cannot be approved: ${[!enough ? `the last 30% has ${r.out_sample.trades} trade${r.out_sample.trades === 1 ? "" : "s"} (needs 30 or more)` : "", !positive ? `the last 30% result is not positive (${stPct(r.out_sample.net_pct)})` : ""].filter(Boolean).join(" and ")}.`;
+  go.onclick = async () => {
+    go.disabled = true;
+    try { S.promoted = await api("/api/strategies/promoted", { method: "POST", body: JSON.stringify({ id: S.sel, symbol: S.symbol, interval: S.interval, direction: S.dir, params: r.params || {}, fee: S.fee }) }); S.promotedErr = null; S.tab = "promoted"; renderStrat(); }
+    catch (e) { showBanner(e.message); go.disabled = false; }
+  };
+  box.append(go, note); return box;
+}
+function stratPromoted(box) {
+  const S = state.strat, d = S.promoted, admin = state.me?.role === "admin";
+  box.append(el("p", "small", "Strategies promoted from the tester, each with the numbers it had when it was promoted. First 70% of the history is the in-sample part, the last 30% is the out-of-sample part. Approving a rule records the decision only: it does NOT start any trading by itself. To trade a strategy on paper, use the Auto trade tab."));
+  if (S.promotedErr) { box.append(el("div", "msg err small", S.promotedErr)); return; }
+  if (!d) { box.append(el("div", "dim small", "Loading…")); return; }
+  if (!d.rows.length) { box.append(el("div", "dim small", "Nothing promoted yet. Test a strategy and click Promote to rule on its Overview tab.")); return; }
+  const act = async (fn, btn) => { btn.disabled = true; try { S.promoted = await fn(); } catch (e) { showBanner(e.message); } renderStrat(); };
+  const part = (p) => { const c = td("", "num"); c.append(el("span", stCls(p.net_pct), stPct(p.net_pct)), el("div", "dim tiny", `${p.trades} trade${p.trades === 1 ? "" : "s"}${p.win_rate == null ? "" : ` · ${(p.win_rate * 100).toFixed(0)}% won`}${p.profit_factor == null ? "" : ` · PF ${p.profit_factor >= 99 ? "∞" : p.profit_factor}`}`)); return c; };
+  const rows = d.rows.map((p) => {
+    const tr = el("tr"), nm = td(p.name, "sym"), ps = Object.entries(p.params || {}).map(([k, v]) => `${k} ${v}`).join(", ");
+    nm.append(el("div", "dim tiny", `${p.symbol} · ${stIv(p.interval)} · ${stDirWords(p.direction)}${ps ? ` · ${ps}` : ""}`), el("div", "dim tiny", `by ${p.user} · ${new Date(p.created_at * 1000).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}`));
+    const stc = td("", "small"), label = p.status === "approved" ? "approved" : p.status === "rejected" ? "rejected" : p.validated ? "proposed" : "not validated";
+    stc.append(el("span", `badge ${p.status === "approved" ? "th-up" : p.status === "rejected" || !p.validated ? "th-down" : "muted"}`, label));
+    if (p.status === "proposed" && !p.validated) stc.append(el("div", "tiny warn-text st-why", p.why || "Not validated."));
+    else if (p.status !== "proposed") stc.append(el("div", "dim tiny", `by ${p.decided_by || "admin"}${p.decided_at ? ` · ${new Date(p.decided_at * 1000).toLocaleDateString([], { month: "short", day: "numeric" })}` : ""}${p.status === "approved" ? " · not trading by itself" : ""}`));
+    const ac = td("", "st-pacts");
+    if (admin) {
+      if (p.status !== "approved") { const a = el("button", "ghost small", "Approve"); a.type = "button"; a.setAttribute("aria-label", `Approve ${p.name} on ${p.symbol}`); a.disabled = !p.validated; if (!p.validated) a.title = "Not validated: it cannot be approved."; a.onclick = () => act(() => api(`/api/strategies/promoted/${p.id}/approve`, { method: "POST", body: "{}" }), a); ac.append(a); }
+      if (p.status !== "rejected") { const rj = el("button", "ghost small", "Reject"); rj.type = "button"; rj.setAttribute("aria-label", `Reject ${p.name} on ${p.symbol}`); rj.onclick = () => act(() => api(`/api/strategies/promoted/${p.id}/reject`, { method: "POST", body: "{}" }), rj); ac.append(rj); }
+      const rm = el("button", "ghost small", "Remove"); rm.type = "button"; rm.setAttribute("aria-label", `Remove ${p.name} on ${p.symbol} from the promoted list`);
+      rm.onclick = async () => { if (!(await askConfirm({ title: `Remove ${p.name} on ${p.symbol}?`, message: "It is deleted from the promoted list with its stored test numbers.", confirm: "Remove" }))) return; act(() => api(`/api/strategies/promoted/${p.id}`, { method: "DELETE", body: "{}" }), rm); };
+      ac.append(rm);
+    } else ac.append(el("span", "dim tiny", "admin decides"));
+    const open = el("button", "ghost small", "Open"); open.type = "button"; open.setAttribute("aria-label", `Open ${p.name} on ${p.symbol} in the tester`);
+    open.onclick = () => { if (!S.catalog.some((c) => c.id === p.strategy_id)) { showBanner("That strategy is not in your list (a converted strategy belongs to the user who converted it)."); return; } S.symbol = p.symbol; S.sel = p.strategy_id; S.interval = p.interval; S.dir = p.direction; S.params[p.strategy_id] = p.params; $$("#stratIv button").forEach((x) => x.classList.toggle("on", x.dataset.i === p.interval)); $("#stratDir").value = p.direction; S.rank = null; S.res = null; S.tab = "overview"; loadStrat(); };
+    ac.append(open);
+    tr.append(nm, part(p.in_sample), part(p.out_sample), td(stPct(p.total.net_pct), `num ${stCls(p.total.net_pct)}`), stc, ac); return tr;
+  });
+  const w = el("div", "bd-table-wrap"); w.append(table(["Strategy", "In-sample (first 70%)", "Out-of-sample (last 30%)", "Whole period", "Status", ""], rows)); box.append(w);
+  box.append(el("p", "small dim", `A promotion needs ${d.min_oos_trades} or more out-of-sample trades and a positive out-of-sample result to be approvable. Numbers are frozen at the time of promotion; re-test to see today's.`));
+}
 function stratAuto(box, r, def) {
   const S = state.strat, mine = S.autos.find((a) => a.symbol === S.symbol);
   if (def.converted && !def.verified) { box.append(el("div", "msg err", "This converted strategy has not passed its check against the original Pine script, so it cannot auto-trade. Open it in the Pine runner and run the check on a symbol where it trades at least five times.")); return; }
@@ -178,12 +231,13 @@ function renderStrat() {
   }
   // Tabs
   const tabs = el("div", "st-tabs"); tabs.setAttribute("role", "tablist");
-  for (const [k, label] of [["overview", "Overview"], ["performance", "Performance"], ["analysis", "Trades analysis"], ["trades", "List of trades"], ["all", "All strategies"], ["auto", `Auto trade${S.autos.length ? ` (${S.autos.filter((a) => a.enabled).length})` : ""}`]]) {
+  for (const [k, label] of [["overview", "Overview"], ["performance", "Performance"], ["analysis", "Trades analysis"], ["trades", "List of trades"], ["all", "All strategies"], ["promoted", `Promoted${S.promoted?.rows?.length ? ` (${S.promoted.rows.length})` : ""}`], ["auto", `Auto trade${S.autos.length ? ` (${S.autos.filter((a) => a.enabled).length})` : ""}`]]) {
     const b = el("button", S.tab === k ? "on" : "", label); b.type = "button"; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", S.tab === k ? "true" : "false"); b.onclick = () => { S.tab = k; renderStrat(); }; tabs.append(b);
   }
   const pane = el("div", "st-pane"); host.append(tabs, pane);
-  if (!r && S.tab !== "all" && S.tab !== "auto") pane.append(el("div", "dim", S.busy ? "Testing…" : "No result."));
-  else if (S.tab === "overview") stratOverview(pane, r); else if (S.tab === "performance") stratPerformance(pane, r); else if (S.tab === "analysis") stratAnalysis(pane, r); else if (S.tab === "trades") stratTrades(pane, r); else if (S.tab === "all") stratAll(pane); else stratAuto(pane, r, def);
+  if (S.tab === "promoted") stratPromoted(pane);
+  else if (!r && S.tab !== "all" && S.tab !== "auto") pane.append(el("div", "dim", S.busy ? "Testing…" : "No result."));
+  else if (S.tab === "overview") { stratOverview(pane, r); pane.append(stratPromoteBox(r, def)); } else if (S.tab === "performance") stratPerformance(pane, r); else if (S.tab === "analysis") stratAnalysis(pane, r); else if (S.tab === "trades") stratTrades(pane, r); else if (S.tab === "all") stratAll(pane); else stratAuto(pane, r, def);
   host.append(el("p", "dim tiny", "How a test runs: the strategy sees only finished bars and its orders fill on the next bar (market orders at the open, stop orders when price trades through them). The whole account goes into each trade. A backtest is the past: the best of two dozen strategies on old data is partly luck, which is why the most recent 30% is shown on its own. These are the classic public strategy rules; this desk is not affiliated with TradingView. Research, not advice."));
   if (r) requestAnimationFrame(() => { if (cb.isConnected) stratChart(cb, r); }); else cb.append(el("div", "dim small", "Loading the chart…"));
 }

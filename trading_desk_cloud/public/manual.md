@@ -148,6 +148,46 @@ The **Cleanest now** chip is the market radar: every symbol ranked by liquidity,
 
 ---
 
+## 4a. Invest (the simple screen)
+
+**What it is.** One screen that answers "what should I buy today, and how much?" from everything the desk knows. Open **Invest** in the sidebar.
+
+**How to read it.**
+
+- The **headline** is the answer for today: how many ideas qualify, or "nothing qualifies" (doing nothing is a position too). Under it, the state of the market and your account: cash, open positions, risk per trade.
+- Each **card** is one symbol with a verdict: **Buy**, **Small position**, **Wait** or **Avoid**, and a score out of 100 (68 or more is a buy, 58 to 67 a small position).
+- A buy shows the trade the way the desk would place it: about how many shares, where to buy, the stop (2 × the stock's daily range away), the target (3 times the risk), how long to give it, and how many dollars it risks. **Open a paper order with these levels** fills the order ticket for you; nothing is sent until you confirm.
+- **Show every reason** lists each input that speaks for or against, with a tag: *counted*, *small weight* or *shown, not counted*.
+
+**Why some inputs do not count.** Every input has to earn its place with its own results. The daily trend counts because it was the one thing that held up over six years of prices. A scan plan counts fully only when the scans' own replayed record is positive beyond chance; Deep Analysis by its scorecard; Kronos only after 30 scored forecasts with 55% right. Anything unproven is still shown so you can read it, but it cannot push an idea to "Buy". The table at the bottom, **How much each input can be trusted**, shows where each one stands on your own data.
+
+**Limits.** Long side only (shorts lost in every test). It is research on a paper account, not advice, and the screen never places an order by itself. In a rising market many stocks will show "Small position": holding the index is the benchmark they all have to beat.
+
+### Desk limits (one set of numbers)
+
+The blue-edged line on Invest, Paper Trading, Auto Trader, Deep Analysis and the Dashboard is the same sentence everywhere: how many automatic entries a day, how many open at once, the risk per trade, and when new entries stop. The admin presses **Change** to edit them, to switch a part of the desk off (scan routines, copy desk, candle signals, plans, Deep Analysis, strategy auto-trader), or to turn on things that are off until they prove themselves (crypto auto-trading, the Kronos veto, more signal grades).
+
+What the limits do, in plain terms:
+
+- **At most 10 automatic entries a day, 5 open at once, 2 per symbol.** After a stop on a symbol the desk waits 30 minutes before trying it again.
+- **Daily and weekly halt.** If the account is down 1% on the day (3% on the week), no new automatic entries are placed. Open positions keep their stops and targets. Your own manual orders are never blocked.
+- **Breakouts wait.** A plan such as "buy the break above 88.10" no longer buys at 87.40 because that is cheaper. It waits until a 5-minute bar closes above 88.10, and does not chase if the price is already far past it. Pullback plans still buy at the market when the market is below the entry.
+- **No tiny trades.** A trade that would risk less than 0.25% of the account is skipped: it cannot pay for its costs. The Auto Trader row says so and tells you to raise that chart's amount.
+- **Each skip says why.** The note on an Auto Trader row names the filter: opening blackout, blocked pattern, grade not allowed, stop too tight, risk too small, or the risk gate's own reason.
+
+### What else changed after the audit (18 November 2026)
+
+- **Dashboard.** "Paper vs SPY" now also shows the fair comparison: the index scaled to how much of your account was actually invested. A new table, **Results by source**, shows each part of the desk (manual, scan routines, copy desk, candle signals, plans, Deep Analysis, strategies) with trades, win rate, P&L, average R and a verdict; the admin can switch a losing part off right there. Win rates say whether they count closed trades or replayed plans.
+- **Performance.** The failure analyzer no longer calls a group a loser because its win rate is low. A group is a loser only when it has 20 or more plans and even the optimistic end of its average result is below zero. Groups that make money are listed as **kept** and can become an allow-list. A proposal that would leave fewer than 30 trades in the test period is rejected automatically, with the reason. A **Score calibration** panel shows whether higher scores really did better; when they did not, the score threshold is set aside and the allow-list is used.
+- **ML Signals.** Each grade shows its result in the past test next to its live record (signals are logged and scored whether or not they were traded). A grade may trade only after 50 live signals with a positive low end. Old models show "needs retraining": press **Train**.
+- **Deep Analysis.** A scorecard checks every rating 5, 10 and 20 sessions later. Until 10 bullish ratings have been checked, Deep Analysis plans trade at half size; under 45% right they are not traded. "Sell" now means *get out of the long*, not *short it*.
+- **Kronos.** It no longer starts a paid run that cannot finish: it checks the sandbox first, pauses itself after a failure, and shows what it has cost so far. The free built-in forecast answers in the meantime.
+- **Journal.** Every closed paper trade appears automatically with its source, plan, result in R and exit reason; you can add a note to any trade.
+- **TV Strategies.** **Promote to rule** keeps a tested strategy with its in-sample and out-of-sample numbers for the admin to approve or reject. Approval does not start trading by itself.
+- **Quant Terminal.** Trimmed to the panels with real inputs (equity, risk, the win-probability update, the analog matcher, correlation) plus Pairs.
+- **Briefs.** A routine health table (last success, cost, failures in 7 days) and a banner when a routine fails, is skipped or the API spend cap is hit. The Market Board says how old the scan on screen is.
+- **Wording.** Short positions read "Sold short at" and "Cover".
+
 ## 5. Quant Terminal
 
 **What it is.** A dense, always-dark terminal view of the same data, for people who like to see everything at once. It follows the selected symbol.

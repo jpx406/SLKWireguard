@@ -213,25 +213,40 @@ export function wilsonLow(wins: number, n: number) {
   const z = 1.96, p = wins / n, d = 1 + (z * z) / n;
   return Math.max(0, (p + (z * z) / (2 * n) - z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n)) / d);
 }
-type Group = { key: string; n: number; wins: number; win_rate: number | null; ci_low: number | null; avg_r: number | null; profit_factor: number | null; sum_r: number; no_trigger: number; total: number };
-function groupBy(rows: Outcome[], keyOf: (o: Outcome) => string | null): Group[] {
-  const m = new Map<string, Group>();
+/** A group of plans. `avg_r` is the expectancy (mean R per trade); `se_r` its standard error; `r_low` / `r_high` the
+ *  95% range of the expectancy (mean ∓ 1.96 × SE). A group is judged by that range, never by its win rate alone:
+ *  a 34% win rate with 2R winners makes money. With fewer than 2 trades there is no range (null). */
+export type Group = { key: string; n: number; wins: number; win_rate: number | null; ci_low: number | null; avg_r: number | null; se_r: number | null; r_low: number | null; r_high: number | null; profit_factor: number | null; sum_r: number; no_trigger: number; total: number };
+/** A group is called a loser only with at least this many trades AND a 95% upper bound of its expectancy below zero. */
+export const UNDERPERFORM_MIN_N = 20;
+export const emptyGroup =(key: string): Group => ({ key, n: 0, wins: 0, win_rate: null, ci_low: null, avg_r: null, se_r: null, r_low: null, r_high: null, profit_factor: null, sum_r: 0, no_trigger: 0, total: 0 });
+/** Mean, standard error and 95% range of a list of results in R (unrounded; null range under 2 values). */
+export function expectancy(rs: number[]): { n: number; mean: number | null; se: number | null; low: number | null; high: number | null } {
+  const n = rs.length; if (!n) return { n, mean: null, se: null, low: null, high: null };
+  const mean = rs.reduce((a, b) => a + b, 0) / n; if (n < 2) return { n, mean, se: null, low: null, high: null };
+  const se = Math.sqrt(rs.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1) / n);
+  return { n, mean, se, low: mean - 1.96 * se, high: mean + 1.96 * se };
+}
+export function groupBy(rows: Outcome[], keyOf: (o: Outcome) => string | null): Group[] {
+  type Acc = Group & { _gp: number; _gl: number; _rs: number[] };
+  const m = new Map<string, Acc>();
   for (const o of rows) {
     const k = keyOf(o); if (!k) continue;
-    const g = m.get(k) ?? { key: k, n: 0, wins: 0, win_rate: null, ci_low: null, avg_r: null, profit_factor: null, sum_r: 0, no_trigger: 0, total: 0, _gp: 0, _gl: 0 } as Group & { _gp: number; _gl: number };
+    const g = m.get(k) ?? { ...emptyGroup(k), _gp: 0, _gl: 0, _rs: [] };
     g.total++;
     if (o.status === "no_trigger") g.no_trigger++;
     else if (o.r_result !== null && ["win", "loss", "timed"].includes(o.status)) {
-      g.n++; g.sum_r += o.r_result; if (o.r_result > 0) g.wins++;
-      if (o.r_result > 0) (g as Group & { _gp: number }). _gp += o.r_result; else (g as Group & { _gl: number })._gl += -o.r_result;
+      g.n++; g.sum_r += o.r_result; g._rs.push(o.r_result); if (o.r_result > 0) g.wins++;
+      if (o.r_result > 0) g._gp += o.r_result; else g._gl += -o.r_result;
     }
     m.set(k, g);
   }
   return [...m.values()].map((g) => {
-    const gg = g as Group & { _gp: number; _gl: number };
+    const e = expectancy(g._rs), r3 = (v: number | null) => (v === null ? null : Math.round(v * 1000) / 1000);
     const out: Group = { key: g.key, n: g.n, wins: g.wins, total: g.total, no_trigger: g.no_trigger, sum_r: r2(g.sum_r),
       win_rate: g.n ? r2((g.wins / g.n) * 100) : null, ci_low: g.n ? r2(wilsonLow(g.wins, g.n) * 100) : null, avg_r: g.n ? r2(g.sum_r / g.n) : null,
-      profit_factor: gg._gl > 0 ? r2(gg._gp / gg._gl) : g.n && gg._gp > 0 ? 99 : null };
+      se_r: r3(e.se), r_low: r3(e.low), r_high: r3(e.high),
+      profit_factor: g._gl > 0 ? r2(g._gp / g._gl) : g.n && g._gp > 0 ? 99 : null };
     return out;
   }).sort((a, b) => (b.avg_r ?? -9) - (a.avg_r ?? -9));
 }
@@ -241,10 +256,60 @@ export const setupKind = (s: string | null) => { if (!s) return "other"; for (co
 export const scoreBucket = (s: number | null) => (s === null ? "no score" : s >= 80 ? "80-100" : s >= 70 ? "70-79" : s >= 60 ? "60-69" : "under 60");
 export const hourOf = (ts: number) => { const ny = nyNow(new Date(ts * 1000)); const h = Math.floor(ny.minutes / 60); return `${String(h).padStart(2, "0")}:00`; };
 
+// ------------------------------------------------------------------------------------------- score calibration
+/** Spearman rank correlation (ties share their average rank). null when there are fewer than 3 pairs or no spread. */
+export function spearman(xs: number[], ys: number[]): number | null {
+  const n = Math.min(xs.length, ys.length); if (n < 3) return null;
+  const rank = (v: number[]) => { const idx = v.map((_, i) => i).sort((a, b) => v[a] - v[b]), out = new Array<number>(v.length); for (let i = 0; i < idx.length; ) { let j = i; while (j + 1 < idx.length && v[idx[j + 1]] === v[idx[i]]) j++; const avg = (i + j) / 2 + 1; for (let k = i; k <= j; k++) out[idx[k]] = avg; i = j + 1; } return out; };
+  const a = rank(xs.slice(0, n)), b = rank(ys.slice(0, n)), ma = a.reduce((s, v) => s + v, 0) / n, mb = b.reduce((s, v) => s + v, 0) / n;
+  let cov = 0, va = 0, vb = 0; for (let i = 0; i < n; i++) { cov += (a[i] - ma) * (b[i] - mb); va += (a[i] - ma) ** 2; vb += (b[i] - mb) ** 2; }
+  return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : null;
+}
+export type ScoreBin = { label: string; lo: number; hi: number; n: number; avg_r: number | null; sum_r: number; win_rate: number | null };
+const scoreBin = (label: string, ps: { score: number; r: number }[]): ScoreBin => ({ label, lo: ps.length ? Math.min(...ps.map((p) => p.score)) : 0, hi: ps.length ? Math.max(...ps.map((p) => p.score)) : 0, n: ps.length,
+  avg_r: ps.length ? r2(ps.reduce((a, p) => a + p.r, 0) / ps.length) : null, sum_r: r2(ps.reduce((a, p) => a + p.r, 0)), win_rate: ps.length ? r2((ps.filter((p) => p.r > 0).length / ps.length) * 100) : null });
+/** Realized R by score: ten equal-sized groups from the lowest scores to the highest when there are at least 50
+ *  plans (5 per group), otherwise the four score bands. Plans with the same score stay in the same group. */
+export function scoreTable(pairs: { score: number; r: number }[]): { kind: "decile" | "band"; bins: ScoreBin[] } {
+  if (pairs.length < 50) return { kind: "band", bins: ["under 60", "60-69", "70-79", "80-100"].map((k) => scoreBin(k, pairs.filter((p) => scoreBucket(p.score) === k))) };
+  const s = pairs.slice().sort((a, b) => a.score - b.score), groups: { score: number; r: number }[][] = [];
+  // A group closes at each tenth of the list, but never in the middle of a run of equal scores, so no score sits in two groups.
+  let cur: { score: number; r: number }[] = [];
+  for (let i = 0; i < s.length; i++) { cur.push(s[i]); const last = i === s.length - 1; if (last || (i + 1 >= Math.floor(((groups.length + 1) * s.length) / 10) && s[i + 1].score !== s[i].score)) { groups.push(cur); cur = []; } }
+  const bins = groups.filter((g) => g.length).map((g) => { const lo = g[0].score, hi = g[g.length - 1].score; return scoreBin(lo === hi ? `${lo}` : `${lo}-${hi}`, g); });
+  return { kind: "decile", bins };
+}
+export const SCORE_GATE_MIN_N = 30, SCORE_GATE_MIN_RHO = 0.1, SCORE_GATE_PLANS = 100;
+export type ScoreGate = { use_score: boolean; spearman: number | null; n: number; text: string; kind: "decile" | "band"; bins: ScoreBin[] };
+/** Does the plan score rank trades? `pairs` are the last settled plans that had a score (any order). The score
+ *  threshold is used only when the rank correlation between score and realized R is at least 0.1; with fewer than
+ *  30 scored plans there is nothing to judge and the threshold stays as it was. */
+export function scoreGateFrom(pairs: { score: number; r: number }[]): ScoreGate {
+  const n = pairs.length, rho = spearman(pairs.map((p) => p.score), pairs.map((p) => p.r)), t = scoreTable(pairs), rr = rho === null ? null : Math.round(rho * 100) / 100;
+  if (n < SCORE_GATE_MIN_N) return { use_score: true, spearman: rr, n, ...t, text: `Only ${n} settled plan${n === 1 ? " has" : "s have"} a score: too few to tell whether a higher score means a better trade. The score threshold stays in use until there are ${SCORE_GATE_MIN_N}.` };
+  const over = `over the last ${n} plans`;
+  if (rho === null || rho < SCORE_GATE_MIN_RHO) return { use_score: false, spearman: rr, n, ...t, text: `The score does not separate winners from losers (rank correlation ${rr === null ? "not measurable" : rr.toFixed(2)} ${over}): the score threshold is not being used; the allow-list is.` };
+  return { use_score: true, spearman: rr, n, ...t, text: `Higher scores have gone with ${rho < 0.3 ? "slightly " : ""}better results (rank correlation ${rr!.toFixed(2)} ${over}${rho < 0.3 ? ": a weak link" : ""}): the score threshold is in use.` };
+}
+let gateCache: { at: number; gate: ScoreGate } | null = null;
+/** The score gate on the desk's own record: the last 100 settled plans that had a score. Cached two minutes. */
+export async function scoreGate(db: D1Database, fresh = false): Promise<ScoreGate> {
+  if (!fresh && gateCache && Date.now() - gateCache.at < 120_000) return gateCache.gate;
+  await ensureLearn(db);
+  const rows = (await db.prepare(`SELECT score, r_result FROM pick_outcomes WHERE symbol != '-' AND status IN ('win','loss','timed') AND r_result IS NOT NULL AND score IS NOT NULL
+    ORDER BY COALESCE(exit_at, created_at) DESC LIMIT ${SCORE_GATE_PLANS}`).all<{ score: number; r_result: number }>()).results;
+  const gate = scoreGateFrom(rows.map((o) => ({ score: Number(o.score), r: Number(o.r_result) })));
+  gateCache = { at: Date.now(), gate }; return gate;
+}
+
 export async function learnSummary(db: D1Database, days = 90) {
   await ensureLearn(db);
   const since = nowS() - days * 86400;
   const rows = (await db.prepare("SELECT * FROM pick_outcomes WHERE symbol != '-' AND created_at >= ? ORDER BY created_at").bind(since).all<Outcome>()).results;
+  return summarizeRows(rows, days);
+}
+/** The statistics of a set of plans (pure: the rows come from the caller, in time order). */
+export function summarizeRows(rows: Outcome[], days = 90) {
   const settled = rows.filter((o) => ["win", "loss", "timed"].includes(o.status) && o.r_result !== null);
   const all = groupBy(rows, () => "all")[0] ?? null;
   // Walk-forward equity in R (1R risked per triggered plan, in time order) and its drawdown.
@@ -259,7 +324,7 @@ export async function learnSummary(db: D1Database, days = 90) {
     symbol: groupBy(rows, (o) => o.symbol).filter((g) => g.n >= 3).slice(0, 15),
     regime: groupBy(rows, (o) => o.regime || null),
   };
-  const calibration = ["under 60", "60-69", "70-79", "80-100"].map((k) => groups.score.find((g) => g.key === k) ?? { key: k, n: 0, wins: 0, win_rate: null, ci_low: null, avg_r: null, profit_factor: null, sum_r: 0, no_trigger: 0, total: 0 });
+  const calibration = ["under 60", "60-69", "70-79", "80-100"].map((k) => groups.score.find((g) => g.key === k) ?? emptyGroup(k));
   return {
     days, picks: rows.length, settled: settled.length, open: rows.filter((o) => o.status === "open").length, pending: rows.filter((o) => o.status === "pending").length,
     no_trigger: rows.filter((o) => o.status === "no_trigger").length, all, curve, max_drawdown_r: r2(dd), total_r: r2(cum),
@@ -295,15 +360,18 @@ export async function buildPlaybook(db: D1Database): Promise<Playbook> {
   for (const [dim, gs] of Object.entries(sum.groups)) {
     for (const g of gs) {
       if (g.n < minN) continue;
-      const line = `${name[dim]} ${g.key}: ${g.n} trades, ${g.win_rate}% wins (95% CI low ${g.ci_low}%), ${g.avg_r! >= 0 ? "+" : ""}${g.avg_r}R per trade`;
-      if (g.avg_r! >= 0.25 && g.ci_low! >= 35) works.push(line);
-      else if (g.avg_r! <= -0.15 || (g.ci_low! < 25 && g.win_rate! < 40)) avoid.push(line);
+      const line = `${name[dim]} ${g.key}: ${g.n} trades, ${g.win_rate}% wins, ${g.avg_r! >= 0 ? "+" : ""}${g.avg_r}R per trade (95% range ${g.r_low ?? "?"}R to ${g.r_high ?? "?"}R), ${g.sum_r}R total`;
+      // Judged by expectancy, never by win rate alone: a low win rate with large winners makes money.
+      if (g.avg_r! >= 0.25 && g.sum_r > 0) works.push(line);
+      else if (g.n >= UNDERPERFORM_MIN_N && g.r_high !== null && g.r_high < 0) avoid.push(line);
     }
   }
   for (const g of paper.by_signal) { if (g.n >= minN) (g.avg_r !== null && g.avg_r >= 0.25 ? works : g.avg_r !== null && g.avg_r <= -0.15 ? avoid : []).push(`chart-autopilot signal ${g.key}: ${g.n} trades, ${g.win_rate}% wins, ${g.avg_r! >= 0 ? "+" : ""}${g.avg_r}R`); }
   // Lowest score bucket that still pays, with enough samples.
   let minScore: number | null = null;
-  for (const [k, v] of [["under 60", 0], ["60-69", 60], ["70-79", 70], ["80-100", 80]] as [string, number][]) {
+  // Only while the score actually ranks trades (see scoreGate); otherwise no score advice is given.
+  let gate: ScoreGate | null = null; try { gate = await scoreGate(db); } catch { gate = null; }
+  if (!gate || gate.use_score) for (const [k, v] of [["under 60", 0], ["60-69", 60], ["70-79", 70], ["80-100", 80]] as [string, number][]) {
     const g = sum.calibration.find((x) => x.key === k); if (g && g.n >= minN && (g.avg_r ?? -1) > 0) { minScore = v; break; }
   }
   const trig = sum.all && sum.all.total ? Math.round(((sum.all.total - sum.all.no_trigger) / sum.all.total) * 100) : null;
@@ -312,6 +380,7 @@ export async function buildPlaybook(db: D1Database): Promise<Playbook> {
     works.length ? `WHAT WORKS (keep doing, size normally): ${works.join("; ")}.` : "WHAT WORKS: not enough settled trades yet to single anything out.",
     avoid.length ? `WHAT DOES NOT (skip or cut the score): ${avoid.join("; ")}.` : "",
     minScore !== null ? `Scores of ${minScore}+ have paid so far; be stricter below that.` : "",
+    gate && !gate.use_score ? `Score check: ${gate.text}` : "",
     `Every group above has at least ${minN} trades; ${sum.tests} groups were examined, so treat a single group's edge as provisional (multiple comparisons).`,
   ].filter(Boolean);
   const pb: Playbook = { at: nowS(), text: lines.join("\n"), min_score: minScore, works, avoid, n: sum.settled };
@@ -329,7 +398,22 @@ export async function playbookPrompt(db: D1Database): Promise<string> {
 // ------------------------------------------------------------------------------------------- pattern reliability
 const HOLD_BARS: Record<string, number> = { "5m": 24, "15m": 16, "60m": 12, "1d": 10 };
 const LOOKBACK: Record<string, number> = { "5m": 30, "15m": 59, "60m": 240, "1d": 730 };
-export type SignalTrade = { time: number; pattern: string; label: string; dir: string; strength: number; entry: number; stop: number; target: number; exit: number; exit_time: number; r: number; reason: "stop" | "target" | "time"; oos: boolean };
+/** The exit of one candle-signal trade entered at the close of bar `index`: the first later bar that touches the
+ *  stop (stop wins when one bar touches both) or the target, otherwise the close of the last bar of a FIXED hold of
+ *  `hold` bars. `complete` is false when the bars end before the trade is decided (still open). Shared by the
+ *  backtest, the ML filter's labels and the settlement of logged live signals, so all three use one exit rule. */
+export function walkSignalExit(bars: Bar[], index: number, long: boolean, entry: number, stop: number, target: number, hold: number): { exit: number; reason: "stop" | "target" | "time"; exit_time: number; j: number; complete: boolean } {
+  let exit = entry, reason: "stop" | "target" | "time" = "time", exitT = bars[index].time, j = index + 1;
+  for (; j < Math.min(bars.length, index + 1 + hold); j++) {
+    const b = bars[j];
+    if (long ? b.low <= stop : b.high >= stop) { exit = long ? Math.min(stop, b.open) : Math.max(stop, b.open); reason = "stop"; exitT = b.time; break; }
+    if (long ? b.high >= target : b.low <= target) { exit = long ? Math.max(target, b.open) : Math.min(target, b.open); reason = "target"; exitT = b.time; break; }
+    exit = b.close; exitT = b.time;
+  }
+  return { exit, reason, exit_time: exitT, j, complete: reason !== "time" || index + hold < bars.length };
+}
+/** `span` = how many bars the pattern covers, `trend` = the trend it formed in (both from the detector). */
+export type SignalTrade = { time: number; pattern: string; label: string; dir: string; strength: number; span: number; trend: string; entry: number; stop: number; target: number; exit: number; exit_time: number; r: number; reason: "stop" | "target" | "time"; oos: boolean };
 
 /** Daily ATR(14) as known at each intraday bar (from the days completed before it), built from the bars themselves.
  *  Bars that already are daily (or longer) use their own ATR. Until 15 days of history exist it is estimated from the
@@ -367,15 +451,9 @@ export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdB
     const risk = Math.max(Math.abs(entry - (long ? lo - pad : hi + pad)), dAtr && dAtr[h.index] ? stopAtr * dAtr[h.index]! : 0), stop = long ? entry - risk : entry + risk;
     if (!(risk > 0) || risk / entry > 0.08) continue;
     const target = long ? entry + minRR * risk : entry - minRR * risk;
-    let exit = entry, reason: SignalTrade["reason"] = "time", exitT = bars[h.index].time, j = h.index + 1;
-    for (; j < Math.min(bars.length, h.index + 1 + hold); j++) {
-      const b = bars[j];
-      if (long ? b.low <= stop : b.high >= stop) { exit = long ? Math.min(stop, b.open) : Math.max(stop, b.open); reason = "stop"; exitT = b.time; break; }
-      if (long ? b.high >= target : b.low <= target) { exit = long ? Math.max(target, b.open) : Math.min(target, b.open); reason = "target"; exitT = b.time; break; }
-      exit = b.close; exitT = b.time;
-    }
+    const { exit, reason, exit_time: exitT, j } = walkSignalExit(bars, h.index, long, entry, stop, target, hold);
     busyUntil = Math.min(j, bars.length - 1);
-    trades.push({ time: h.time, pattern: h.pattern, label: h.label, dir: h.dir, strength: h.strength, entry: r2(entry), stop: r2(stop), target: r2(target), exit: r2(exit), exit_time: exitT, r: r2(((exit - entry) * (long ? 1 : -1) - entry * costBps / 10000) / risk), reason, oos: h.index >= oosFrom });
+    trades.push({ time: h.time, pattern: h.pattern, label: h.label, dir: h.dir, strength: h.strength, span: h.bars, trend: h.trend, entry: r2(entry), stop: r2(stop), target: r2(target), exit: r2(exit), exit_time: exitT, r: r2(((exit - entry) * (long ? 1 : -1) - entry * costBps / 10000) / risk), reason, oos: h.index >= oosFrom });
   }
   const stats = (ts: SignalTrade[]) => {
     const n = ts.length, wins = ts.filter((t) => t.r > 0).length, sum = ts.reduce((a, t) => a + t.r, 0), gp = ts.filter((t) => t.r > 0).reduce((a, t) => a + t.r, 0), gl = -ts.filter((t) => t.r <= 0).reduce((a, t) => a + t.r, 0);

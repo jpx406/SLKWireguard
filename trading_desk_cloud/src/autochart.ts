@@ -9,11 +9,12 @@ import { getSettings } from "./db";
 import { inSession, isTradingDay, nyNow, clockNow } from "./briefs";
 import { closePosition, ensurePaper, getAccount, placeOrder, riskGate, type Side } from "./paper";
 import { patternAllowed } from "./learn";
-import { gradeSignal } from "./ml/engine";
+import { gradeSignal, logSignal } from "./ml/engine";
 import { activeRules, ruleBlocks } from "./strategy";
 import { applyExit, dailyAtr, exitPolicy } from "./exits";
 import { deskConfig, entryTypeOf, inBlackout, type EntryType } from "./deskcfg";
 import { deepDecision } from "./deepmap";
+import { deepGate } from "./deepscore";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -79,8 +80,12 @@ export async function planFor(db: D1Database, user: string, symbol: string): Pro
       const entry = num(x.entry), stop = num(x.stop);
       // The rating mapper decides: Sell / Underweight closes longs and blocks new ones, and is a short only when the
       // trader says Short and the manager does not say cash; a long needs manager and trader to agree.
-      const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
+      const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.position_note || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
       if (dec.action === "none" && dec.flatten_longs) return { source: "deep", side: "long", entry: entry ?? 0, stop: null, targets: [], time: null, setup: dec.why, rating: d.rating, id: d.id, flatten_longs: true, why: dec.why };
+      // The scorecard decides the weight: unproven ratings trade at half size, ratings that were mostly wrong do not trade.
+      const sg = dec.action === "none" ? null : await deepGate(db);
+      if (sg && sg.mult <= 0) return { source: "deep", side: "long", entry: entry ?? 0, stop: null, targets: [], time: null, setup: sg.text, rating: d.rating, id: d.id, flatten_longs: false, why: sg.text };
+      if (sg) dec.size_mult = Math.round(dec.size_mult * sg.mult * 1000) / 1000;
       if (entry !== null && stop !== null && d.rating && dec.action !== "none") {
         const side: Side = dec.action;
         const targets = (Array.isArray(x.targets) ? (x.targets as unknown[]) : []).map(num).filter((v): v is number => v !== null);
@@ -203,7 +208,7 @@ export async function runChartAuto(db: D1Database) {
       let placed: { symbol: string; side: Side; type: "limit"; price: number; qty: number; stop: number | null; target: number | null; note: string; exit_mode: "hold" | null;
         entry_type?: EntryType; src?: string; client_id?: string; trail?: number | null; hold_days?: number | null; atr?: number | null; size_mult?: number } | null = null;
       const plan = r.rule === "signal" ? null : await planFor(db, r.user, r.symbol);
-      if (plan && plan.flatten_longs && !plan.stop) { await note(db, r, `No entry: ${plan.why}`); if (r.rule === "plan") continue; }
+      if (plan && plan.source === "deep" && plan.stop === null && plan.why) { await note(db, r, `No entry: ${plan.why}`); if (r.rule === "plan") continue; }
       if (plan && (plan.source === "brief" || plan.source === "deep") && plan.stop !== null) {
         const blocked = active ? ruleBlocks(active.rules, { score: plan.score ?? null, setup: plan.setup, slot: plan.source === "brief" ? undefined : null, symbol: r.symbol, created_at: nowS() }) : null;
         if (blocked) { await note(db, r, `Plan skipped by strategy v${active!.version}: ${blocked}`); continue; }
@@ -238,7 +243,10 @@ export async function runChartAuto(db: D1Database) {
           // Optional: the ML filter, once it has proven useful, vetoes signals it grades "skip".
           let mlNote = "";
           let grade: string | null = null;
-          try { const g = await gradeSignal(db, r.symbol, bars, h); if (g) { grade = g.tradable === false ? null : g.grade; if (g.enforce && g.grade === "skip") { await note(db, r, `Skipped ${h.label}: the ML filter grades it "skip" (signals like this lost money before)`); continue; } mlNote = ` · ML grade ${g.grade}`; } } catch { /* the filter never blocks on its own failure */ }
+          try { const g = await gradeSignal(db, r.symbol, bars, h); if (g) { grade = g.tradable === false ? null : g.grade;
+            // Every graded signal is logged (traded or not) so each grade builds a live record; a grade trades only once that record is good enough.
+            try { const pLo = Math.min(...patt.map((b) => b.low)), pHi = Math.max(...patt.map((b) => b.high)), pStop = r2(side === "long" ? pLo - (pHi - pLo) * 0.1 : pHi + (pHi - pLo) * 0.1), pRisk = Math.abs(last.close - pStop); await logSignal(db, r.symbol, h, g.grade, last.close, pStop, r2(side === "long" ? last.close + 2 * pRisk : last.close - 2 * pRisk)); } catch { /* logging never blocks trading */ }
+            if (g.enforce && g.grade === "skip") { await note(db, r, `Skipped ${h.label}: the ML filter grades it "skip" (signals like this lost money before)`); continue; } mlNote = ` · ML grade ${g.grade}`; } } catch { /* the filter never blocks on its own failure */ }
           // Only the grades the desk allows trade; a pattern on the research list may trade without a grade.
           const research = cfg.candle_patterns_research.includes(h.pattern);
           if (!(grade && cfg.candle_grades_allowed.includes(grade)) && !research) { await note(db, r, `Skipped ${h.label}: ${grade ? `ML grade ${grade} is not allowed (only ${cfg.candle_grades_allowed.join(", ") || "none"})` : "no proven ML grade for it"} (filter: grades)`); continue; }
@@ -299,7 +307,7 @@ async function deepFlatten(db: D1Database, symbol: string): Promise<string | nul
   try {
     const d = await db.prepare("SELECT rating, data FROM deep_runs WHERE symbol = ? AND status = 'done' AND day >= date('now', '-5 days') ORDER BY created_at DESC LIMIT 1").bind(symbol).first<{ rating: string | null; data: string | null }>();
     if (!d) return null; const x = JSON.parse(d.data || "{}") as Record<string, unknown>;
-    const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
+    const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.position_note || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
     return dec.flatten_longs ? `rated it ${d.rating}` : null;
   } catch { return null; }
 }

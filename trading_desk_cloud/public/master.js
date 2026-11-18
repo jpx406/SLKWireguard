@@ -109,7 +109,10 @@ function renderMaster() {
   const lv = el("div", "mt-levels");
   const cur = pos ? { entry: pos.entry, stop: pos.stop, target: pos.target } : ord ? { entry: ord.price, stop: ord.stop, target: ord.target } : { entry: plan?.entry ?? null, stop: a?.stop_override ?? plan?.stop ?? null, target: a?.target_override ?? plan?.targets?.[0] ?? null };
   const num = (label, val, ro = false) => { const l = el("label", "small"); const i = el("input", "mono"); i.type = "number"; i.step = "any"; i.value = val ?? ""; i.readOnly = ro; if (ro) i.classList.add("ro"); l.append(el("span", "dim", label), i); l.input = i; return l; };
-  const fEntry = num(pos ? "Bought at" : "Entry (buys at or below)", cur.entry, true), fStop = num("Stop-loss (sell if it falls here)", cur.stop), fTarget = num("Target (sell with profit here)", cur.target);
+  // Words follow the side: a short is sold first and covered (bought back) later, with its stop above and its target below.
+  const isShort = (pos ? pos.side : ord?.side || v.side) === "short";
+  const fEntry = num(pos ? (isShort ? "Sold short at" : "Bought at") : isShort ? "Entry (sells short at or above)" : "Entry (buys at or below)", cur.entry, true),
+    fStop = num(isShort ? "Stop-loss (cover if it rises here)" : "Stop-loss (sell if it falls here)", cur.stop), fTarget = num(isShort ? "Target (cover with profit here)" : "Target (sell with profit here)", cur.target);
   const damtL = el("label", "small"); const damt = el("input", "mono"); damt.type = "number"; damt.min = 50; damt.step = 50; damt.value = a?.amount_usd ?? d.amount; damtL.append(el("span", "dim", "Money for this one"), damt);
   lv.append(fEntry, fStop, fTarget, damtL);
   const risk = el("div", "small dim mt-risk");
@@ -127,7 +130,7 @@ function renderMaster() {
     } catch (e) { showBanner(e.message); }
   };
   acts.append(bSave);
-  if (pos) { const bSell = el("button", "ghost small danger", pos.side === "long" ? "Sell now" : "Close now"); bSell.onclick = async () => { if (!(await askConfirm({ title: `Close ${r.symbol} now?`, message: "The paper position is closed at the current price.", confirm: "Close Position" }))) return; try { await api(`/api/paper/positions/${pos.id}/close`, { method: "POST" }); await loadMaster(); } catch (e) { showBanner(e.message); } }; acts.append(bSell); }
+  if (pos) { const bSell = el("button", "ghost small danger", pos.side === "long" ? "Sell now" : "Cover now"); bSell.setAttribute("aria-label", `${pos.side === "long" ? "Sell" : "Cover"} ${r.symbol} now`); bSell.onclick = async () => { if (!(await askConfirm({ title: `${pos.side === "long" ? "Sell" : "Cover"} ${r.symbol} now?`, message: pos.side === "long" ? "The paper position is sold at the current price." : "The paper short is covered (bought back) at the current price.", confirm: pos.side === "long" ? "Sell" : "Cover" }))) return; try { await api(`/api/paper/positions/${pos.id}/close`, { method: "POST", body: "{}" }); await loadMaster(); } catch (e) { showBanner(e.message); } }; acts.append(bSell); }
   else if (plan && plan.source !== "position") { const bBuy = el("button", "ghost small", v.side === "short" ? "Short now (once)" : "Buy now (once)"); bBuy.title = "Place this plan as a single paper order now, without turning Auto on"; bBuy.onclick = () => openTicket({ symbol: r.symbol, side: v.side || "long", type: "limit", price: cur.entry, stop: +fStop.input.value || null, target: +fTarget.input.value || null, exit_mode: d.kind === "crypto" ? "hold" : undefined }); acts.append(bBuy); }
   if (a?.last_note) acts.append(el("span", "dim tiny", a.last_note));
   det.append(el("h4", "small dim", pos ? "Your trade" : "Levels for the automatic trade"), lv, risk, acts);

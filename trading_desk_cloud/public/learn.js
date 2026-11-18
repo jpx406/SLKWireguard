@@ -16,13 +16,27 @@ async function loadLearn() {
 function groupTable(title, groups, keyLabel, help) {
   const s = section(title, help ? el("span", "dim small", `  ${help}`) : null);
   if (!groups.length) { s.append(el("div", "dim small", "No settled trades in this group yet.")); return s; }
-  s.append(table([keyLabel, "Plans", "Triggered", "Wins", "Win %", "CI low", "Avg R", "Total R", "PF"], groups.map((g) => {
+  s.append(table([keyLabel, "Plans", "Triggered", "Wins", "Win %", "Avg R", "Likely range", "Total R", "PF"], groups.map((g) => {
     const tr = el("tr");
-    const cls = g.n >= (state.learn.data.learn_min_n || 10) ? (g.avg_r >= 0.25 ? "up" : g.avg_r <= -0.15 ? "down" : "") : "dim";
-    tr.append(td(g.key, cls), td(g.total, "num"), td(g.n, "num"), td(g.wins, "num"), td(pctTxt(g.win_rate), `num ${cls}`), td(pctTxt(g.ci_low), "num dim"), td(fmtR(g.avg_r), `num ${cls}`), td(fmtR(g.sum_r), "num"), td(g.profit_factor == null ? "—" : g.profit_factor >= 99 ? "∞" : fmt(g.profit_factor, 2), "num"));
-    tr.title = `${g.key}: ${g.total} plans, ${g.no_trigger} never triggered. CI low = Wilson 95% lower bound of the win rate (what the sample can promise). PF = gross wins / gross losses in R.`;
+    // Judged by the average result, not the win rate: red only when 20+ trades lost even at the optimistic end of the range; green when the group made money.
+    const cls = g.n >= (state.learn.data.learn_min_n || 10) ? (g.n >= 20 && g.r_high != null && g.r_high < 0 ? "down" : g.sum_r > 0 ? "up" : "") : "dim";
+    tr.append(td(g.key, cls), td(g.total, "num"), td(g.n, "num"), td(g.wins, "num"), td(pctTxt(g.win_rate), "num"), td(fmtR(g.avg_r), `num ${cls}`), td(g.r_low == null ? "—" : `${fmtR(g.r_low)} to ${fmtR(g.r_high)}`, "num dim small"), td(fmtR(g.sum_r), `num ${cls}`), td(g.profit_factor == null ? "—" : g.profit_factor >= 99 ? "∞" : fmt(g.profit_factor, 2), "num"));
+    tr.title = `${g.key}: ${g.total} plans, ${g.no_trigger} never triggered. Likely range = where the true average result per trade probably lies (average ± 1.96 × its standard error${g.se_r == null ? "" : `, ${fmt(g.se_r, 2)}R`}). A group counts as losing only when the whole range is below zero on 20 or more trades. PF = gross wins / gross losses in R.`;
     return tr;
   })));
+  return s;
+}
+
+/* Score calibration: does a higher plan score go with a better result? Realized R by score group, and the rank
+   correlation between score and R over the last 100 settled plans. Under 0.1 the score threshold is not used. */
+function scoreCalibration(c) {
+  const s = section("Score calibration", el("span", "dim small", "  does a higher score mean a better result?"));
+  if (!c) { s.append(el("div", "dim small", "Not available yet.")); return s; }
+  s.append(el("div", `msg small ${c.use_score ? "" : "err"}`, c.text));
+  if (!c.n) return s;
+  s.append(table([c.kind === "decile" ? "Score (ten equal groups)" : "Score band", "Plans", "Avg R", "Total R", "Win %"], c.bins.map((b) => { const tr = el("tr"), cls = b.avg_r > 0 ? "up" : b.avg_r < 0 ? "down" : "";
+    tr.append(td(b.label), td(b.n, "num"), td(fmtR(b.avg_r), `num ${cls}`), td(fmtR(b.n ? b.sum_r : null), "num"), td(pctTxt(b.win_rate), "num")); return tr; })));
+  s.append(el("div", "dim small", `Rank correlation ${c.spearman == null ? "—" : fmt(c.spearman, 2)} over the last ${c.n} settled plans that had a score (1 = higher scores always did better, 0 = no link). Each group holds only a few plans, so single rows are noisy; the correlation is the test. Below 0.10 the minimum score is ignored and the allow-list of groups that made money is used instead.`));
   return s;
 }
 
@@ -41,7 +55,7 @@ function rCurve(points) {
 
 function renderLearn() {
   const host = $("#learn"), d = state.learn.data; host.innerHTML = "";
-  host.append(el("p", "dim small", "Every recommendation is replayed on the 5-minute bars that came after it (walk-forward, no look-ahead): did the entry trigger, then target or stop (stop first when one bar touches both), or a time exit at the session close (day) or after the swing time limit (20 sessions unless you change it below). Results are in R (1R = the distance from entry to stop). Groups need enough settled trades before they count, and the win rate's 95% lower bound says what the sample can promise."));
+  host.append(el("p", "dim small", "Every recommendation is replayed on the 5-minute bars that came after it (walk-forward, no look-ahead): did the entry trigger, then target or stop (stop first when one bar touches both), or a time exit at the session close (day) or after the swing time limit (20 sessions unless you change it below). Results are in R (1R = the distance from entry to stop). Groups are judged by their average result per trade, not by how often they win: a group that wins one time in three with winners twice the size of its losers makes money. A group is called a loser only when it has 20 or more trades and even the optimistic end of its likely range is below zero."));
   const a = d.all || {};
   const cards = el("div", "bd-indices");
   cards.append(stat("Plans", String(d.picks), "", `${d.settled} settled · ${d.open} open · ${d.pending} pending`),
@@ -72,6 +86,7 @@ function renderLearn() {
   const cal = section("Calibration: score → win rate", el("span", "dim small", "  does a higher score mean a better trade?"));
   cal.append(barChart(d.calibration.map((g) => ({ label: `${g.key} (n=${g.n})`, value: g.win_rate ?? 0 })), { unit: "%", signed: false, max: 100 }));
   grid.append(cal); host.append(grid);
+  host.append(scoreCalibration(d.score_calibration));
 
   const g = d.groups;
   host.append(groupTable("By scan", g.slot, "Scan"), groupTable("By setup", g.setup, "Setup", "from the setup text"), groupTable("By score", g.score, "Score"),
@@ -136,7 +151,7 @@ document.addEventListener("section", (e) => { if (e.detail === "learn") loadLear
 
 /* ---------------------------------------------------------------- self-improving loop (observe -> analyze -> reason -> validate -> update) */
 state.strategy = { failures: [], versions: [], active: null };
-const RULE_LABELS = { min_score: "min score", avoid_setups: "avoid setups", avoid_hours: "avoid hours (NY)", avoid_slots: "avoid scans", avoid_sources: "avoid sources", avoid_regimes: "avoid regimes", avoid_symbols: "avoid symbols", max_trades_day: "max trades/day", require_kronos: "Kronos must agree" };
+const RULE_LABELS = { min_score: "min score", avoid_setups: "avoid setups", avoid_hours: "avoid hours (NY)", avoid_slots: "avoid scans", avoid_sources: "avoid sources", avoid_regimes: "avoid regimes", avoid_symbols: "avoid symbols", allow_hours: "allow hours (NY)", allow_slots: "allow scans", allow_setups: "allow setups", max_trades_day: "max trades/day", require_kronos: "Kronos must agree" };
 function rulesText(r) {
   const parts = [];
   for (const [k, v] of Object.entries(r || {})) { if (v === null || v === false || (Array.isArray(v) && !v.length)) continue; parts.push(`${RULE_LABELS[k] || k}: ${Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v}`); }
@@ -151,17 +166,24 @@ function renderStrategy() {
   const host = $("#strategyBox"); if (!host) return; host.innerHTML = "";
   const st = state.strategy, admin = state.me?.role === "admin";
   const steps = el("div", "loop-steps");
-  for (const [k, t] of [["Observe", `${state.learn.data?.picks ?? 0} plans replayed`], ["Analyze", `${st.failures.length} failure${st.failures.length === 1 ? "" : "s"} found`], ["Reason", `${st.versions.filter((v) => v.status === "proposed" || v.status === "thinking").length} proposal${st.versions.filter((v) => v.status === "proposed").length === 1 ? "" : "s"} open`], ["Validate", "in-sample / out-of-sample"], ["Update", st.active ? `v${st.active.version} active` : "baseline active"]]) {
+  for (const [k, t] of [["Observe", `${state.learn.data?.picks ?? 0} plans replayed`], ["Analyze", `${st.failures.length} failure${st.failures.length === 1 ? "" : "s"} found`], ["Reason", `${st.versions.filter((v) => v.status === "proposed" || v.status === "thinking").length} proposal${st.versions.filter((v) => v.status === "proposed").length === 1 ? "" : "s"} open`], ["Validate", "in-sample / out-of-sample"], ["Update", st.active ? (st.active.version ? `v${st.active.version} active` : "automatic allow-list") : "baseline active"]]) {
     const c = el("div", "loop-step"); c.append(el("b", null, k), el("span", "dim tiny", t)); steps.append(c);
   }
   host.append(steps);
-  const act = el("div", "msg small " + (st.active ? "up" : "dim")); act.textContent = st.active ? `Active strategy v${st.active.version}: ${rulesText(st.active.rules)}. Scans read these rules; auto-trade and the chart autopilot skip plans that break them.` : "No active rules: everything the scans recommend is eligible. Approve a validated proposal below to start enforcing rules.";
-  if (st.active && admin) { const off = el("button", "ghost small", "Retire"); off.style.marginLeft = "8px"; off.onclick = async () => { if (await askConfirm({ title: "Retire the active rules?", message: "The desk goes back to the baseline (no rules). History is kept.", confirm: "Retire", destructive: true })) { await api("/api/strategy/retire", { method: "POST" }); loadStrategy(); } }; act.append(off); }
+  const act = el("div", "msg small " + (st.active ? "up" : "dim")); const sa = st.active;
+  act.textContent = !sa ? "No active rules: everything the scans recommend is eligible. Approve a validated proposal below to start enforcing rules."
+    : `${sa.version ? `Active strategy v${sa.version}` : "No approved version; rules in force"}: ${rulesText(sa.rules)}. Scans read these rules; auto-trade and the chart autopilot skip plans that break them.${sa.auto ? " The allow-list was set automatically from the groups that made money, because the plan score is not ranking trades (see Score calibration below); it has not been validated out of sample. A plan must match at least one allow-list." : ""}${sa.note && !sa.auto ? ` ${sa.note}` : ""}`;
+  if (st.active && st.active.version && admin) { const off = el("button", "ghost small", "Retire"); off.style.marginLeft = "8px"; off.onclick = async () => { if (await askConfirm({ title: "Retire the active rules?", message: "The desk goes back to the baseline (no rules). History is kept.", confirm: "Retire", destructive: true })) { await api("/api/strategy/retire", { method: "POST" }); loadStrategy(); } }; act.append(off); }
   host.append(act);
   // Failure analyzer
   const fs = section("Failure analyzer", el("span", "dim small", "  what went wrong, with evidence"));
+  fs.append(el("div", "dim small", "A group is listed as losing only with 20 or more trades and an average result that is below zero even at the optimistic end of its likely range. A low win rate alone is never a failure."));
   if (!st.failures.length) fs.append(el("div", "dim small", "Nothing with enough trades to call a failure yet."));
   else for (const f of st.failures) { const row = el("div", "fail-row"); row.append(el("span", `pill ${f.severity === "high" ? "error" : f.severity === "medium" ? "running" : "done"}`, f.severity), el("b", "small", f.type.replace("_", " ")), el("span", "small", f.text)); if (f.rule) row.append(el("span", "dim tiny", `→ rule: ${rulesText(f.rule)}`)); fs.append(row); }
+  const keep = st.keep || [];
+  if (keep.length) { fs.append(el("h4", "small dim", "Making money (kept)")); const DIM = { slot: "scan", hour: "hour", setup: "setup", score: "score", horizon: "horizon", side: "side", source: "source", symbol: "symbol", regime: "market" };
+    fs.append(table(["Group", "Trades", "Avg R", "Likely range", "Total R", "Allow-list"], keep.slice(0, 14).map((k) => { const tr = el("tr"); tr.append(td(`${DIM[k.dimension] || k.dimension} ${k.key}`), td(k.n, "num"), td(fmtR(k.avg_r), "num up"), td(k.r_low == null ? "—" : `${fmtR(k.r_low)} to ${fmtR(k.r_high)}`, "num dim small"), td(fmtR(k.sum_r), "num up"), td(k.listed ? "yes" : "—", k.listed ? "up" : "dim")); return tr; })));
+    fs.append(el("div", "dim small", "A positive total is not proof: when the likely range still reaches below zero, the group may only have been lucky so far. It is kept because there is no evidence against it.")); }
   host.append(fs);
   // Proposals and versions
   const vs = section("Strategy versions", el("span", "dim small", "  proposals are validated on the past before you approve them"));
@@ -179,8 +201,9 @@ function renderStrategy() {
     if (v.status === "proposed" && admin) { const ap = el("button", "primary small", "Approve"); ap.onclick = async () => { try { await api(`/api/strategy/${v.id}/approve`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; const rj = el("button", "ghost small", "Reject"); rj.onclick = async () => { try { await api(`/api/strategy/${v.id}/reject`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; a.append(ap, rj); }
     if (v.status === "retired" && admin && !rulesEmptyUi(v.rules)) { const re = el("button", "ghost small", "Re-activate"); re.onclick = async () => { try { await api(`/api/strategy/${v.id}/approve`, { method: "POST" }); loadStrategy(); } catch (e) { showBanner(e.message); } }; a.append(re); }
     tr.append(a);
-    const why = v.error || v.rationale; if (!why) return [tr];
-    const sub = el("tr", "win-detail"); const c = el("td", `${v.error ? "down" : "dim"} small wrap`); c.colSpan = 7; c.textContent = why; sub.append(c); return [tr, sub];
+    if (!v.error && !v.rationale) return [tr];
+    const sub = el("tr", "win-detail"); const c = el("td", "small wrap"); c.colSpan = 7;
+    if (v.error) c.append(el("div", "down", v.error)); if (v.rationale) c.append(el("div", "dim", v.rationale)); sub.append(c); return [tr, sub];
   })));
   host.append(vs);
 }
@@ -210,5 +233,5 @@ function renderExits() {
     if (!fit || !fit.table?.some((r) => r.n)) box.append(el("div", "dim small", "No settled plans replayed yet. Each plan is replayed with every distance when it settles; the table fills in as plans finish."));
     else { box.append(table(["Stop", "Plans", "Stopped out", "Win %", "Avg R", "Avg R, recent 30%"], fit.table.map((r) => { const tr = el("tr"); const cur = r.mult === (h === "day" ? p.day_stop_atr : p.swing_stop_atr); tr.append(td(r.mult === 0 ? "as recommended" : `${r.mult} × ATR${cur ? " (in force)" : ""}`, cur ? "up" : ""), td(r.n, "num"), td(`${r.stopped_pct}%`, "num"), td(`${r.win_pct}%`, "num"), td(fmtR(r.avg_r), `num ${r.avg_r > 0 ? "up" : r.avg_r < 0 ? "down" : ""}`), td(r.avg_r_recent == null ? "—" : fmtR(r.avg_r_recent), "num")); return tr; })), el("div", "dim small", fit.reason)); }
     host.append(box); }
-  host.append(el("div", "dim small", "Not used: moving the stop to break-even and trailing stops. Both reduced results in every test. A wider stop does not make a losing idea win; it stops noise and costs from deciding the outcome."));
+  host.append(el("div", "dim small", "Day trades placed by the desk also sell half at +1R, move the stop to the entry and trail the rest (Desk limits, Change). On 12,000 real signals that was equal to a fixed target for day trades and halved the result of swing longs, so swing trades keep a fixed stop and target. A wider stop does not make a losing idea win; it stops noise and costs from deciding the outcome."));
 }

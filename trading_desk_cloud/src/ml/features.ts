@@ -70,12 +70,57 @@ export function labelAt(bars: Bar[], i: number, atr_pct: number, s: LabelSpec): 
 }
 
 /** Features of one candle signal, for the signal filter. Directional features are flipped for bearish signals, so
- *  "positive" always means "with the signal"; the wicks swap; then come the signal's own strength, pattern and side. */
-export const SIGNAL_EXTRA = ["sig_strength", "sig_pattern", "sig_side"] as const;
+ *  "positive" always means "with the signal"; the wicks swap; then come the signal's own features:
+ *    sig_strength   the detector's 1-3 strength            sig_pattern   which pattern (index into the model's list)
+ *    sig_side       +1 bullish, -1 bearish                 sig_stop_atr  the pattern's own stop distance, in bar ATRs
+ *    sig_hour       New York time of day (0-1)             sig_htf_trend price against the 20-EMA of the higher timeframe
+ *    sig_day_trend  price against the 20-EMA of daily closes               (3 chart bars = 15 minutes on a 5-minute chart)
+ *    sig_rvol       volume of the pattern's bars against the 20 bars before it
+ *    sig_context    +1 a reversal after the opposite trend, 0 sideways, -1 against the trend it formed in
+ *  The list below IS the model's contract: a stored model with a different list must be retrained, not used. */
+export const SIGNAL_EXTRA = ["sig_strength", "sig_pattern", "sig_side", "sig_stop_atr", "sig_hour", "sig_htf_trend", "sig_day_trend", "sig_rvol", "sig_context"] as const;
+export const SIGNAL_FEATURES: string[] = [...FEATURES, ...SIGNAL_EXTRA];
+/** True when a stored model was trained on exactly the feature list the code builds today. */
+export const sameFeatures = (stored: unknown, current: readonly string[]) => Array.isArray(stored) && stored.length === current.length && stored.every((f, i) => f === current[i]);
+Object.assign(FEATURE_HELP, { sig_strength: "signal strength from the pattern detector (1 to 3)", sig_pattern: "which candle pattern", sig_side: "bullish or bearish signal", sig_stop_atr: "how far the pattern's own stop is, in ATRs",
+  sig_hour: "time of day in New York", sig_htf_trend: "price against the 20-EMA of the higher timeframe (15-minute bars on a 5-minute chart), in the signal's direction", sig_day_trend: "price against the 20-EMA of daily closes, in the signal's direction",
+  sig_rvol: "volume of the pattern's bars against the 20 bars before", sig_context: "whether the signal is a reversal after the opposite trend" });
+export type SignalHit = { dir: string; strength: number; pattern: string; span?: number; bars?: number; trend?: string };
+export type SignalCtx = { htf: number[]; day: number[] };
+/** Higher-timeframe context for every bar of a chart, causal: `htf[i]` is the 20-EMA of the closes of the COMPLETED
+ *  3-bar blocks before bar i (15-minute bars on a 5-minute chart); `day[i]` is the 20-EMA of the closes of the
+ *  completed days before bar i, over the last 20 of them at most, so any history of 21 days or more gives the same
+ *  value live as in training. NaN until 5 blocks / 5 days exist. */
+export function signalContext(bars: Bar[]): SignalCtx {
+  const n = bars.length, htf = new Array<number>(n).fill(NaN), day = new Array<number>(n).fill(NaN); if (n < 3) return { htf, day };
+  let step = Infinity; for (let i = 1; i < Math.min(n, 50); i++) step = Math.min(step, bars[i].time - bars[i - 1].time); step = Math.max(step, 60);
+  const k = 2 / 21, days: number[] = []; let blk = -1, blkClose = 0, e = NaN, nb = 0, d = -1, dClose = 0, de = NaN;
+  for (let i = 0; i < n; i++) {
+    const b = bars[i], bi = Math.floor(b.time / (3 * step)), di = Math.floor(b.time / 86400);
+    if (bi !== blk) { if (blk >= 0) { e = Number.isNaN(e) ? blkClose : blkClose * k + e * (1 - k); nb++; } blk = bi; }
+    if (di !== d) { if (d >= 0) { days.push(dClose); if (days.length > 20) days.shift(); de = days[0]; for (let q = 1; q < days.length; q++) de = days[q] * k + de * (1 - k); } d = di; }
+    blkClose = b.close; dClose = b.close;
+    if (nb >= 5) htf[i] = e; if (days.length >= 5 && step < 86400) day[i] = de;
+  }
+  return { htf, day };
+}
+const nyHour = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", hour: "2-digit", minute: "2-digit" });
+/** New York time of day as a fraction of 24 hours. */
+export function nyDayFraction(time: number): number { const p = nyHour.formatToParts(new Date(time * 1000)); let h = 0, m = 0; for (const x of p) { if (x.type === "hour") h = Number(x.value) % 24; if (x.type === "minute") m = Number(x.value); } return (h * 60 + m) / 1440; }
 const UNSIGNED = new Set([6, 12, 16, 17, 18]); // atr_pct, vol_ratio, wicks, rv_ratio
-export function signalVector(x: number[], hit: { dir: string; strength: number; pattern: string }, patterns: string[]): number[] {
-  const d = hit.dir === "bullish" ? 1 : -1, v = x.map((val, f) => (UNSIGNED.has(f) ? val : val * d));
+/** The feature vector of one signal. `row` is the signal bar's row from featureRows(bars), `ctx` is signalContext(bars).
+ *  Training (engine.filterSamples) and live grading (engine.gradeSignal) both call exactly this. */
+export function signalVector(row: Row, hit: SignalHit, patterns: string[], bars: Bar[], ctx: SignalCtx): number[] {
+  const d = hit.dir === "bullish" ? 1 : -1, v = row.x.map((val, f) => (UNSIGNED.has(f) ? val : val * d));
   if (d < 0) { const t = v[16]; v[16] = v[17]; v[17] = t; }
-  v.push(hit.strength, patterns.indexOf(hit.pattern), d);
+  const i = row.i, c = row.close, A = row.atr_pct * c || c * 0.01, span = Math.max(1, Math.min(10, Math.round(hit.span ?? hit.bars ?? 1)));
+  let lo = Infinity, hi = -Infinity, pv = 0, np = 0, bv = 0, nv = 0;
+  for (let q = Math.max(0, i - span + 1); q <= i; q++) { if (bars[q].low < lo) lo = bars[q].low; if (bars[q].high > hi) hi = bars[q].high; pv += bars[q].volume; np++; }
+  for (let q = Math.max(0, i - span - 19); q <= i - span; q++) { bv += bars[q].volume; nv++; }
+  const pad = (hi - lo) * 0.1, stopDist = d > 0 ? c - (lo - pad) : hi + pad - c; // the same stop the autopilot and the backtest draw
+  const t = hit.trend === "uptrend" ? 1 : hit.trend === "downtrend" ? -1 : 0;
+  v.push(hit.strength, patterns.indexOf(hit.pattern), d, clamp(stopDist / A, 0, 10), nyDayFraction(row.time),
+    Number.isNaN(ctx.htf[i]) ? 0 : clamp((c - ctx.htf[i]) / A, -8, 8) * d, Number.isNaN(ctx.day[i]) ? 0 : clamp((c / ctx.day[i] - 1) * 10, -3, 3) * d,
+    nv && np ? clamp(Math.log((pv / np + 1) / (bv / nv + 1)), -3, 3) : 0, -t * d || 0);
   return v;
 }

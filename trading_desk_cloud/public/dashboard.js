@@ -8,7 +8,47 @@ state.dash = { data: null, mc: null, sweep: null, bt: null };
 async function loadDashboard() {
   let d;
   try { d = await api("/api/dashboard"); } catch (e) { $("#dashboard").innerHTML = ""; $("#dashboard").append(el("div", "msg err", e.message)); return; }
-  state.dash.data = d; renderDashboard();
+  state.dash.data = d;
+  // Results per part of the desk (closed paper trades). The dashboard still draws when this read fails.
+  try { state.dash.sources = await api("/api/sources?days=90"); state.dash.sourcesErr = null; } catch (e) { state.dash.sourcesErr = e.message; }
+  renderDashboard();
+}
+const WIN_TRADE = "trade-level (closed paper trades)", WIN_PLAN = "plan-level (every recommendation replayed)";
+
+/** Per-source expectancy: one row per part of the desk, with its on/off switch (admin) next to its numbers. */
+function sourcesPanel() {
+  const D = state.dash, s = D.sources, admin = state.me?.role === "admin";
+  const sec = section("Results by source", el("span", "dim small", `  ${WIN_TRADE}, last ${s?.days ?? 90} days`));
+  if (!s) { sec.append(el("div", D.sourcesErr ? "msg err small" : "dim small", D.sourcesErr || "Loading…")); return sec; }
+  const pf = (v) => (v == null ? "—" : v >= 99 ? "∞" : fmt(v, 2));
+  const setOff = async (id, off, cb) => {
+    cb.disabled = true;
+    const list = s.rows.filter((r) => r.switchable && (r.id === id ? off : r.off)).map((r) => r.id);
+    try {
+      const cfg = await api("/api/config", { method: "PUT", body: JSON.stringify({ config: { sources_off: list } }) }); D.sources = await api(`/api/sources?days=${s.days ?? 90}`);
+      if (state.desk && cfg?.summary) { state.desk.data = cfg; state.desk.at = Date.now(); if (typeof repaintDeskLines === "function") repaintDeskLines(); } // the shared settings line follows
+    }
+    catch (e) { showBanner(e.message); }
+    if (sectionVisible("dashboard") && D.data) renderDashboard();
+  };
+  const rows = s.rows.map((r) => {
+    const tr = el("tr", r.off ? "src-off" : ""), nm = td(r.label, "sym");
+    if (r.off) nm.append(" ", el("span", "badge th-down", "switched off"));
+    const rr = td(r.avg_r == null ? "—" : fmtR(r.avg_r), `num ${pnlCls(r.avg_r)}`);
+    rr.append(el("div", "dim tiny", r.r_low == null || r.r_high == null ? (r.r_n ? `${r.r_n} with a stop: no range yet` : "no trades with a stop") : `range ${fmtR(r.r_low)} … ${fmtR(r.r_high)} · ${r.r_n} trades`));
+    const sw = td("", "src-sw");
+    if (!r.switchable) sw.append(el("span", "dim tiny", "always on"));
+    else if (admin) {
+      const lab = el("label", "mt-switch"), cb = el("input"); cb.type = "checkbox"; cb.checked = !r.off; cb.setAttribute("role", "switch"); cb.setAttribute("aria-label", `Automatic entries from ${r.label}`);
+      cb.onchange = () => setOff(r.id, !cb.checked, cb); lab.append(cb, el("span", "mt-knob"), el("span", "small", r.off ? "Off" : "On")); sw.append(lab);
+    } else sw.append(el("span", `small ${r.off ? "down" : "dim"}`, r.off ? "Off" : "On"));
+    tr.append(nm, td(String(r.trades), "num"), td(r.win_pct == null ? "—" : `${fmt(r.win_pct, 0)}%`, "num"), td(r.trades ? money(r.pnl) : "—", `num ${pnlCls(r.pnl)}`), td(pf(r.profit_factor), "num"), rr, td(r.verdict, "small wrap"), sw);
+    return tr;
+  });
+  sec.append(table(["Source", "Trades", "Win %", "P&L", "Profit factor", "Average R", "What the numbers allow", "Automatic entries"], rows));
+  const a = s.all || {};
+  sec.append(el("div", "dim tiny", `All sources: ${a.trades ?? 0} closed trades, ${a.win_pct == null ? "—" : `${fmt(a.win_pct, 0)}%`} won, ${money(a.pnl ?? 0)}. The range is where the true average R plausibly lies (95%); a range that includes 0 means not proven either way. ${s.note || ""}${admin ? "" : " Only the admin can switch a source off."}`));
+  return sec;
 }
 
 function pctLineChart(seriesList) {
@@ -50,13 +90,16 @@ function heatmap(sw) {
 
 function renderDashboard() {
   const host = $("#dashboard"), d = state.dash.data; host.innerHTML = "";
-  const a = d.account, l = d.learn || {};
+  const a = d.account, l = d.learn || {}, ta = state.dash.sources?.all || null;
+  // The one sentence on the thresholds in force, the same on every page.
+  if (typeof deskSummaryEl === "function") { try { const s = deskSummaryEl(); if (s) host.append(s); } catch { /* the dashboard works without it */ } }
   const k = el("div", "bd-indices dash-kpis");
   k.append(stat("Paper equity", money(a.equity), pnlCls(a.total_pnl), `${a.total_pct >= 0 ? "+" : ""}${fmt(a.total_pct)}% total`),
     stat("Today", money(a.today_realized + a.unrealized), pnlCls(a.today_realized + a.unrealized), `${a.today_trades} closed · ${d.positions.length} open`),
-    stat("Win rate (90d plans)", l.all?.win_rate == null ? "—" : `${fmt(l.all.win_rate, 0)}%`, (l.all?.win_rate ?? 0) >= 50 ? "up" : "", `${l.settled ?? 0} settled of ${l.picks ?? 0}`),
+    stat("Win rate · trade-level", ta?.win_pct == null ? "—" : `${fmt(ta.win_pct, 0)}%`, "", ta ? `${WIN_TRADE} · ${ta.trades} in 90 days` : state.dash.sourcesErr ? "could not be read" : WIN_TRADE),
+    stat("Win rate · plan-level", l.all?.win_rate == null ? "—" : `${fmt(l.all.win_rate, 0)}%`, "", `${WIN_PLAN} · ${l.settled ?? 0} settled of ${l.picks ?? 0} in 90 days`),
     stat("Avg R / plan", fmtR(l.all?.avg_r), (l.all?.avg_r ?? 0) > 0 ? "up" : (l.all?.avg_r ?? 0) < 0 ? "down" : "", `total ${fmtR(l.total_r)} · DD ${fmtR(l.max_drawdown_r)}`),
-    stat("Strategy", d.active_rules ? `v${d.active_rules.version}` : "baseline", d.active_rules ? "up" : "", d.active_rules ? "rules enforced" : "no rules active"),
+    stat("Strategy", d.active_rules ? (d.active_rules.version ? `v${d.active_rules.version}` : "allow-list") : "baseline", d.active_rules ? "up" : "", d.active_rules ? (d.active_rules.auto ? "automatic allow-list in force" : "rules enforced") : "no rules active"),
     stat("Plans today", String(d.plans_today.length), "", `${d.plans_today.filter((p) => p.status === "win").length} won · ${d.plans_today.filter((p) => p.status === "loss").length} lost`));
   host.append(k);
 
@@ -66,8 +109,17 @@ function renderDashboard() {
   const box = el("div", "dash-chart"); cs.append(box); box.style.cursor = "pointer"; box.onclick = () => navigate("chart");
   grid.append(cs);
   // Strategy performance vs benchmark
-  const sp = section("Strategy performance", el("span", "dim small", "  paper equity vs SPY buy-and-hold, % since the first trade"));
-  sp.append(pctLineChart([{ label: "Paper account", color: cssv("--accent"), points: d.equity }, { label: "SPY buy & hold", color: cssv("--dim"), points: d.benchmark }]));
+  const sp = section("Strategy performance", el("span", "dim small", "  paper account vs SPY, % since the first trade"));
+  const ex = d.exposure, series = [{ label: "Paper account", color: cssv("--accent"), points: d.equity }, { label: "SPY, fully invested", color: cssv("--dim"), points: d.benchmark }];
+  if (ex && ex.benchmark_adjusted?.length) series.push({ label: `SPY × your ${fmt(ex.avg_exposure_pct, 1)}% average exposure`, color: cssv("--warn") || "#b45309", points: ex.benchmark_adjusted });
+  sp.append(pctLineChart(series));
+  if (ex) {
+    const paper = d.equity.length ? d.equity.at(-1).pct : null, sg = (v) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${fmt(v)}%`), cmp = el("div", "bd-indices dash-bench");
+    cmp.append(stat("Paper account", sg(paper), pnlCls(paper), `since ${ex.from}`), stat("SPY, fully invested", sg(ex.spy_pct), "", "100% in the index the whole time"),
+      stat("SPY at your exposure", sg(ex.spy_adjusted_pct), "", `SPY × ${fmt(ex.avg_exposure_pct, 1)}% invested on average`));
+    sp.append(cmp, el("p", "small", `The fair comparison is the third number: on average only ${fmt(ex.avg_exposure_pct, 1)}% of the account was in the market, so a fully invested index is not a like-for-like yardstick.${paper != null && ex.spy_adjusted_pct != null ? ` Against it the paper account is ${paper - ex.spy_adjusted_pct >= 0 ? "ahead" : "behind"} by ${fmt(Math.abs(paper - ex.spy_adjusted_pct))} percentage points.` : ""}`),
+      el("p", "dim tiny", `Average exposure is an estimate. ${ex.method} ${ex.positions} position${ex.positions === 1 ? "" : "s"} over ${ex.days} day${ex.days === 1 ? "" : "s"}.`));
+  } else sp.append(el("p", "dim tiny", "The exposure-adjusted comparison (SPY × the share of the account that was invested) appears after the first closed paper trade."));
   if (d.forecasts && Object.keys(d.forecasts).length) sp.append(el("div", "dim tiny", `Kronos: ${Object.entries(d.forecasts).slice(0, 4).map(([s, f]) => `${s} ${Math.round(f.prob_up * 100)}% up`).join(" · ")}`));
   grid.append(sp);
   // Research heat-map
@@ -80,16 +132,17 @@ function renderDashboard() {
   // Backtest results cards
   const bs = section("Backtest results", el("span", "dim small", "  signal rule, 2-star, on this symbol"));
   const btBox = el("div"); bs.append(btBox);
-  const runBt = async () => { btBox.innerHTML = ""; btBox.append(el("div", "dim small", "Backtesting…")); try { const r = await api("/api/learn/backtest", { method: "POST", body: JSON.stringify({ symbol: state.symbol, interval: iv.value, min_strength: 2 }) }); btBox.innerHTML = ""; const cards = el("div", "bd-indices"); cards.append(stat("Total R", fmtR(r.all.total_r), r.all.total_r > 0 ? "up" : r.all.total_r < 0 ? "down" : ""), stat("Win rate", r.all.win_rate == null ? "—" : `${fmt(r.all.win_rate, 0)}%`), stat("Max drawdown", fmtR(r.all.max_drawdown_r), "down"), stat("Trades", String(r.all.n), "", `OOS ${fmtR(r.out_of_sample.avg_r)} avg`)); btBox.append(cards); if (r.trades.length) btBox.append(rCurve(r.trades.reduce((acc, t) => { acc.push({ day: new Date(t.exit_time * 1000).toLocaleDateString(), r: (acc.at(-1)?.r || 0) + t.r }); return acc; }, []))); } catch (e) { btBox.innerHTML = ""; btBox.append(el("div", "msg err small", e.message)); } };
+  const runBt = async () => { btBox.innerHTML = ""; btBox.append(el("div", "dim small", "Backtesting…")); try { const r = await api("/api/learn/backtest", { method: "POST", body: JSON.stringify({ symbol: state.symbol, interval: iv.value, min_strength: 2 }) }); btBox.innerHTML = ""; const cards = el("div", "bd-indices"); cards.append(stat("Total R", fmtR(r.all.total_r), r.all.total_r > 0 ? "up" : r.all.total_r < 0 ? "down" : ""), stat("Win rate · backtest", r.all.win_rate == null ? "—" : `${fmt(r.all.win_rate, 0)}%`, "", "simulated signal trades on past bars, not paper trades"), stat("Max drawdown", fmtR(r.all.max_drawdown_r), "down"), stat("Trades", String(r.all.n), "", `OOS ${fmtR(r.out_of_sample.avg_r)} avg`)); btBox.append(cards); if (r.trades.length) btBox.append(rCurve(r.trades.reduce((acc, t) => { acc.push({ day: new Date(t.exit_time * 1000).toLocaleDateString(), r: (acc.at(-1)?.r || 0) + t.r }); return acc; }, []))); } catch (e) { btBox.innerHTML = ""; btBox.append(el("div", "msg err small", e.message)); } };
   const bb = el("button", "ghost small", "Run backtest"); bb.onclick = runBt; bs.append(bb);
   grid.append(bs);
   host.append(grid);
+  host.append(sourcesPanel());
 
   // Paper trading table: open positions + today's plans with status
   const pt = section("Paper trading", el("span", "dim small", "  open positions and today's plans"));
   const rows = [];
   for (const p of d.positions) { const tr = el("tr"); tr.append(td(p.symbol, "sym"), td(p.side === "long" ? "Long" : "Short", p.side === "long" ? "up" : "down"), td(fmt(p.entry), "num"), td(fmt(p.last), "num"), td(money(p.unrealized), `num ${pnlCls(p.unrealized)}`), td("open position", "pill running"), td(p.source)); rows.push(tr); }
-  for (const p of d.plans_today) { const tr = el("tr"); const cls = p.status === "win" ? "up" : p.status === "loss" ? "down" : "dim"; tr.append(td(p.symbol, "sym"), td(p.side === "long" ? "Buy" : "Sell", p.side === "long" ? "up" : "down"), td(fmt(p.entry), "num"), td(fmt(p.stop), "num down"), td(p.r_result == null ? "—" : fmtR(p.r_result), `num ${cls}`), td(p.status.replace("_", " "), cls), td(`${p.slot} · ${p.score ?? "—"}`)); rows.push(tr); }
+  for (const p of d.plans_today) { const tr = el("tr"); const cls = p.status === "win" ? "up" : p.status === "loss" ? "down" : "dim"; tr.append(td(p.symbol, "sym"), td(p.side === "long" ? "Buy" : "Sell short", p.side === "long" ? "up" : "down"), td(fmt(p.entry), "num"), td(fmt(p.stop), "num down"), td(p.r_result == null ? "—" : fmtR(p.r_result), `num ${cls}`), td(p.status.replace("_", " "), cls), td(`${p.slot} · ${p.score ?? "—"}`)); rows.push(tr); }
   pt.append(rows.length ? table(["Symbol", "Signal", "Entry", "Last / Stop", "P&L / R", "Status", "Source"], rows) : el("div", "dim small", "No open positions and no plans today yet."));
   host.append(pt);
 

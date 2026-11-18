@@ -15,17 +15,23 @@ import { tvProxy } from "./tvproxy";
 import { customDef, deleteConvert, finalizeConvert, getConvert, listConvert, startConvert, verifyConvert } from "./pineconv";
 import { catalog, rankStrategies, runStrategy, type Bar as SBar } from "./strategies";
 import { TV_DAYS, TV_INTERVALS, finished, listTvAuto, removeTvAuto, setTvAuto } from "./tvauto";
+import { addPromotion, decidePromotion, listPromoted, removePromotion } from "./promote";
+import { normalizePicks } from "./picks";
+import { briefHealth } from "./health";
+import { exposureFor } from "./exposure";
 import { mlView, saveMlSettings, trainTask } from "./ml/engine";
-import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, latestForecasts, listKronos, runBuiltin, startKronos } from "./kronos";
+import { KRONOS_INTERVALS, evaluateForecasts, finalizeKronos, forecastScore, kronosStats, latestForecasts, listKronos, rearmKronos, runBuiltin, startKronos } from "./kronos";
 import { isCrypto } from "./market";
-import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, validateRules } from "./strategy";
+import { activeRules, decideVersion, failureReport, finalizeStrategy, listVersions, proposeFromStats, proposeWithClaude, retireActive, sanitizeRules, scoreGate, validateRules } from "./strategy";
 import { summary as paperSummary, setKillSwitch } from "./paper";
 import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy, portfolioRisk } from "./risk";
 import { masterApply, masterView } from "./master";
 import { pairDetail, scanPairs } from "./pairs";
 import { calibrateExits, exitsView, sanitizeExit } from "./exits";
 import { QuoteHub, streamRoute } from "./stream";
-import { saveDeskConfig } from "./deskcfg";
+import { deskConfig, saveDeskConfig } from "./deskcfg";
+import { deepScorecard, scoreDeep } from "./deepscore";
+import { investView } from "./invest";
 import { configView, sourceStats, tradeLog } from "./sources";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
@@ -193,6 +199,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     const b = await body<{ config?: unknown; reset?: unknown }>(req); await saveDeskConfig(env.DB, b.config, b.reset === true);
     return json(await configView(env.DB, who.user));
   }
+  // Invest: one simple recommendation per symbol from everything the desk knows, with how far each input can be trusted.
+  if (path === "/invest" && m === "GET") return json(await investView(env.DB, who.user));
   // Results per part of the desk (the table next to the per-source kill switches) and the automatic trade log.
   if (path === "/sources" && m === "GET") return json(await sourceStats(env.DB, who.user, Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90))));
   if (path === "/tradelog" && m === "GET") return json(await tradeLog(env.DB, who.user));
@@ -221,7 +229,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     if (agentReady) { try { await finalizeStrategy(env); } catch { /* later */ } }
     const days = Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90));
     const rep = await failureReport(env.DB, days);
-    return json({ failures: rep.failures, versions: await listVersions(env.DB), active: await activeRules(env.DB), days });
+    return json({ failures: rep.failures, keep: rep.keep, score_gate: rep.score_gate, versions: await listVersions(env.DB), active: await activeRules(env.DB), days });
   }
   if (path === "/strategy/propose" && m === "POST") {
     const b = await body<{ mode?: unknown }>(req);
@@ -242,10 +250,12 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       if (start) bench = bars.filter((b) => b.time >= start.time).map((b) => ({ day: new Date(b.time * 1000).toISOString().slice(0, 10), pct: Math.round(((b.close - start.close) / start.close) * 10000) / 100 }));
     } catch { bench = []; }
     const eq = [{ day: ps.curve[0]?.day || nyNow().date, pct: 0 }, ...ps.curve.map((c) => ({ day: c.day, pct: Math.round(((c.equity - ps.account.starting_cash) / ps.account.starting_cash) * 10000) / 100 }))];
+    // The fair comparison: SPY over the same period × the share of the account that was actually invested (estimated).
+    const exposure = await exposureFor(env.DB, who.user, ps.curve[0]?.day, [ps.account.starting_cash, ...ps.curve.map((c) => c.equity)], bench);
     // One row per symbol (its latest plan today), best scores first.
     const picksToday = (await env.DB.prepare(`SELECT symbol, side, setup, score, entry, stop, target, status, r_result, slot FROM pick_outcomes p WHERE day = ? AND symbol != '-'
       AND created_at = (SELECT MAX(created_at) FROM pick_outcomes q WHERE q.symbol = p.symbol AND q.day = p.day) ORDER BY score DESC LIMIT 12`).bind(nyNow().date).all()).results;
-    return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
+    return json({ account: ps.account, positions: ps.positions.slice(0, 12), orders: ps.orders.filter((o) => o.status === "open").slice(0, 12), equity: eq, benchmark: bench, exposure, learn: { all: learn.all, total_r: learn.total_r, max_drawdown_r: learn.max_drawdown_r, picks: learn.picks, settled: learn.settled }, plans_today: picksToday, active_rules: await activeRules(env.DB), forecasts: await latestForecasts(env.DB) });
   }
   // The Six: the agent council for one symbol (rule-based analysts on real bars, cached five minutes).
   const sixm = path.match(/^\/council\/([A-Za-z0-9.\-^=]{1,15})$/);
@@ -328,6 +338,32 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       return json({ ...runStrategy(cdef ?? sid, bars, { params, direction: dir, commission_pct: fee }), symbol, interval: iv });
     } catch (e) { return bad(String((e as Error).message || e).slice(0, 200)); }
   }
+  // Promote to rule: store a tested strategy with its in-sample / out-of-sample numbers as a proposal; the admin decides.
+  // Approval is a record only: nothing here starts trading.
+  if (path === "/strategies/promoted" && m === "GET") return json(await listPromoted(env.DB));
+  if (path === "/strategies/promoted" && m === "POST") {
+    const b = await body<{ id?: unknown; symbol?: unknown; interval?: unknown; direction?: unknown; params?: unknown; fee?: unknown }>(req);
+    const symbol = String(b.symbol || "").trim().toUpperCase(), iv = String(b.interval || "1d"), sid = String(b.id || "");
+    if (!SYMBOL_RE.test(symbol)) return bad("Bad symbol");
+    if (!(TV_INTERVALS as readonly string[]).includes(iv)) return bad("Bar size must be 5m, 15m, 1h or 1D.");
+    const dir = b.direction === "long" || b.direction === "short" ? b.direction : "both", fee = Math.min(1, Math.max(0, Number(b.fee ?? 0.02) || 0));
+    const params = b.params && typeof b.params === "object" && !Array.isArray(b.params) ? (b.params as Record<string, number>) : {};
+    const cdef = sid.startsWith("c:") ? await customDef(env.DB, who.user, sid) : null;
+    if (sid.startsWith("c:") ? !cdef : !catalog().some((s) => s.id === sid)) return bad("Unknown strategy.");
+    try {
+      // The numbers are computed here on finished bars; the browser's own figures are never stored.
+      const bars = finished((await candles(symbol, iv, TV_DAYS[iv])) as SBar[], iv);
+      const r = await addPromotion(env.DB, who.user, runStrategy(cdef ?? sid, bars, { params, direction: dir, commission_pct: fee }), symbol, iv);
+      return r.error ? bad(r.error, 409) : json({ ...r, ...(await listPromoted(env.DB)) });
+    } catch (e) { return bad(String((e as Error).message || e).slice(0, 200)); }
+  }
+  const prm = path.match(/^\/strategies\/promoted\/([a-z0-9]{6,32})(?:\/(approve|reject))?$/);
+  if (prm && ((prm[2] && m === "POST") || (!prm[2] && m === "DELETE"))) {
+    if (who.role !== "admin") return bad("Only the admin approves, rejects or removes promoted strategies.", 403);
+    if (!prm[2]) { await removePromotion(env.DB, prm[1]); return json(await listPromoted(env.DB)); }
+    const r = await decidePromotion(env.DB, prm[1], prm[2] as "approve" | "reject", who.user);
+    return r.error ? bad(r.error) : json({ ...r, ...(await listPromoted(env.DB)) });
+  }
   if (path === "/tvauto" && m === "GET") return json(await listTvAuto(env.DB, who.user));
   if (path === "/tvauto" && m === "PUT") { const err = await setTvAuto(env.DB, who.user, await body<Record<string, unknown>>(req)); return err ? bad(err) : json(await listTvAuto(env.DB, who.user)); }
   const tva = path.match(/^\/tvauto\/([A-Za-z0-9.\-^=]{1,15})$/);
@@ -376,8 +412,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   if (path === "/kronos" && m === "GET") {
     if (agentReady) await finalizeKronos(env);
     try { await evaluateForecasts(env.DB, 5); } catch { /* later */ }
-    return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await getSettings(env.DB)).kronos_gate, score: await forecastScore(env.DB) });
+    return json({ runs: await listKronos(env.DB), latest: await latestForecasts(env.DB), ready: agentReady, intervals: KRONOS_INTERVALS, kronos_gate: (await deskConfig(env.DB)).kronos_gate, score: await forecastScore(env.DB), stats: await kronosStats(env.DB) });
   }
+  if (path === "/kronos/rearm" && m === "POST") { if (who.role !== "admin") return bad("Admin only.", 403); return json(await rearmKronos(env.DB)); }
   if (path === "/kronos/run" && m === "POST") {
     const b = await body<{ symbol?: unknown; interval?: unknown; pred?: unknown; builtin?: unknown }>(req);
     const r = b.builtin === true ? await runBuiltin(env.DB, String(b.symbol ?? ""), String(b.interval ?? "60m"), b.pred == null ? null : Number(b.pred), who.user)
@@ -437,7 +474,8 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     let playbook = await getSetting<{ at: number } | null>(env.DB, "learn_playbook", null);
     if (!playbook || Date.now() / 1000 - playbook.at > 24 * 3600) { try { playbook = await buildPlaybook(env.DB); } catch { /* later */ } }
     const s = await getSettings(env.DB);
-    return json({ ...(await learnSummary(env.DB, days)), paper: await paperLearn(env.DB, days), playbook, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n });
+    let score_calibration = null; try { score_calibration = await scoreGate(env.DB, true); } catch { /* shown as unavailable */ }
+    return json({ ...(await learnSummary(env.DB, days)), paper: await paperLearn(env.DB, days), playbook, learn_apply: s.learn_apply, learn_min_n: s.learn_min_n, score_calibration });
   }
   if (path === "/learn/run" && m === "POST") {
     if (who.role !== "admin") return bad("Admin only.", 403);
@@ -464,7 +502,7 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
     await ensureBriefSchema(env.DB);
     const { results } = await env.DB.prepare("SELECT * FROM briefs WHERE slot = 'winners' ORDER BY created_at DESC LIMIT 8").all<Record<string, unknown>>();
     const parse = (v: unknown, dflt: unknown) => { try { return typeof v === "string" ? JSON.parse(v) : dflt; } catch { return dflt; } };
-    const briefs = results.map((r) => ({ ...r, picks: parse(r.picks, []), data: parse(r.data, null) }));
+    const briefs = results.map((r) => { const data = parse(r.data, null) as Record<string, unknown> | null; return { ...r, picks: normalizePicks(parse(r.picks, [])).picks, data: data && typeof data === "object" && Array.isArray(data.picks) ? { ...data, picks: normalizePicks(data.picks).picks } : data }; });
     const auto = await listAuto(env.DB, who.user);
     return json({ briefs, ratings: await latestRatings(env.DB), auto: Object.fromEntries(auto.map((a) => [a.symbol, a])), slot: SLOTS.find((s) => s.id === "winners") });
   }
@@ -560,7 +598,9 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   if (path === "/deep" && m === "GET") {
     if (agentReady) { await finalizeDeep(env); await deepAfterBriefs(env); }
     const ds = await getSettings(env.DB);
-    return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_min_score: ds.deep_min_score, deep_max_per_brief: ds.deep_max_per_brief });
+    // Scorecard: ratings whose 5 / 10 / 20-session horizons have passed are checked against what the price did.
+    let scorecard: unknown = null; try { await scoreDeep(env.DB, 4); scorecard = await deepScorecard(env.DB); } catch { scorecard = null; }
+    return json({ runs: await listDeep(env.DB), ratings: await latestRatings(env.DB), ready: agentReady && !!env.VAULT_ID, vault: !!env.VAULT_ID, deep_min_score: ds.deep_min_score, deep_max_per_brief: ds.deep_max_per_brief, scorecard });
   }
   if (path === "/deep/run" && m === "POST") {
     if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);
@@ -630,9 +670,17 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
       briefs: results.map((r) => {
         const parse = (v: unknown, d: unknown) => { try { return v ? JSON.parse(String(v)) : d; } catch { return d; } };
         const params = parse(r.params, null);
-        return { ...r, picks: parse(r.picks, []), data: parse(r.data, null), params, filters: params ? describeFilters(sanitizeFilters(params)) : null };
+        // Picks are normalised on the way out too, so briefs stored before the parser fix show clean tickers and per-row R:R.
+        const data = parse(r.data, null) as Record<string, unknown> | null, clean = (v: unknown) => normalizePicks(v).picks;
+        return { ...r, picks: clean(parse(r.picks, [])), data: data && typeof data === "object" && Array.isArray(data.picks) ? { ...data, picks: clean(data.picks) } : data, params, filters: params ? describeFilters(sanitizeFilters(params)) : null };
       }),
+      ny_date: ny.date,
     });
+  }
+  // Routine health: last success, last cost and failures / skips in 7 days per routine, plus what deserves a banner.
+  if (path === "/briefs/health" && m === "GET") {
+    await ensureBriefSchema(env.DB);
+    return json({ ...(await briefHealth(env.DB, SLOTS.map(({ id, label, et }) => ({ id, label, et })), await getAutopilot(env.DB))), ny_date: nyNow().date });
   }
   if (path === "/briefs/run" && m === "POST") {
     if (!env.AGENT_ID || !env.ENVIRONMENT_ID || !env.ANTHROPIC_API_KEY) return bad("Agent not configured.", 503);

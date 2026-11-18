@@ -39,7 +39,7 @@ function mlDirectionCard(m) {
   if (sw.length) { const t = el("div", "bd-table-wrap"); t.append(table(["Confidence at least", "Calls", "Right", "Avg / trade after costs"], sw)); det.append(el("p", "dim tiny", "How the calls would have done at other confidence levels (validation period):"), t); }
   det.append(el("p", "dim tiny", "Inputs the boosted trees leaned on most:"), mlImportance(r)); card.append(det);
   if (m.live) card.append(el("p", "small", `Earlier model, on the days after it was trained: ${m.live.signals} confident calls, right ${mlPct(m.live.precision)}.`));
-  card.append(el("p", "dim tiny", `Trained ${mlDay(m.created_at)} in ${(r.train_ms / 1000).toFixed(1)}s · network stopped after ${r.mlp_epochs} passes, trees after ${r.gbdt_rounds} rounds.`));
+  card.append(el("p", "dim tiny", `Trained ${mlDay(m.created_at)}${r.train_ms >= 50 ? ` in ${(r.train_ms / 1000).toFixed(1)}s` : ""} · network: ${r.mlp_epochs} passes, trees: ${r.gbdt_rounds} rounds kept.`));
   return card;
 }
 
@@ -54,8 +54,33 @@ function mlFilterCard(m) {
   const pm = Object.entries(r.by_model).map(([k, v]) => { const tr = el("tr"); if (k === r.winner) tr.classList.add("ml-win"); tr.append(td(ML_NAME[k] + (k === r.winner ? " ✓" : ""), "sym"), td(mlR(v.skip.avg_r), "num"), td(mlR(v.keep.avg_r), "num"), td(mlR(v.top.avg_r), "num")); return tr; });
   const t = el("div", "bd-table-wrap"); t.append(table(["Model", "Skip", "Kept", "Grade A"], pm)); det.append(t, mlImportance(r)); card.append(det);
   if (m.live) card.append(el("p", "small", `Earlier model, on signals after it was trained: skip ${mlR(m.live.skip.avg_r)} (${m.live.skip.n}), kept ${mlR(m.live.keep.avg_r)} (${m.live.keep.n}).`));
-  card.append(el("p", "dim tiny", `Trained ${mlDay(m.created_at)} in ${(r.train_ms / 1000).toFixed(1)}s.`));
+  card.append(mlGradeTable(m));
+  card.append(el("p", "dim tiny", `Trained ${mlDay(m.created_at)}${mlFitText(r)}`));
   return card;
+}
+/* What the fit really did. The time is shown only when it was measured: older reports timed pure computation on a
+   clock that stands still while the server computes, which is where "0.0s" came from. */
+function mlFitText(r) {
+  const f = r.fit, t = r.train_ms >= 50 ? ` in ${(r.train_ms / 1000).toFixed(1)}s` : "";
+  if (!f) return `${t}. This report predates the fit details: retrain to see how long the models really trained.`;
+  return `${t} on ${f.rows.toLocaleString()} signals with ${f.features} inputs. The network ran ${f.mlp_passes} passes over them (${f.mlp_updates.toLocaleString()} weight updates) and the best one, pass ${f.mlp_best_pass}, was kept; the trees ran ${f.gbdt_rounds_run} rounds and the first ${f.gbdt_rounds_kept} were kept. "Best" is judged on a slice held out of the training period.`;
+}
+/* Per grade: how it did on the validation signals (the past) next to how it has done live (signals graded as they
+   happened and replayed afterwards). A grade may place trades only on live evidence. */
+function mlGradeTable(m) {
+  const r = m.report, d = state.ml.data, live = (d.live_grades || {})[m.market] || {}, rule = d.live_rule || { min_n: 50, window_days: 90 }, box = el("div");
+  box.append(el("h4", "small", "Grades: past test against live"));
+  if (m.needs_retrain) box.append(el("div", "msg err small", "This filter was trained before the signal inputs changed (stop distance, time of day, higher-timeframe trend, relative volume, context). It cannot grade new signals until it is retrained: press Train signal filter. Until then no candle signal gets a grade."));
+  const NAMES = { A: "A (top tenth)", B: "B", C: "C", skip: "skip (worst quarter)" };
+  const rows = ["A", "B", "C", "skip"].map((g) => { const v = (r.grades || {})[g], l = live[g] || { n: 0, avg_r: null, low: null, open: 0, tradable: false }, tr = el("tr");
+    tr.append(td(NAMES[g], "sym"), td(v ? `${mlR(v.avg_r)} (${v.n})` : "retrain", `num ${v && v.avg_r > 0 ? "up" : v && v.avg_r < 0 ? "down" : "dim"}`), td(`${l.n}${l.open ? ` +${l.open} open` : ""}`, "num"), td(mlR(l.avg_r), `num ${l.avg_r > 0 ? "up" : l.avg_r < 0 ? "down" : ""}`), td(mlR(l.low), `num ${l.low > 0 ? "up" : "dim"}`),
+      td(l.tradable && !m.needs_retrain ? "yes" : "no", l.tradable && !m.needs_retrain ? "up" : "dim"));
+    tr.title = `${NAMES[g]}: past test = average result of this grade on the validation signals (count). Live = signals graded as they happened in the last ${rule.window_days} days, replayed afterwards with the same stop, target and time limit.`; return tr; });
+  const w = el("div", "bd-table-wrap"); w.append(table(["Grade", "Past test", "Live signals", "Live avg", "Live low end", "May trade"], rows)); box.append(w);
+  const any = Object.values(live).some((l) => l.tradable);
+  box.append(el("p", "dim tiny", `May trade: yes only with ${rule.min_n} settled live signals whose average result is above zero even at the low end of its likely range (average − 1.96 × its standard error). ${any ? "" : "No grade has that yet, so the autopilot takes no candle signal on its grade alone. "}Live signals are logged whether or not they were traded, over the last ${rule.window_days} days. The past test alone never unlocks trading: it has already happened.`));
+  if (r.label) box.append(el("p", "dim tiny", `What is being predicted: ${r.label}`));
+  return box;
 }
 
 function renderMl() {

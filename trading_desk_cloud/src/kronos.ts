@@ -65,7 +65,7 @@ export function kronosPrompt(symbol: string, interval: string, pred: number, sam
   const src = o.csv ? ` --csv ${BARS_MOUNT}` : "", w = o.weights ? ` --tokenizer ${WEIGHTS_DIR}/tokenizer --model ${WEIGHTS_DIR}/model` : "";
   return `[Kronos forecast] Produce a probabilistic candlestick forecast for ${symbol} on ${interval} bars with the Kronos foundation model. Everything is already mounted: the model code at ${REPO_DIR}/model/, the forecast script at ${SCRIPT_MOUNT}${o.csv ? `, the price bars at ${BARS_MOUNT}` : ""}${o.weights ? ` and the model weights under ${WEIGHTS_DIR}/ (no download from huggingface.co is needed or possible)` : ""}. Nothing needs to be cloned. Do exactly this with bash, printing only short progress lines:
 0. Files: if ${REPO_DIR}/model or ${SCRIPT_MOUNT} is missing, the mounts are under /mnt/session/uploads instead: \`mkdir -p /workspace && cp -r /mnt/session/uploads/workspace/. /workspace/\`.${o.weights ? ` Then check \`ls -l ${WEIGHTS_DIR}/tokenizer ${WEIGHTS_DIR}/model\` shows a config.json and a model.safetensors in each.` : ""}
-1. Dependencies: \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas, tqdm" 2>/dev/null || pip install --quiet torch einops huggingface_hub safetensors pandas numpy tqdm\`. Allow up to 10 minutes; do not give up before the install finishes.
+1. SELF-TEST FIRST (a few seconds): \`python3 -c "import torch, einops, huggingface_hub, safetensors, pandas, tqdm; print('ok')"\`. If it does not print ok, or the files of step 0 are missing, STOP NOW: do not pip install anything, do not download anything, run nothing else, and answer with exactly one line \`SELFTEST_FAILED: <what is missing>\` and no JSON. A run that cannot finish must not spend money trying.
 2. Run: \`cd ${REPO_DIR} && ${o.weights ? "HF_HUB_OFFLINE=1 " : ""}python3 ${SCRIPT_MOUNT} --symbol ${symbol} --interval ${interval} --pred ${pred} --samples ${samples} --kronos ${REPO_DIR}${src}${w} --out /workspace/kronos_fc.json 2>&1 | tail -n 15\`.${o.weights ? "" : " The weights NeoQuasar/Kronos-small and NeoQuasar/Kronos-Tokenizer-base download from huggingface.co on first use (about 115 MB)."}${o.csv ? "" : " If Yahoo returned too few bars, wait 20 seconds and run once more."}
 3. Print the result: \`cat /workspace/kronos_fc.json\`.
 If a step fails, print the last 30 lines of its output and say which host, file or package was the problem (for example "huggingface.co not allowed", "weights not mounted" or "torch not installed"), so the desk can show it. Do not write a JSON block of your own when the run failed.
@@ -84,6 +84,11 @@ export async function startKronos(env: Env, symbol: string, interval: string, pr
   const s = await getSettings(env.DB);
   const capped = await capBlocks(env.DB, s.daily_cap_usd, nyNow().date);
   if (capped) return { error: capped };
+  // Never spend on a run that cannot complete: Kronos is paused after a failed self-test or two failed runs in a row,
+  // and is not started at all while the model weights are not uploaded. The free built-in forecast answers instead.
+  const health = await kronosHealth(env.DB);
+  const pre = health.disabled ? `Kronos is paused: ${health.reason}` : !(await weightFiles(env)) ? "The Kronos model weights are not uploaded to the sandbox yet (run setup/setup-agent.mjs once)" : null;
+  if (pre) { if (!health.disabled) await setSetting(env.DB, "kronos_health", { ...health, disabled: true, reason: "the model weights are not uploaded (run setup/setup-agent.mjs, then press Try Kronos again)", at: Math.floor(Date.now() / 1000) }); return runBuiltin(env.DB, symbol, interval, n, user, `${pre}. No paid run was started; this is the free built-in forecast.`); }
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   const engine = isEngine(s.engines?.kronos) ? s.engines.kronos : "default";
   await env.DB.prepare("INSERT INTO kronos_runs (id, symbol, interval, pred_len, status, user) VALUES (?, ?, ?, ?, 'starting', ?)").bind(id, symbol, interval, n, user).run();
@@ -104,8 +109,8 @@ export async function startKronos(env: Env, symbol: string, interval: string, pr
     } catch { /* the script falls back to Yahoo */ }
     const weights = await weightFiles(env);
     if (weights) for (const [name, rel] of Object.entries(WEIGHT_FILES)) resources.push({ file_id: weights[name], mount_path: `${WEIGHTS_DIR}/${rel}` });
-    // A first run installs torch and downloads the weights: give it twice the normal budget (at least $2).
-    const sid = await createSession(env, Math.max(2, s.session_budget_usd * 2), engine as never, { resources });
+    // The run only executes what is already installed and mounted, so it gets a small budget: a failing self-test costs cents.
+    const sid = await createSession(env, Math.min(Math.max(0.5, s.session_budget_usd), 1.5), engine as never, { resources });
     await client(env).beta.sessions.events.send(sid, { events: [{ type: "user.message", content: [{ type: "text", text: kronosPrompt(symbol, interval, n, Number((s as { kronos_samples?: number }).kronos_samples) || 20, { weights: !!weights, csv }) }] }] });
     await env.DB.prepare("UPDATE kronos_runs SET session_id = ?, status = 'running', files = ? WHERE id = ?").bind(sid, JSON.stringify(files), id).run();
   } catch (e) {
@@ -202,14 +207,15 @@ export async function finalizeKronos(env: Env) {
       if (idleReason) {
         const why: Record<string, string> = { budget_reached: "Stopped at the session budget.", refusal: "Claude declined this request.", retries_exhausted: "Failed after retries." };
         const err = idleReason === "end_turn" ? null : why[idleReason] ?? idleReason;
-        if (fc) await finish("done", err);
+        if (fc) { await finish("done", err); if (!/bootstrap/.test(String((fc as { model?: string }).model || ""))) await setSetting(env.DB, "kronos_health", { disabled: false, fails: 0, reason: "", at: Math.floor(Date.now() / 1000) }); }
         else {
           const why2 = [err, ...errors, content ? "Kronos did not return a forecast: see the agent's notes below (usually the model weights are not uploaded yet: run setup/setup-agent.mjs again, it uploads them)." : "Claude finished without writing an answer."].filter(Boolean).join(" · ");
           await finish("error", why2);
+          await kronosFailed(env.DB, /SELFTEST_FAILED/i.test(content) ? `the sandbox self-test failed (${(content.match(/SELFTEST_FAILED:?\s*([^\n]{0,160})/i)?.[1] || "a package or file is missing").trim()})` : null, why2);
           // Fall back to the built-in forecast so the chart still gets a band; the row keeps the reason.
           try { await runBuiltin(env.DB, r.symbol, r.interval, r.pred_len, r.user, `${why2} Showing the built-in forecast instead.`, r.id); } catch { /* keep the error */ }
         }
-      } else if (ageMin > 40) await finish("error", "Timed out after 40 minutes.");
+      } else if (ageMin > 15) { await finish("error", "Timed out after 15 minutes."); await kronosFailed(env.DB, null, "timed out"); }
     } catch (e) { console.error("kronos", r.id, e); }
   }
 }
@@ -289,4 +295,21 @@ export async function kronosAgrees(db: D1Database, symbol: string, side: "long" 
   const f = (await latestForecasts(db, [symbol], 12))[symbol];
   if (!f) return null;
   return side === "long" ? f.prob_up >= 0.45 : f.prob_up <= 0.55;
+}
+
+// ------------------------------------------------------------------------------------------- health: do not pay for runs that cannot finish
+export type KronosHealth = { disabled: boolean; fails: number; reason: string; at?: number };
+export async function kronosHealth(db: D1Database): Promise<KronosHealth> { return (await getSetting<KronosHealth | null>(db, "kronos_health", null)) || { disabled: false, fails: 0, reason: "" }; }
+/** A paid run ended without a forecast. A failed self-test pauses Kronos at once; otherwise the second failure in a row does. */
+async function kronosFailed(db: D1Database, selftest: string | null, why: string) {
+  const h = await kronosHealth(db), fails = h.fails + 1, disabled = !!selftest || fails >= 2;
+  await setSetting(db, "kronos_health", { disabled, fails, reason: disabled ? selftest || `${fails} runs in a row ended without a forecast (${why.slice(0, 140)})` : "", at: Math.floor(Date.now() / 1000) });
+}
+export async function rearmKronos(db: D1Database) { await setSetting(db, "kronos_health", { disabled: false, fails: 0, reason: "", at: Math.floor(Date.now() / 1000) }); return kronosHealth(db); }
+/** What Kronos has cost so far and how its paid runs ended. */
+export async function kronosStats(db: D1Database) {
+  await ensureKronos(db);
+  const { results } = await db.prepare("SELECT status, cost, data FROM kronos_runs WHERE cost IS NOT NULL").all<{ status: string; cost: string | null; data: string | null }>();
+  let usd = 0, ok = 0; for (const r of results) { usd += parseFloat(r.cost || "0") || 0; if (r.status === "done" && r.data && !/bootstrap/.test(r.data)) ok++; }
+  return { paid_runs: results.length, completed: ok, failed: results.length - ok, cost_usd: Math.round(usd * 100) / 100, health: await kronosHealth(db) };
 }

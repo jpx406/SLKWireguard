@@ -9,9 +9,10 @@
 import type { Env } from "../env";
 import { candles, isCrypto } from "../market";
 import { getSetting, getSettings, setSetting } from "../db";
-import { backtestSignals } from "../learn";
-import { FEATURES, FEATURE_HELP, featureRows, signalVector, type Bar } from "./features";
-import { PROFILES, buildSamples, decide, filterScore, gradeOf, outcomeClass, predict, score, trainAll, trainFilter, type FilterModel, type FilterReport, type FilterSample, type ModelJson, type Report, type Sample } from "./train";
+import { backtestSignals, dailyAtrOfBars, walkSignalExit } from "../learn";
+import { DEFAULT_EXIT } from "../exits";
+import { FEATURES, FEATURE_HELP, SIGNAL_FEATURES, featureRows, sameFeatures, signalContext, signalVector, type Bar, type SignalHit } from "./features";
+import { GRADES, PROFILES, buildSamples, decide, expectOf, filterScore, gradeOf, outcomeClass, predict, score, trainAll, trainFilter, type Expect, type FilterModel, type FilterReport, type FilterSample, type ModelJson, type Report, type Sample } from "./train";
 
 export type Task = "direction" | "filter";
 export type Market = "stocks" | "crypto";
@@ -29,6 +30,10 @@ async function ensure(db: D1Database) {
     db.prepare(`CREATE TABLE IF NOT EXISTS ml_signals (task TEXT NOT NULL, market TEXT NOT NULL, symbol TEXT NOT NULL, bar_time INTEGER NOT NULL, at INTEGER NOT NULL, decision TEXT NOT NULL,
       confidence REAL NOT NULL, probs TEXT, price REAL, model_id TEXT, PRIMARY KEY (task, symbol, bar_time))`),
     db.prepare("CREATE TABLE IF NOT EXISTS ml_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, task TEXT, market TEXT, ok INTEGER, note TEXT, ms INTEGER)"),
+    // Every candle signal the filter graded live, and what it did afterwards (settleSignals). status: open, then stop / target / time, or expired (no bars left to replay it on).
+    db.prepare(`CREATE TABLE IF NOT EXISTS ml_signal_log (symbol TEXT NOT NULL, time INTEGER NOT NULL, pattern TEXT NOT NULL, dir TEXT NOT NULL, grade TEXT NOT NULL, entry REAL NOT NULL, stop REAL NOT NULL, target REAL,
+      created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'open', r REAL, exit_time INTEGER, model_id TEXT, PRIMARY KEY (symbol, time, pattern))`),
+    db.prepare("CREATE INDEX IF NOT EXISTS ml_signal_log_status ON ml_signal_log (status, created_at)"),
   ]);
   ready = true;
 }
@@ -55,16 +60,24 @@ async function directionSamples(db: D1Database, market: Market, since = 0): Prom
   for (const s of syms) { try { const b = closedBars(await bars(s, p.interval, p.days), p.interval); if (b.length < 200) continue; n++; out = out.concat(buildSamples(s, b, s === bench(market) ? null : mk, p.label).filter((x) => x.t > since)); } catch { /* a symbol without data is skipped */ } }
   return { samples: out, n };
 }
+/** The filter's training rows for one chart (pure): every past candle signal with its features as known at the
+ *  signal bar, and its label = the realized R at the FIXED horizon `hold` (see train.ts). A signal whose window was
+ *  cut short by the end of the data is left out, so every label covers the same horizon. */
+export function signalSamples(sym: string, b: Bar[], market: Bar[] | null, patterns: string[], hold: number, since = 0): FilterSample[] {
+  const rows = new Map(featureRows(b, market).map((r) => [r.time, r])), ctx = signalContext(b), out: FilterSample[] = [];
+  for (const t of backtestSignals(b, { minStrength: 1, holdBars: hold }).trades) {
+    const r = rows.get(t.time); if (!r || t.time <= since) continue;
+    if (t.reason === "time" && r.i + hold >= b.length) continue; // the fixed window had not finished
+    out.push({ t: t.time, end: t.exit_time ?? t.time, sym, x: signalVector(r, t, patterns, b, ctx), r: t.r, y: outcomeClass(t.r) });
+  }
+  return out;
+}
 async function filterSamples(db: D1Database, market: Market, patterns: string[], since = 0): Promise<FilterSample[]> {
-  const f = FILTER_IV[market], syms = await universe(db, market), mk = await bars(bench(market), f.interval, f.days); const out: FilterSample[] = [];
+  const f = FILTER_IV[market], syms = await universe(db, market), mk = await bars(bench(market), f.interval, f.days); let out: FilterSample[] = [];
   for (const s of syms) {
     try {
       const b = closedBars(await bars(s, f.interval, f.days), f.interval); if (b.length < 300) continue;
-      const rows = new Map(featureRows(b, s === bench(market) ? null : mk).map((r) => [r.time, r]));
-      for (const t of backtestSignals(b, { minStrength: 1, holdBars: f.hold }).trades as { time: number; exit_time: number | null; pattern: string; dir: string; strength: number; r: number }[]) {
-        const r = rows.get(t.time); if (!r || t.time <= since) continue;
-        out.push({ t: t.time, end: t.exit_time ?? t.time, sym: s, x: signalVector(r.x, t, patterns), r: t.r, y: outcomeClass(t.r) });
-      }
+      out = out.concat(signalSamples(s, b, s === bench(market) ? null : mk, patterns, f.hold, since));
     } catch { /* skipped */ }
   }
   return out;
@@ -84,16 +97,24 @@ export async function trainTask(env: Env, task: Task, market: Market, o: { fast?
   const db = env.DB; await ensure(db); const t0 = Date.now(), s = await mlSettings(db);
   try {
     const old = await db.prepare("SELECT * FROM ml_models WHERE task = ? AND market = ? AND active = 1 ORDER BY created_at DESC LIMIT 1").bind(task, market).first<ModelRow>();
-    let report: Report | FilterReport, model: ModelJson | FilterModel, live: unknown = null;
+    let report: Report | FilterReport, model: ModelJson | FilterModel, live: unknown = null, tFit = Date.now();
     if (task === "direction") {
       const { samples } = await directionSamples(db, market);
-      if (old) { const om = JSON.parse(old.model) as ModelJson, after = samples.filter((x) => x.t > old.created_at); if (after.length >= 30) live = { since: old.created_at, ...score(after.map((x) => predict(om, x.x)), after, s.threshold).gated, n: after.length }; }
+      if (old) { const om = JSON.parse(old.model) as ModelJson, after = samples.filter((x) => x.t > old.created_at); if (sameFeatures(om.features, FEATURES) && after.length >= 30) live = { since: old.created_at, ...score(after.map((x) => predict(om, x.x)), after, s.threshold).gated, n: after.length }; }
+      tFit = Date.now();
       const r = trainAll(PROFILES.swing, samples, { threshold: s.threshold, fast: o.fast, max_train: 16000 }); report = r.report; model = r.model;
     } else {
       const pats = Patterns(), samples = await filterSamples(db, market, pats);
-      if (old) { const om = JSON.parse(old.model) as FilterModel, after = samples.filter((x) => x.t > old.created_at); if (after.length >= 30) { const g = after.map((x) => gradeOf(om, filterScore(om, signalVector0(x.x, om, pats)))); const avg = (a: FilterSample[]) => (a.length ? Math.round((a.reduce((q, v) => q + v.r, 0) / a.length) * 1e3) / 1e3 : null); live = { since: old.created_at, n: after.length, skip: { n: g.filter((x) => x === "skip").length, avg_r: avg(after.filter((_, i) => g[i] === "skip")) }, keep: { n: g.filter((x) => x !== "skip").length, avg_r: avg(after.filter((_, i) => g[i] !== "skip")) } }; } }
+      // An old model built on a different feature list cannot read today's rows: it is not re-scored, only replaced.
+      if (old) { const om = JSON.parse(old.model) as FilterModel, after = sameFeatures(om.features, SIGNAL_FEATURES) ? samples.filter((x) => x.t > old.created_at) : []; if (after.length >= 30) { const g = after.map((x) => gradeOf(om, filterScore(om, signalVector0(x.x, om, pats)))); const avg = (a: FilterSample[]) => (a.length ? Math.round((a.reduce((q, v) => q + v.r, 0) / a.length) * 1e3) / 1e3 : null); live = { since: old.created_at, n: after.length, skip: { n: g.filter((x) => x === "skip").length, avg_r: avg(after.filter((_, i) => g[i] === "skip")) }, keep: { n: g.filter((x) => x !== "skip").length, avg_r: avg(after.filter((_, i) => g[i] !== "skip")) } }; } }
+      tFit = Date.now();
       const f = FILTER_IV[market], r = trainFilter(`Candle-signal filter (${market}, ${f.interval === "60m" ? "1-hour" : "5-minute"} bars)`, f.interval, samples, pats, { fast: o.fast, max_train: 16000 }); report = r.report; model = r.model;
     }
+    // Honest timing. On Cloudflare Workers the clock stands still while code computes and only moves on I/O, so a
+    // timer wrapped around pure computation always reads 0 ms ("trained in 0.0s"). One database round trip lets the
+    // clock catch up; the time since the data was loaded is then the real duration of the fit (plus that round trip).
+    await db.prepare("SELECT 1").first();
+    report.train_ms = Date.now() - tFit;
     const id = crypto.randomUUID().replace(/-/g, "").slice(0, 16), now = Math.floor(Date.now() / 1000);
     await db.batch([
       ...(old && live ? [db.prepare("UPDATE ml_models SET live = ? WHERE id = ?").bind(JSON.stringify(live), old.id)] : []),
@@ -118,6 +139,7 @@ export type Live = { symbol: string; decision: "BUY" | "SELL" | "HOLD"; confiden
 export async function directionNow(db: D1Database, market: Market, symbols: string[]): Promise<Live[]> {
   const row = await activeRow(db, "direction", market); if (!row) return [];
   const m = JSON.parse(row.model) as ModelJson, rep = JSON.parse(row.report) as Report, s = await mlSettings(db), p = PROFILES.swing, out: Live[] = [];
+  if (!sameFeatures(m.features, FEATURES)) return []; // trained on another feature list: needs retraining
   let mk: Bar[] | null = null; try { mk = await bars(bench(market), p.interval, 400); } catch { mk = null; }
   for (const sym of symbols.slice(0, 40)) {
     try {
@@ -131,13 +153,89 @@ export async function directionNow(db: D1Database, market: Market, symbols: stri
 }
 
 /** Grade one candle signal on the bars it formed on. `useful` says whether the filter earned the right to veto. */
-export async function gradeSignal(db: D1Database, symbol: string, b: Bar[], hit: { time: number; dir: string; strength: number; pattern: string }): Promise<{ grade: "skip" | "C" | "B" | "A"; score: number; useful: boolean; enforce: boolean; tradable?: boolean } | null> {
+export async function gradeSignal(db: D1Database, symbol: string, b: Bar[], hit: SignalHit & { time: number }): Promise<{ grade: "skip" | "C" | "B" | "A"; score: number; useful: boolean; enforce: boolean; tradable?: boolean } | null> {
   const market: Market = isCrypto(symbol) ? "crypto" : "stocks", row = await activeRow(db, "filter", market); if (!row) return null;
   const m = JSON.parse(row.model) as FilterModel, rep = JSON.parse(row.report) as FilterReport, f = FILTER_IV[market];
+  // A model trained on another feature list cannot read today's row: it needs retraining, and until then there is no grade.
+  if (!sameFeatures(m.features, SIGNAL_FEATURES)) return null;
   let mk: Bar[] | null = null; if (symbol !== bench(market)) { try { mk = await bars(bench(market), f.interval, market === "crypto" ? 30 : 10); } catch { mk = null; } }
-  const r = featureRows(b, mk).find((x) => x.time === hit.time); if (!r) return null;
-  const sc = filterScore(m, signalVector(r.x, hit, m.patterns));
-  return { grade: gradeOf(m, sc), score: Math.round(sc * 1e3) / 1e3, useful: rep.useful, enforce: rep.useful && (await mlSettings(db)).filter };
+  // The daily-trend feature looks back 20 finished days: when the chart handed in is shorter, the longer history is loaded so the live row is built as in training.
+  let ctxBars = b; if (b.length && hit.time - b[0].time < CONTEXT_DAYS * 86400) { try { const more = closedBars(await bars(symbol, f.interval, CONTEXT_DAYS + 12), f.interval); if (more.some((x) => x.time === hit.time)) ctxBars = more.filter((x) => x.time <= b[b.length - 1].time); } catch { ctxBars = b; } }
+  const sc0 = scoreSignal(m, ctxBars, mk, hit); if (sc0 === null) return null;
+  const grade = gradeOf(m, sc0), live = (await liveGrades(db, market))[grade];
+  return { grade, score: Math.round(sc0 * 1e3) / 1e3, useful: rep.useful, enforce: rep.useful && (await mlSettings(db)).filter, tradable: !!live?.tradable };
+}
+const CONTEXT_DAYS = 30; // calendar days: about 21 sessions
+/** The filter's score for one signal on a chart (pure): the live row is built by the same signalVector as the training rows. null when the model does not match today's features or the bar is not there. */
+export function scoreSignal(m: FilterModel, b: Bar[], market: Bar[] | null, hit: SignalHit & { time: number }): number | null {
+  if (!sameFeatures(m.features, SIGNAL_FEATURES)) return null;
+  const r = featureRows(b, market).find((x) => x.time === hit.time); if (!r) return null;
+  return filterScore(m, signalVector(r, hit, m.patterns, b, signalContext(b)));
+}
+
+// ------------------------------------------------------------------------------------------------ live evidence per grade
+// Validation says how a grade did on past signals the model never saw. That is still the past. Before a grade may
+// place trades it must also have done it LIVE: every signal the filter grades is logged the moment it is graded
+// (whether or not it is traded), replayed later on the bars that followed with the same exit rule as the backtest
+// (stop floor, target, fixed hold), and a grade is tradable only with at least 50 settled live signals whose
+// expectancy is positive even at the pessimistic end (mean − 1.96 × SE > 0).
+export const LIVE_MIN_N = 50, LIVE_WINDOW_DAYS = 90;
+export type LiveGrade = Expect & { open: number; tradable: boolean };
+/** Log one graded live signal (once per symbol, bar and pattern). `stop` / `target` are the pattern's own; the stop floor is applied when it is settled, as in the backtest. */
+export async function logSignal(db: D1Database, symbol: string, hit: { time: number; pattern: string; dir: string }, grade: string, entry: number, stop: number, target: number | null) {
+  if (!(entry > 0) || !(Math.abs(entry - stop) > 0) || !hit?.time || !(GRADES as readonly string[]).includes(grade)) return;
+  await ensure(db);
+  const market: Market = isCrypto(symbol) ? "crypto" : "stocks", row = await activeRow(db, "filter", market);
+  await db.prepare("INSERT OR IGNORE INTO ml_signal_log (symbol, time, pattern, dir, grade, entry, stop, target, created_at, status, model_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)")
+    .bind(symbol.toUpperCase(), hit.time, hit.pattern, hit.dir, grade, entry, stop, target, Math.floor(Date.now() / 1000), row?.id ?? null).run();
+  liveCache.delete(market);
+}
+type LogRow = { symbol: string; time: number; pattern: string; dir: string; grade: string; entry: number; stop: number; target: number | null; created_at: number; status: string; r: number | null };
+/** Replay one logged signal on its chart's bars (pure). Same rule as backtestSignals: the stop is the logged pattern
+ *  stop but never closer than the exit policy's share of the daily ATR, the target is the policy's multiple of that
+ *  risk, the trade is closed after `hold` bars at the latest, costs are charged. null = not decided yet (or the
+ *  signal's bar is not in these bars). */
+export function settleSignal(b: Bar[], s: { time: number; dir: string; entry: number; stop: number }, hold: number, o: { stopAtr?: number; minRR?: number; costBps?: number } = {}): { status: "stop" | "target" | "time" | "expired"; r: number | null; exit_time: number | null } | null {
+  const i = b.findIndex((x) => x.time === s.time); if (i < 0) return null;
+  const long = s.dir === "bullish", stopAtr = o.stopAtr ?? DEFAULT_EXIT.day_stop_atr, minRR = o.minRR ?? (stopAtr > 0 ? DEFAULT_EXIT.day_min_rr : 2), dAtr = stopAtr > 0 ? dailyAtrOfBars(b)[i] : null;
+  const risk = Math.max(Math.abs(s.entry - s.stop), dAtr ? stopAtr * dAtr : 0);
+  if (!(risk > 0) || risk / s.entry > 0.08) return { status: "expired", r: null, exit_time: null }; // the backtest does not take these either
+  const stop = long ? s.entry - risk : s.entry + risk, target = long ? s.entry + minRR * risk : s.entry - minRR * risk, w = walkSignalExit(b, i, long, s.entry, stop, target, hold);
+  if (!w.complete) return null;
+  return { status: w.reason, r: Math.round((((w.exit - s.entry) * (long ? 1 : -1) - (s.entry * (o.costBps ?? 4)) / 10000) / risk) * 100) / 100, exit_time: w.exit_time };
+}
+/** Settle logged signals whose fixed window has passed. A few symbols per call; signals too old to replay expire. */
+export async function settleSignals(db: D1Database, maxSymbols = 4): Promise<{ settled: number; expired: number }> {
+  await ensure(db);
+  const now = Math.floor(Date.now() / 1000), out = { settled: 0, expired: 0 };
+  const { results } = await db.prepare("SELECT * FROM ml_signal_log WHERE status = 'open' ORDER BY created_at LIMIT 200").all<LogRow>();
+  const bySym = new Map<string, LogRow[]>(); for (const r of results) { const f = FILTER_IV[isCrypto(r.symbol) ? "crypto" : "stocks"], step = f.interval === "60m" ? 3600 : 300; if (now >= r.time + (f.hold + 2) * step) bySym.set(r.symbol, [...(bySym.get(r.symbol) || []), r]); }
+  for (const [sym, rows] of [...bySym.entries()].slice(0, maxSymbols)) {
+    const f = FILTER_IV[isCrypto(sym) ? "crypto" : "stocks"], oldest = Math.min(...rows.map((r) => r.time));
+    let b: Bar[] = []; try { b = closedBars(await bars(sym, f.interval, Math.ceil((now - oldest) / 86400) + CONTEXT_DAYS), f.interval); } catch { continue; }
+    for (const r of rows) {
+      const res = settleSignal(b, r, f.hold);
+      // Not decided: wait, unless the signal is too old for the data providers to still have its bars.
+      if (!res) { if (now - r.time > (f.interval === "60m" ? 120 : 50) * 86400) { await db.prepare("UPDATE ml_signal_log SET status = 'expired' WHERE symbol = ? AND time = ? AND pattern = ?").bind(r.symbol, r.time, r.pattern).run(); out.expired++; } continue; }
+      await db.prepare("UPDATE ml_signal_log SET status = ?, r = ?, exit_time = ? WHERE symbol = ? AND time = ? AND pattern = ?").bind(res.status, res.r, res.exit_time, r.symbol, r.time, r.pattern).run();
+      if (res.status === "expired") out.expired++; else out.settled++;
+    }
+  }
+  if (out.settled) liveCache.clear();
+  return out;
+}
+/** Live expectancy per grade from settled log rows (pure). */
+export function liveExpectancy(rows: { grade: string; status: string; r: number | null }[]): Record<string, LiveGrade> {
+  return Object.fromEntries(GRADES.map((g) => { const mine = rows.filter((x) => x.grade === g), e = expectOf(mine.filter((x) => x.r !== null && ["stop", "target", "time"].includes(x.status)).map((x) => x.r!));
+    return [g, { ...e, open: mine.filter((x) => x.status === "open").length, tradable: e.n >= LIVE_MIN_N && e.low !== null && e.low > 0 }]; }));
+}
+const liveCache = new Map<Market, { at: number; v: Record<string, LiveGrade> }>();
+/** Live record of each grade over the last 90 days (graded at the time by the model then in use). Cached five minutes. */
+export async function liveGrades(db: D1Database, market: Market): Promise<Record<string, LiveGrade>> {
+  const hit = liveCache.get(market); if (hit && Date.now() - hit.at < 300_000) return hit.v;
+  await ensure(db);
+  const { results } = await db.prepare("SELECT symbol, grade, status, r FROM ml_signal_log WHERE created_at >= ?").bind(Math.floor(Date.now() / 1000) - LIVE_WINDOW_DAYS * 86400).all<{ symbol: string; grade: string; status: string; r: number | null }>();
+  const v = liveExpectancy(results.filter((x) => isCrypto(x.symbol) === (market === "crypto"))); liveCache.set(market, { at: Date.now(), v }); return v;
 }
 
 /** Everything the ML screen shows. */
@@ -148,11 +246,17 @@ export async function mlView(db: D1Database, user: string) {
   const stocks = wl.filter((x) => !isCrypto(x)), cwl = await getSetting<string[]>(db, `crypto_watchlist:${user}`, s.crypto_watchlist);
   let signals: Live[] = []; try { signals = [...(await directionNow(db, "stocks", stocks)), ...(await directionNow(db, "crypto", cwl))]; } catch { signals = []; }
   const { results: runs } = await db.prepare("SELECT at, task, market, ok, note, ms FROM ml_runs ORDER BY id DESC LIMIT 8").all();
-  return { settings: await mlSettings(db), models: results.map((r) => ({ id: r.id, task: r.task, market: r.market, created_at: r.created_at, active: !!r.active, report: JSON.parse(r.report), live: r.live ? JSON.parse(r.live) : null })), signals, runs, feature_help: FEATURE_HELP };
+  // A filter stored before its report listed its features, or with another list, must be retrained before it grades anything.
+  const stale = (task: Task, rep: { features?: string[] }) => (task === "filter" ? !sameFeatures(rep.features, SIGNAL_FEATURES) : false);
+  let live_grades: Record<string, Record<string, LiveGrade>> = {}; try { live_grades = { stocks: await liveGrades(db, "stocks"), crypto: await liveGrades(db, "crypto") }; } catch { live_grades = {}; }
+  return { settings: await mlSettings(db), models: results.map((r) => { const report = JSON.parse(r.report); return { id: r.id, task: r.task, market: r.market, created_at: r.created_at, active: !!r.active, report, live: r.live ? JSON.parse(r.live) : null, needs_retrain: stale(r.task, report) }; }),
+    signals, runs, feature_help: FEATURE_HELP, live_grades, live_rule: { min_n: LIVE_MIN_N, window_days: LIVE_WINDOW_DAYS } };
 }
 
 /** Weekly retrain, one task per cron minute so no single run does all the work: Sunday from 06:00 UTC. */
 export async function mlSchedule(env: Env, now = new Date()) {
+  // Every ten minutes: settle the logged live signals whose fixed window has passed (the per-grade live record).
+  if (now.getUTCMinutes() % 10 === 3) { try { await settleSignals(env.DB); } catch (e) { console.error("ml settle", e); } }
   if (now.getUTCDay() !== 0 || now.getUTCHours() !== 6) return;
   const plan: [number, Task, Market][] = [[5, "direction", "stocks"], [15, "filter", "stocks"], [25, "direction", "crypto"], [35, "filter", "crypto"]];
   const job = plan.find(([m]) => m === now.getUTCMinutes()); if (!job || !(await mlSettings(env.DB)).retrain) return;

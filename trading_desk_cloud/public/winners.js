@@ -20,6 +20,20 @@ async function loadWinners() {
   if (d.briefs.some((b) => b.status === "running" || b.status === "starting")) { clearTimeout(state.winners.timer); state.winners.timer = setTimeout(loadWinners, 30000); }
 }
 
+/* Which reported steps belong to which source card (the scan reports its steps under skills_run, by name). */
+const WIN_SRC_MATCH = { insider: /insider|form\s?4|edgar|sec\b/i, congress: /congress|pelosi|capitol|house|senate|ptr/i, funds: /fund|13f|dataroma|copycat|superinvestor|berkshire/i,
+  social: /social|stocktwits|trending|reddit|twitter/i, copytrader: /etoro|copy.?trad|leaderboard/i };
+/** One plain word for how a step failed, read from its status and note. */
+function winFailWord(k) {
+  const t = `${k.status || ""} ${k.note || ""}`;
+  return /block|403|forbidden|captcha|denied|cloudflare|not allowed|unauthori/i.test(t) ? "blocked" : /time.?d? ?out|timeout/i.test(t) ? "timed out" : /unmapped|not mapped|no mapping|unknown symbol/i.test(t) ? "unmapped"
+    : /429|rate.?limit/i.test(t) ? "rate limited" : k.status === "skipped" ? "skipped" : "failed";
+}
+/** The failed or skipped steps of a scan that feed one source card. */
+function winSourceProblems(key, skillsRun) {
+  const re = WIN_SRC_MATCH[key]; if (!re || !Array.isArray(skillsRun)) return [];
+  return skillsRun.filter((k) => k && k.status && k.status !== "ok" && k.status !== "reused" && re.test(`${k.skill || ""} ${k.note || ""}`)).map((k) => ({ skill: String(k.skill || "source"), word: winFailWord(k), note: k.note ? String(k.note) : "" }));
+}
 function srcChip(s) {
   const [label] = WIN_SRC[s.type] || [s.type];
   const c = el("span", `chip src ${s.type}`, `${label}${s.who ? ` · ${s.who}` : ""}`);
@@ -41,7 +55,13 @@ function renderWinners() {
   if (b.error) host.append(el("div", "msg err small", b.error));
   if (d.market?.summary) host.append(el("p", "bd-summary", d.market.summary));
   const skills = Array.isArray(d.skills_run) ? d.skills_run.filter((s) => s.status && s.status !== "ok") : [];
-  if (skills.length) host.append(el("div", "dim small", `Sources with problems: ${skills.map((s) => `${s.skill} (${s.status}${s.note ? `: ${s.note}` : ""})`).join(" · ")}`));
+  const realProblems = skills.filter((s) => s.status !== "reused");
+  if (realProblems.length) {
+    const box = el("div", "msg err small win-problems"); box.setAttribute("role", "status"); box.append(el("b", null, `${realProblems.length} source step${realProblems.length === 1 ? "" : "s"} did not work in this scan: `));
+    realProblems.forEach((s, i) => box.append(`${i ? " · " : ""}${s.skill} (${winFailWord(s)}${s.note ? `: ${s.note}` : ""})`));
+    box.append(" Each affected source is marked on its card below.");
+    host.append(box);
+  }
 
   // Picks with sources, selection and actions.
   const picks = Array.isArray(d.picks) ? d.picks : [];
@@ -77,8 +97,17 @@ function renderWinners() {
   const grid = el("div", "bd-grid win-grid");
   for (const key of ["insider", "congress", "funds", "social", "copytrader"]) {
     const rows = Array.isArray(w[key]) ? w[key] : (key === "funds" && Array.isArray(w.fund) ? w.fund : []);
-    if (!rows.length) continue;
-    const [label, help] = WIN_SRC[key]; const s = section(label, el("span", "dim small", `  ${rows.length}`)); s.title = help;
+    // Every source gets a card, and a source that failed says so ON the card (blocked, timed out, or nothing reported).
+    const probs = winSourceProblems(key, d.skills_run), [label, help] = WIN_SRC[key];
+    const s = section(label, el("span", "dim small", `  ${rows.length}`)); s.title = help; s.classList.add("win-card");
+    if (probs.length) {
+      s.classList.add("win-failed"); $("h3", s).append(" ", el("span", "badge th-down", probs[0].word));
+      for (const p of probs) s.append(el("div", "msg err small win-prob", `${p.skill}: ${p.word}${p.note ? `. ${p.note}` : ""}${rows.length ? " The rows below came from the parts that worked." : ""}`));
+    } else if (!rows.length) {
+      s.classList.add("win-empty"); $("h3", s).append(" ", el("span", "badge warn", "no data"));
+      s.append(el("div", "small warn-text win-prob", b.status !== "done" ? "No rows yet: the scan has not finished." : "No rows from this source in this scan, and the scan did not report whether the source worked. Treat it as not checked."));
+    }
+    if (!rows.length) { grid.append(s); continue; }
     const t = el("table", "bd-table small");
     for (const r of rows.slice(0, 25)) {
       const tr = el("tr"); const sym = String(r.symbol || "").toUpperCase(); const c = el("td", "sym"); const bb = el("b", null, sym); bb.style.cursor = "pointer"; bb.onclick = () => { setSymbol(sym); navigate("chart"); }; c.append(bb);

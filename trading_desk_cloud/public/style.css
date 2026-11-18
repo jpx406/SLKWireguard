@@ -1002,3 +1002,22 @@ tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } 
 .live-box.ok.stream .live-dot { animation: live-ring 1.4s ease-out infinite; }
 @keyframes live-ring { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .6); } 100% { box-shadow: 0 0 0 7px rgba(22, 163, 74, 0); } }
 @media (prefers-reduced-motion: reduce) { .live-box.ok.stream .live-dot { animation: none; box-shadow: 0 0 0 3px rgba(22, 163, 74, .3); } }
+
+/* ---- P3 cleanup: journal trade log, routine health, promoted strategies, source switches, scan age, winners cards */
+.journal { overflow-y: auto; } .journal > .table-wrap { flex: none; overflow-x: auto; overflow-y: visible; }
+.jr-h { margin: 12px 12px 2px; font-size: 1rem; font-weight: 600; } .jr-h .dim { font-weight: 400; margin-left: 6px; }
+.jr-stats { flex-wrap: wrap; gap: 6px 18px; } .jr-log { padding: 0 8px 8px; min-width: 0; }
+.tl-table td.tl-plan { min-width: 180px; max-width: 320px; } .tl-note-td { min-width: 190px; }
+input.tl-note { width: 100%; min-width: 170px; min-height: 32px; padding: 4px 8px; font-size: max(16px, 0.923rem); } .tl-saved { display: block; min-height: 1em; }
+.ap-health { margin-top: 6px; } .ap-health > summary { cursor: pointer; padding: 4px 0; } .ap-details.ap-health:not([open]) > .ap-slots { display: none; }
+.oh-list { gap: 8px; } .oh-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; } .oh-row + .oh-row { border-top: 1px solid var(--line); padding-top: 6px; }
+.oh-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.923rem; }
+.st-promote { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); } .st-promote .small { flex: 1; min-width: 200px; }
+.st-pacts { white-space: nowrap; } .st-pacts button { margin: 2px 4px 2px 0; } .st-why { max-width: 240px; white-space: normal; margin-top: 3px; }
+tr.src-off td { opacity: .62; } tr.src-off td.src-sw, tr.src-off td.sym { opacity: 1; } .src-sw .mt-switch { min-height: 32px; }
+.dash-bench { margin: 8px 0; }
+.scan-age { margin: 8px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); font-size: 0.923rem; }
+.scan-age.old { border-color: var(--warn, #b45309); background: color-mix(in srgb, var(--warn, #b45309) 12%, transparent); } .scan-age.old b { color: var(--warn, #b45309); }
+.win-problems { margin: 8px 0; } .win-card.win-failed { border-left: 3px solid var(--down); padding-left: 8px; } .win-card.win-empty { border-left: 3px solid var(--warn, #b45309); padding-left: 8px; }
+.win-prob { margin: 4px 0 6px; overflow-wrap: anywhere; }
+@media (max-width: 700px) { .st-pacts { white-space: normal; } .tl-table td.tl-plan { min-width: 150px; } }

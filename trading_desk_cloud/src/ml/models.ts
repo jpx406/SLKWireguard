@@ -22,17 +22,18 @@ export function mlpLogits(m: MlpJson, x: number[]): number[] {
 }
 export const mlpPredict = (m: MlpJson, x: number[]) => softmax(mlpLogits(m, x), m.T);
 
-export function trainMlp(X: number[][], y: number[], Xv: number[][], yv: number[], o: { hidden?: number[]; epochs?: number; lr?: number; dropout?: number; decay?: number; batch?: number; patience?: number; seed?: number; weighted?: boolean } = {}): { model: MlpJson; epochs: number; val_loss: number } {
+export function trainMlp(X: number[][], y: number[], Xv: number[][], yv: number[], o: { hidden?: number[]; epochs?: number; lr?: number; dropout?: number; decay?: number; batch?: number; patience?: number; min_epochs?: number; seed?: number; weighted?: boolean } = {}): { model: MlpJson; epochs: number; best_epoch: number; updates: number; val_loss: number } {
   const F = X[0].length, sizes = [F, ...(o.hidden ?? [32, 16]), K], L = sizes.length - 1, rand = rng(o.seed ?? 7), lr = o.lr ?? 0.002, drop = o.dropout ?? 0.2, decay = o.decay ?? 1e-4, B = o.batch ?? 64;
   const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
   const W = sizes.slice(0, L).map((nin, l) => Float64Array.from({ length: nin * sizes[l + 1] }, () => gauss() * Math.sqrt(2 / nin))), b = sizes.slice(1).map((n) => new Float64Array(n));
   const mW = W.map((w) => new Float64Array(w.length)), vW = W.map((w) => new Float64Array(w.length)), mb = b.map((v) => new Float64Array(v.length)), vb = b.map((v) => new Float64Array(v.length));
   const cw = o.weighted ? classWeights(y) : [1, 1, 1], idx = X.map((_, i) => i), snapshot = () => ({ W: W.map((w) => Array.from(w)), b: b.map((v) => Array.from(v)) });
   const evalLoss = () => { const m: MlpJson = { kind: "mlp", sizes, W: W.map((w) => w as unknown as number[]), b: b.map((v) => v as unknown as number[]), T: 1 }; let s = 0; for (let i = 0; i < Xv.length; i++) s -= Math.log(Math.max(softmax(mlpLogits(m, Xv[i]))[yv[i]], 1e-9)); return s / Math.max(Xv.length, 1); };
-  let best = Infinity, bestSnap = snapshot(), bad = 0, step = 0, ep = 0;
+  let best = Infinity, bestSnap = snapshot(), bad = 0, step = 0, ep = 0, bestEp = 0;
+  const maxEp = o.epochs ?? 60, minEp = Math.min(maxEp, o.min_epochs ?? 15);
   const acts: Float64Array[] = sizes.map((n) => new Float64Array(n)), masks = sizes.map((n) => new Float64Array(n)), delta = sizes.map((n) => new Float64Array(n));
   const gW = W.map((w) => new Float64Array(w.length)), gb = b.map((v) => new Float64Array(v.length));
-  for (ep = 1; ep <= (o.epochs ?? 60); ep++) {
+  for (ep = 1; ep <= maxEp; ep++) {
     for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; } // shuffles rows INSIDE the training split only
     for (let s = 0; s < idx.length; s += B) {
       const end = Math.min(s + B, idx.length); for (const g of gW) g.fill(0); for (const g of gb) g.fill(0);
@@ -48,9 +49,12 @@ export function trainMlp(X: number[][], y: number[], Xv: number[][], yv: number[
         for (let i = 0; i < b[l].length; i++) { const g = gb[l][i] / n; mb[l][i] = 0.9 * mb[l][i] + 0.1 * g; vb[l][i] = 0.999 * vb[l][i] + 0.001 * g * g; b[l][i] -= (lr * (mb[l][i] / c1)) / (Math.sqrt(vb[l][i] / c2) + 1e-8); }
       }
     }
-    const v = evalLoss(); if (v < best - 1e-4) { best = v; bestSnap = snapshot(); bad = 0; } else if (++bad >= (o.patience ?? 8)) break;
+    // Early stopping keeps the best pass, but may not end training before `min_epochs`: the first passes of a
+    // noisy problem often look "best" by luck, and stopping there returns a network that has barely been fitted.
+    const v = evalLoss(); if (v < best - 1e-4) { best = v; bestSnap = snapshot(); bad = 0; bestEp = ep; } else bad++;
+    if (bad >= (o.patience ?? 8) && ep >= minEp) break;
   }
-  return { model: { kind: "mlp", sizes, W: bestSnap.W, b: bestSnap.b, T: 1 }, epochs: ep, val_loss: best };
+  return { model: { kind: "mlp", sizes, W: bestSnap.W, b: bestSnap.b, T: 1 }, epochs: Math.min(ep, maxEp), best_epoch: bestEp, updates: step, val_loss: best };
 }
 
 // ------------------------------------------------------------------------------------------------ boosted trees
@@ -60,7 +64,7 @@ const treeValue = (t: Tree, x: number[]) => { let n = 0; while (t.f[n] >= 0) n =
 export function gbdtLogits(m: GbdtJson, x: number[]) { const z = m.base.slice(); for (const round of m.trees) for (let k = 0; k < K; k++) z[k] += treeValue(round[k], x); return z; }
 export const gbdtPredict = (m: GbdtJson, x: number[]) => softmax(gbdtLogits(m, x), m.T);
 
-export function trainGbdt(X: number[][], y: number[], Xv: number[][], yv: number[], o: { rounds?: number; depth?: number; lr?: number; lambda?: number; subsample?: number; colsample?: number; min_hess?: number; bins?: number; patience?: number; seed?: number; weighted?: boolean } = {}): { model: GbdtJson; rounds: number; val_loss: number } {
+export function trainGbdt(X: number[][], y: number[], Xv: number[][], yv: number[], o: { rounds?: number; depth?: number; lr?: number; lambda?: number; subsample?: number; colsample?: number; min_hess?: number; bins?: number; patience?: number; min_rounds?: number; seed?: number; weighted?: boolean } = {}): { model: GbdtJson; rounds: number; rounds_run: number; val_loss: number } {
   const N = X.length, F = X[0].length, rand = rng(o.seed ?? 11), lr = o.lr ?? 0.08, lam = o.lambda ?? 1, depth = o.depth ?? 3, NB = o.bins ?? 32, minH = o.min_hess ?? 5;
   // Histogram bins: quantile cut points per feature, from the training rows only.
   const cuts: number[][] = [], bin = new Uint8Array(N * F);
@@ -69,8 +73,8 @@ export function trainGbdt(X: number[][], y: number[], Xv: number[][], yv: number
   const cw = o.weighted ? classWeights(y) : [1, 1, 1], prior = new Array(K).fill(0); for (const v of y) prior[v] += 1 / N; const base = prior.map((p) => Math.log(Math.max(p, 1e-6)));
   const Z = Array.from({ length: N }, () => base.slice()), Zv = Xv.map(() => base.slice()), gain = new Array(F).fill(0), trees: Tree[][] = [];
   const g = new Float64Array(N), h = new Float64Array(N), node = new Int32Array(N);
-  let best = Infinity, bestRounds = 0, bad = 0;
-  for (let round = 0; round < (o.rounds ?? 200); round++) {
+  let best = Infinity, bestRounds = 0, bad = 0; const maxRounds = o.rounds ?? 200, minRounds = Math.min(maxRounds, o.min_rounds ?? 40);
+  for (let round = 0; round < maxRounds; round++) {
     const P = Z.map((z) => softmax(z)), rows: number[] = []; for (let i = 0; i < N; i++) if (rand() < (o.subsample ?? 0.8)) rows.push(i);
     const cols: number[] = []; for (let f = 0; f < F; f++) if (rand() < (o.colsample ?? 0.8)) cols.push(f); if (!cols.length) cols.push(Math.floor(rand() * F));
     const set: Tree[] = [];
@@ -100,10 +104,12 @@ export function trainGbdt(X: number[][], y: number[], Xv: number[][], yv: number
     trees.push(set);
     for (let i = 0; i < N; i++) for (let k = 0; k < K; k++) Z[i][k] += treeValue(set[k], X[i]);
     let s = 0; for (let i = 0; i < Xv.length; i++) { for (let k = 0; k < K; k++) Zv[i][k] += treeValue(set[k], Xv[i]); s -= Math.log(Math.max(softmax(Zv[i])[yv[i]], 1e-9)); }
-    const v = s / Math.max(Xv.length, 1); if (v < best - 1e-4) { best = v; bestRounds = round + 1; bad = 0; } else if (++bad >= (o.patience ?? 20)) break;
+    // As for the network: the best round is kept, but boosting may not stop before `min_rounds`.
+    const v = s / Math.max(Xv.length, 1); if (v < best - 1e-4) { best = v; bestRounds = round + 1; bad = 0; } else bad++;
+    if (bad >= (o.patience ?? 20) && round + 1 >= minRounds) break;
   }
   const tot = gain.reduce((a, b) => a + b, 0) || 1;
-  return { model: { kind: "gbdt", trees: trees.slice(0, Math.max(bestRounds, 1)), base, T: 1, gain: gain.map((v) => v / tot) }, rounds: Math.max(bestRounds, 1), val_loss: best };
+  return { model: { kind: "gbdt", trees: trees.slice(0, Math.max(bestRounds, 1)), base, T: 1, gain: gain.map((v) => v / tot) }, rounds: Math.max(bestRounds, 1), rounds_run: trees.length, val_loss: best };
 }
 
 /** Temperature scaling: one number that makes the stated probabilities honest (0.70 should be right about 70% of the time). Fitted on the held-out slice. */

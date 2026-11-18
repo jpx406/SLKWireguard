@@ -30,3 +30,9 @@ trained by backpropagation and gradient-boosted trees with a softmax objective. 
 10. **Labels mirror the trade.** The swing label is the swing trade the exit engine places (`src/exits.ts`): 2 ATR either
     way within 20 sessions. The signal filter trains on `backtestSignals`, which applies the same stop floor as live
     entries. If the exit policy defaults change, change the label and retrain; never train on exits the desk does not use.
+11. **Live evidence before a grade trades.** Validation is still the past. Every candle signal the filter grades is
+    logged when it is graded (`ml_signal_log`, traded or not) and settled later on the bars that followed with the
+    backtest's own exit rule (`walkSignalExit`: stop floor, target, fixed hold). A grade is `tradable` only with at
+    least 50 settled live signals whose expectancy is above zero at the low end (mean − 1.96 × SE > 0). The label is
+    realized R at that fixed hold; a stored model whose feature list differs from `SIGNAL_FEATURES` grades nothing
+    until it is retrained; early stopping may not end a fit before its minimum passes / rounds.

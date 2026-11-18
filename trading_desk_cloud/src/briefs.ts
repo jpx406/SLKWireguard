@@ -18,6 +18,7 @@ import { runTvAuto } from "./tvauto";
 import { finalizeConvert } from "./pineconv";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
 import { exitPrompt } from "./exits";
+import { normalizePicks } from "./picks";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
@@ -43,7 +44,7 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
   "setup":"gap-and-go above premarket high", "score":0-100, "confidence":"high|medium|low",
   "last":131.2, "premarket_change_pct":4.1, "rvol":3.2, "catalyst":"earnings beat",
   "market_cap":3.2e12, "avg_volume":2.5e8, "float_shares":2.4e10, "atr_pct":3.1, "exchange":"NASDAQ", "is_etf":false, "earnings_today":false,
-  "entry":131.25, "stop":129.8, "targets":[133.45,135.6], "rr":1.5, "size_shares":55,
+  "entry":131.25, "entry_type":"stop_on_close", "stop":129.8, "targets":[133.45,135.6], "rr":1.5, "size_shares":55, "horizon":"day",
   "exit_plan":"stop 0.35 x daily ATR under entry, beyond the premarket low; half off at T1, rest to T2 on the original stop; flat by 15:55",
   "invalidation":"loses VWAP on volume", "skills":["trader-scan","trader-risk"], "reason":"one line"
  }],
@@ -84,7 +85,7 @@ Report which skills you ran and whether each one worked. Then a short written br
 3. SUPERINVESTORS / FUNDS: https://www.dataroma.com/m/rt.php (real-time superinvestor activity) and https://www.dataroma.com/m/g/portfolio_b.php?q=q (top buys last quarter). Run /trader-copycat diff for 3-4 of the best long-term records (Berkshire Hathaway, Pershing Square, Appaloosa, Duquesne, Baupost, Greenlight) to catch new positions and big adds. 13F data is 45+ days old: use it for conviction, not timing.
 4. COPY-TRADING LEADERBOARDS AND SOCIAL: the StockTwits trending list (https://api.stocktwits.com/api/2/trending/symbols.json) for crowd interest, and if reachable the eToro public leaderboard (https://www.etoro.com/discover/people, or https://www.etoro.com/sapi/rankings/rankings?Period=OneYearAgo&page=1&pageSize=20&sort=-gain&Verified=true&MaxDailyRiskScore=6&HasAvatar=true&Gain=1&CopyBlock=false&IsFund=false) for what the top verified gainers hold. Social interest is a timing signal only, never a reason by itself.
 5. MERGE: one row per symbol. Conviction = how many independent source types agree (insider cluster counts double), recency, size, and whether the buyer has a good record. Drop illiquid names (average volume under 500k shares or price under $3) and anything with an earnings date inside the next 2 sessions unless the setup is specifically for it.
-6. PLAN each of the best 8-12 with /trader-entry and /trader-exit on today's chart: "horizon":"day" when there is momentum and relative volume today (entry on the intraday trigger, flat by the close), otherwise "horizon":"swing" (entry at support or on the breakout, stop under the structure, targets in R, hold through them). Size with /trader-risk per /workspace/trader/config.json. Score 0-100 on conviction AND setup quality together.
+6. PLAN each of the best 8-12 with /trader-entry and /trader-exit on the DAILY chart. Insider, congress and fund buying is an edge that plays out over weeks, so every plan here is "horizon":"swing": never "day" (the desk treats copy-desk plans as swing trades whatever is written). Entry at support or on a daily close above the trigger ("entry_type":"limit" for a pullback, "stop_on_close" for a breakout), stop about 1.5 x the daily ATR under the entry and under the structure, first target at 3R, expect to hold up to 10 sessions. Size with /trader-risk per /workspace/trader/config.json. Score 0-100 on conviction AND setup quality together.
 Fill "sources" on every pick. Also add at the top level of the JSON "winners": {"insider":[...], "congress":[...], "funds":[...], "social":[...]} with the raw rows you used ({"symbol","who","action","date","size","note"}), so the desk can show the feed even for names you did not plan. Then a short written briefing, then the JSON.` },
   { id: "cryptoscan", label: "Crypto scan (24/7 pairs)", et: "08:30", defaultOn: false, prompt:
     `CRYPTO SCAN. Crypto trades around the clock, so this scan runs every day, weekends included. Cover the crypto market with my trader-* skills and public data; all prices in USD, symbols in Yahoo notation (BTC-USD, ETH-USD, SOL-USD...).
@@ -196,7 +197,7 @@ async function priorPlan(db: D1Database, day: string): Promise<string> {
   let d: Record<string, any>;
   try { d = JSON.parse(b.data); } catch { return ""; }
   if (!d || !Array.isArray(d.picks) || !d.picks.length) return "";
-  const keep = ["rank", "symbol", "bias", "setup", "score", "entry", "stop", "targets", "rr", "exit_plan", "invalidation", "catalyst", "market_cap", "avg_volume", "float_shares", "exchange", "is_etf", "earnings_today"];
+  const keep = ["rank", "symbol", "bias", "horizon", "setup", "score", "entry", "stop", "targets", "rr", "exit_plan", "invalidation", "catalyst", "market_cap", "avg_volume", "float_shares", "exchange", "is_etf", "earnings_today"];
   const plan = {
     market: d.market ? { regime: d.market.regime, summary: d.market.summary, events: d.market.events } : undefined,
     picks: d.picks.slice(0, 10).map((p: Record<string, unknown>) => Object.fromEntries(keep.filter((k) => k in p).map((k) => [k, p[k]]))),
@@ -247,7 +248,9 @@ export function extractResult(text: string): { picks: unknown[]; [k: string]: un
   try {
     const obj = JSON.parse(last[1]);
     if (!obj || typeof obj !== "object") return null;
-    return { ...obj, picks: Array.isArray(obj.picks) ? obj.picks.slice(0, 15) : [] };
+    // Clean fields per pick (ticker without glued words, bias and horizon apart, R:R from the row's own levels).
+    const n = normalizePicks(Array.isArray(obj.picks) ? obj.picks.slice(0, 15) : []);
+    return { ...obj, picks: n.picks, ...(n.dropped ? { picks_dropped: n.dropped } : {}) };
   } catch { return null; }
 }
 

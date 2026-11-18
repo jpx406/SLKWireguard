@@ -298,7 +298,7 @@ function renderPaper(d) {
     };
     if (ro) exTd.append(el("span", `small exit-${mode}`, mode === "eod" ? "End of Day" : "Hold to Stop/Target")); else exTd.append(ex);
     tr.append(exTd, td(p.source), td(p.day_opened < d.ny_date ? `since ${p.day_opened}` : ago(p.opened_at), "dim small"));
-    const act = el("td"), close = el("button", "ghost small destructive", p.close_req ? "Sells at Next Open" : p.side === "long" ? "Sell Now" : "Cover Now"), edit = el("button", "ghost small", "Edit");
+    const act = el("td"), close = el("button", "ghost small destructive", p.close_req ? (p.side === "long" ? "Sells at Next Open" : "Covers at Next Open") : p.side === "long" ? "Sell Now" : "Cover Now"), edit = el("button", "ghost small", "Edit");
     close.disabled = !!p.close_req;
     close.setAttribute("aria-label", `${p.side === "long" ? "Sell" : "Cover"} ${p.qty} ${p.symbol} now`);
     edit.setAttribute("aria-label", `Edit stop-loss and take-profit for ${p.symbol}`);

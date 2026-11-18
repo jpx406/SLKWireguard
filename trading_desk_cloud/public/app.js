@@ -407,7 +407,7 @@ async function refreshQuotes(only) {
    One set of sections. Mac (wide): the sidebar picks the main section and the inspector shows Briefs, Copilot or
    Position Size beside it. iPad (medium): the sidebar lists every section and one shows at a time.
    iPhone (compact): a tab bar (Watchlist, Chart, Board, Paper, More). */
-const MAIN_SECTIONS = ["dashboard", "master", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "strat", "ml", "flow", "thesis", "kronos", "crypto", "learn", "journal", "more"];
+const MAIN_SECTIONS = ["dashboard", "invest", "master", "quant", "chart", "board", "paper", "monitor", "winners", "deep", "strat", "ml", "flow", "thesis", "kronos", "crypto", "learn", "journal", "more"];
 const INSP_SECTIONS = ["briefs", "copilot", "risk"];
 state.live = { last: 0, prev: {}, source: null };
 /** Flash a price element green or red when its value changed since the last time this key was drawn. */
@@ -502,6 +502,15 @@ function openHelp(which = "skills") {
 }
 $$("#helpSeg [data-help]").forEach((b) => (b.onclick = () => openHelp(b.dataset.help)));
 $("#btnHelpClose").onclick = () => $("#helpDlg").close();
+// Escape closes Help on the first press. The browser's own handling can spend the first Escape on the filter field's
+// suggestion list (or ignore it when focus sits outside the sheet), so the key is handled here, before anything else.
+$("#skillFilter").setAttribute("autocomplete", "off");
+document.addEventListener("keydown", (e) => {
+  const d = $("#helpDlg");
+  if (e.key !== "Escape" || e.isComposing || !d.open || $("#alertDlg")?.open) return;
+  e.preventDefault(); e.stopPropagation(); d.close();
+}, true);
+$("#helpDlg").addEventListener("cancel", (e) => { e.preventDefault(); $("#helpDlg").close(); });
 
 /* ------------------------------------------------------------------ accessibility
    Tabs, toggles, clickable rows and dialogs get the roles and keyboard behavior VoiceOver and keyboard users expect. */
@@ -981,7 +990,7 @@ function updateBoard(briefs, force) {
   const pick = options.find((b) => b.id === state.boardId)
     || options.find((b) => b.slot === "fullscan" && b.status === "done") || options.find((b) => b.status === "done") || options[0];
   if (pick) sel.value = pick.id;
-  const sig = pick ? `${pick.id}:${pick.status}` : "none";
+  const sig = pick ? `${pick.id}:${pick.status}:${state.briefData?.ny_date || ""}` : "none"; // the date is in it so "N days ago" is redrawn when the day changes
   if (!force && sig === state.boardSig) return; // don't wipe open rows on every poll
   state.boardSig = sig; renderBoard($("#board"), pick);
 }
