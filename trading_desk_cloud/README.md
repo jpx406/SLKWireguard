@@ -418,6 +418,37 @@ Active rules are enforced, not only suggested: every scan prompt starts with the
 
 **Why this design.** The reviewed tools (backtrader, backtesting.py, vectorbt, NautilusTrader) are strategy backtesters for code you write; the desk's "strategy" is a set of agent recommendations, so the right test is a point-in-time replay of exactly what was recommended, which is what the outcome engine does. Walk-forward testing with an out-of-sample part, conservative fills, minimum sample sizes and confidence bounds are the standard defenses against the backtest-looks-great-live-fails problem; purged cross-validation is not needed because nothing is fitted on the data beyond simple group averages.
 
+## Exit engine: stop distance, targets, time limit and the edge guard
+
+`src/exits.ts`, applied in `paper.ts` (scan picks) and `autochart.ts` (chart autopilot); `GET/PUT /api/exits`, `POST /api/exits/calibrate`; panel in Performance.
+
+**Why.** The auto trader and autopilot were stopped out too often. Two causes were found and measured:
+
+1. *Stops inside the noise.* On 12,166 strong candle signals in 59 days of 5-minute bars (30 large US stocks, 4 bps round-trip cost, flat at the close), a stop just beyond the pattern (about 0.4% away) was hit **57%** of the time and cost **0.20R** per trade. The same entries with the stop at 0.35 × the daily ATR(14) were hit **18%** of the time and cost **0.05R**. Random entries and opening-range breakouts gave the same picture, so the stop distance, not the signal, decided most outcomes. In percent of price every variant lost about the 4 bps cost: these entries have no edge, and a tight stop multiplies the cost because the position is larger for the same risk.
+2. *The stop was measured from the plan's entry, not the fill.* An entry is "the most to pay", so a long with entry 131.25 fills at once when the market is at 130.00. With the plan's stop at 129.90 that trade started 10 cents from its stop.
+
+Also measured: moving the stop to break-even or trailing it did not help in any test (slightly worse). On 7,211 daily-bar entries over six years, longs behind a 2 ATR stop held 20 sessions made +0.15R (+0.22R in the most recent 30%), shorts lost in every variant, and a trailing stop cut the result in half. That sample is today's large caps in a rising market, so treat the long result as "do not fight the drift", not as a strategy.
+
+**What the code does now.**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `day_stop_atr` | 0.35 | day trade: stop at least this many daily ATRs from the real starting price |
+| `swing_stop_atr` | 2 | swing trade: same |
+| `day_min_rr` / `swing_min_rr` | 1.5 / 3 | target at least this many times the risk (a nearer target is moved out) |
+| `swing_hold_days` | 20 | an automatic swing trade is closed at the market after this many sessions |
+| `swing_long_only` | on | swing shorts from scans are not auto-traded (crypto excepted) |
+| `edge_guard` | on | pauses automatic entries of a horizon that is losing beyond chance |
+| `auto_learn` | on | lets calibration move the two stop distances |
+
+A stop only ever moves away from the entry, and the position shrinks so the dollars at risk stay the same. Without daily history the minimum is 0.3% (day) or 2% (swing). Your own stop or target on a chart autopilot row still wins. The account's reward:risk filter judges the plan as recommended, before any adjustment. Crypto picks are now sized in fractions (they were silently skipped when the risk allowed less than one coin). The scans are told the rules (`exitPrompt`), and the example plan in the result format no longer shows a stop of one third of the minimum.
+
+**Self-improvement (the feedback loop).** When a plan settles, the same plan is replayed with every candidate stop distance (day: as recommended, 0.25, 0.35, 0.5, 0.75 ATR; swing: as recommended, 1.5, 2, 3 ATR) and stored in `pick_exits`. After each close `calibrateExits` re-fits the distance per horizon: it needs 40 fully replayed plans, picks the best on the older 70%, and adopts it only if it also beats the current setting on the newer 30% and the paired difference is more than twice its sampling error. "As recommended" is measured but never chosen. The **edge guard** looks at the last 60 days of settled plans per horizon (as the desk would have traded them): with 30 or more plans, an average below zero by more than two standard errors, and the last 20 still negative, automatic entries of that horizon stop. Plans are still scored, so entries resume by themselves when the last 20 turn positive. Each pause is written to the risk log.
+
+**ML after this change.** The signal backtester (`backtestSignals`) uses the same floor, so pattern statistics and the ML signal filter are now trained on the trades the desk would really place. With the floor, the candle signals lose about 0.06R instead of 0.36R, and the filter no longer separates good from bad on unseen data: most of what it had learned was "this stop is too tight". It marks itself display-only when that is the case. The swing direction label now mirrors the swing trade (2 ATR either way within 20 sessions; it was 1 ATR within 5). No labelling tested gave either model a proven edge, and the screen says so.
+
+**Limits.** A wider stop reduces how often noise and costs decide a trade; it does not make a losing idea win. Whether the scans' picks have an edge is exactly what the replay and the guard measure on your own data. The calibration table is empty until plans settle after this version is deployed (older settled plans from the last 50 days are back-filled a few per run).
+
 ## Plan monitor: entry, expected exit, exit detection
 
 Every chart (main chart, Monitor tiles, chart windows) watches the symbol's **plan**: your open paper position or working order, else today's latest recommendation for the symbol from any brief, else the latest Deep Analysis (5 days) with an entry and stop. The plan's levels are drawn (BUY/SHORT entry, STOP, T1/T2) and a status line under the chart says what is happening:

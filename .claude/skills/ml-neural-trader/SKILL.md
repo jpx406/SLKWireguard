@@ -26,3 +26,7 @@ trained by backpropagation and gradient-boosted trees with a softmax objective. 
 8. **Retrain and re-score.** Weekly retrain; before replacing a model, score it on the bars that arrived after it
    was trained and keep that record.
 9. **Report honestly.** If there is no edge, say so in plain words in the UI and in any summary.
+
+10. **Labels mirror the trade.** The swing label is the swing trade the exit engine places (`src/exits.ts`): 2 ATR either
+    way within 20 sessions. The signal filter trains on `backtestSignals`, which applies the same stop floor as live
+    entries. If the exit policy defaults change, change the label and retrain; never train on exits the desk does not use.

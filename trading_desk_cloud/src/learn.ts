@@ -8,6 +8,7 @@ import "../public/candles.js";
 import { candles, isCrypto } from "./market";
 import { clockNow, nyNow, nextTradingDate, sessionTimes, isTradingDay } from "./briefs";
 import { getSetting, getSettings, setSetting } from "./db";
+import { VARIANTS, applyExit, atrAsOf, calibrateExits, ensureExits, exitPolicy, DEFAULT_EXIT, type ExitPolicy } from "./exits";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -42,17 +43,18 @@ export async function ensureLearn(db: D1Database) {
 
 // ------------------------------------------------------------------------------------------- replay
 /** Replay one plan on the bars after it was made. Returns the fields to store. */
-export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string; symbol?: string }, bars: Bar[], now = nowS()) {
-  const long = o.side === "long", risk = Math.abs(o.entry - o.stop);
+export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string; symbol?: string; hold_days?: number; risk?: number }, bars: Bar[], now = nowS()) {
+  const long = o.side === "long", risk = o.risk ?? Math.abs(o.entry - o.stop);
   if (!(risk > 0)) return { status: "expired" as const };
   // Entry window: a day plan until that session's close; a swing plan for three sessions. Trade window: the
-  // session close (day) or ten sessions (swing).
+  // session close (day) or the swing time limit (20 sessions unless the exit policy says otherwise).
+  const hold = Math.max(3, o.hold_days ?? DEFAULT_EXIT.swing_hold_days);
   const closeOf = (date: string) => { const [y, m, d] = date.split("-").map(Number); return Date.UTC(y, m - 1, d) / 1000 + sessionTimes(date).close * 60 + nyOffset(date); };
   let entryEnd = closeOf(o.day), d = o.day;
   if (o.horizon === "swing") { for (let i = 0; i < 2; i++) d = nextTradingDate(d); entryEnd = closeOf(d); }
   let tradeEnd = closeOf(o.day); d = o.day;
-  if (o.horizon === "swing") { for (let i = 0; i < 9; i++) d = nextTradingDate(d); tradeEnd = closeOf(d); }
-  if (o.symbol && isCrypto(o.symbol)) { entryEnd = o.created_at + (o.horizon === "swing" ? 3 : 1) * 86400; tradeEnd = o.created_at + (o.horizon === "swing" ? 10 : 1) * 86400; } // 24/7: clock windows
+  if (o.horizon === "swing") { for (let i = 0; i < hold - 1; i++) d = nextTradingDate(d); tradeEnd = closeOf(d); }
+  if (o.symbol && isCrypto(o.symbol)) { entryEnd = o.created_at + (o.horizon === "swing" ? 3 : 1) * 86400; tradeEnd = o.created_at + (o.horizon === "swing" ? hold : 1) * 86400; } // 24/7: clock windows
   const after = bars.filter((b) => b.time >= o.created_at && b.time + 300 <= now);
   if (!after.length) return { status: (now > entryEnd ? "no_trigger" : "pending") as "no_trigger" | "pending" };
   let fill: number | null = null, triggered_at: number | null = null, i = 0;
@@ -116,13 +118,14 @@ export async function evaluatePicks(db: D1Database, limit = 12) {
   // 2. Due evaluations (the market must have moved since the last check).
   const due = (await db.prepare("SELECT * FROM pick_outcomes WHERE status IN ('pending', 'open') AND next_check <= ? AND symbol != '-' ORDER BY next_check LIMIT ?").bind(t, limit).all<Outcome>()).results;
   const cache = new Map<string, Bar[]>();
+  const pol = await exitPolicy(db);
   let evaluated = 0;
   for (const o of due) {
     const ageDays = (t - o.created_at) / 86400;
     if (ageDays > MAX_LOOKBACK_DAYS) { await db.prepare("UPDATE pick_outcomes SET status = 'expired', updated_at = ? WHERE id = ?").bind(t, o.id).run(); continue; }
     try {
       if (!cache.has(o.symbol)) cache.set(o.symbol, (await candles(o.symbol, "5m", Math.min(59, Math.ceil(ageDays) + 2))) as Bar[]);
-      const r = replay(o, cache.get(o.symbol)!, t);
+      const r = replay({ ...o, hold_days: pol.swing_hold_days }, cache.get(o.symbol)!, t);
       const next = t + (o.horizon === "day" ? DAY_CHECK : SWING_CHECK);
       if (r.status === "pending" || r.status === "open") {
         await db.prepare("UPDATE pick_outcomes SET status = ?, fill = ?, triggered_at = ?, r_result = ?, mfe_r = ?, mae_r = ?, next_check = ?, updated_at = ? WHERE id = ?")
@@ -131,11 +134,45 @@ export async function evaluatePicks(db: D1Database, limit = 12) {
         const x = r as { status: string; fill?: number | null; triggered_at?: number | null; exit_at?: number | null; exit_price?: number | null; r_result?: number | null; mfe_r?: number | null; mae_r?: number | null };
         await db.prepare("UPDATE pick_outcomes SET status = ?, fill = ?, triggered_at = ?, exit_at = ?, exit_price = ?, r_result = ?, mfe_r = ?, mae_r = ?, updated_at = ? WHERE id = ?")
           .bind(x.status, x.fill ?? null, x.triggered_at ?? null, x.exit_at ?? null, x.exit_price ?? null, x.r_result ?? null, x.mfe_r ?? null, x.mae_r ?? null, t, o.id).run();
+        if (["win", "loss", "timed"].includes(x.status)) { try { await replayVariants(db, o, cache.get(o.symbol)!, pol, t); } catch { /* the backfill below retries */ } }
       }
       evaluated++;
     } catch { await db.prepare("UPDATE pick_outcomes SET next_check = ?, updated_at = ? WHERE id = ?").bind(t + 1800, t, o.id).run(); }
   }
+  // 3. Exit variants still missing for settled plans (older plans, or a wider stop that had not resolved yet).
+  try {
+    const todo = (await db.prepare(`SELECT o.* FROM pick_outcomes o WHERE o.status IN ('win','loss','timed') AND o.symbol != '-' AND o.created_at >= ?
+      AND (SELECT COUNT(*) FROM pick_exits x WHERE x.id = o.id) < (CASE o.horizon WHEN 'swing' THEN ${VARIANTS.swing.length} ELSE ${VARIANTS.day.length} END) ORDER BY o.updated_at LIMIT 3`).bind(t - 50 * 86400).all<Outcome>()).results;
+    for (const o of todo) {
+      if (!cache.has(o.symbol)) cache.set(o.symbol, (await candles(o.symbol, "5m", Math.min(59, Math.ceil((t - o.created_at) / 86400) + 2))) as Bar[]);
+      await replayVariants(db, o, cache.get(o.symbol)!, pol, t);
+      await db.prepare("UPDATE pick_outcomes SET updated_at = ? WHERE id = ?").bind(t, o.id).run();
+    }
+  } catch { /* next tick */ }
   return { registered: briefs.length, evaluated };
+}
+
+const dailyCache = new Map<string, { at: number; bars: Bar[] }>();
+/** The same plan replayed with each candidate stop distance (exits.ts VARIANTS), so the desk can learn which distance
+ *  its own plans needed. Multiple 0 is the plan exactly as recommended. Unresolved variants are left for a later pass. */
+export async function replayVariants(db: D1Database, o: Outcome, bars: Bar[], pol: ExitPolicy, now = nowS()) {
+  await ensureExits(db);
+  let d = dailyCache.get(o.symbol);
+  if (!d || Date.now() - d.at > 3600_000) { d = { at: Date.now(), bars: (await candles(o.symbol, "1d", Math.ceil((now - o.created_at) / 86400) + 60)) as Bar[] }; dailyCache.set(o.symbol, d); }
+  const atr = atrAsOf(d.bars, o.day);
+  const first = bars.find((b) => b.time >= o.created_at), ref = !first ? o.entry : o.side === "long" ? Math.min(o.entry, first.open) : Math.max(o.entry, first.open);
+  for (const mult of VARIANTS[o.horizon]) {
+    let status = "na", r: number | null = null;
+    if (atr || mult === 0) {
+      // As the auto trader does it: distances are measured from where the trade really starts (the market, when it is already better than the entry).
+      const adj = applyExit({ side: o.side, entry: ref, stop: o.stop, target: o.target, horizon: o.horizon }, atr, pol, mult);
+      if (mult > 0 && (o.side === "long" ? ref <= o.stop : ref >= o.stop)) { await db.prepare("INSERT OR REPLACE INTO pick_exits (id, mult, horizon, created_at, status, r) VALUES (?, ?, ?, ?, 'na', NULL)").bind(o.id, mult, o.horizon, o.created_at).run(); continue; }
+      const res = replay({ ...o, stop: adj.stop, target: adj.target, hold_days: pol.swing_hold_days, ...(mult > 0 ? { risk: adj.risk } : {}) }, bars, now) as { status: string; r_result?: number | null };
+      if (res.status === "pending" || res.status === "open") continue; // not resolved yet with this stop
+      status = res.status; r = res.r_result ?? null;
+    }
+    await db.prepare("INSERT OR REPLACE INTO pick_exits (id, mult, horizon, created_at, status, r) VALUES (?, ?, ?, ?, ?, ?)").bind(o.id, mult, o.horizon, o.created_at, status, r).run();
+  }
 }
 
 // ------------------------------------------------------------------------------------------- statistics
@@ -263,10 +300,31 @@ const HOLD_BARS: Record<string, number> = { "5m": 24, "15m": 16, "60m": 12, "1d"
 const LOOKBACK: Record<string, number> = { "5m": 30, "15m": 59, "60m": 240, "1d": 730 };
 export type SignalTrade = { time: number; pattern: string; label: string; dir: string; strength: number; entry: number; stop: number; target: number; exit: number; exit_time: number; r: number; reason: "stop" | "target" | "time"; oos: boolean };
 
+/** Daily ATR(14) as known at each intraday bar (from the days completed before it), built from the bars themselves.
+ *  Bars that already are daily (or longer) use their own ATR. Until 15 days of history exist it is estimated from the
+ *  bars' own ATR (a day's range is about 1.3 × sqrt(bars per session) bar ranges: measured, 0.35 daily ATR = 4 × ATR on 5m). */
+export function dailyAtrOfBars(bars: Bar[]): (number | null)[] {
+  const out: (number | null)[] = new Array(bars.length).fill(null); if (bars.length < 3) return out;
+  const step = bars[1].time - bars[0].time, days: { hi: number; lo: number; close: number }[] = [], dayOf = (t: number) => Math.floor(t / 86400);
+  let cur = -1, atr: number | null = null, known: number | null = null, nDays = 0, bAtr: number | null = null; const scale = step >= 86400 ? 1 : 1.3 * Math.sqrt(Math.max(1, 23400 / Math.max(step, 60)));
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i], d = step >= 86400 ? i : dayOf(b.time);
+    if (i > 0) { const tr = Math.max(b.high - b.low, Math.abs(b.high - bars[i - 1].close), Math.abs(b.low - bars[i - 1].close)); bAtr = bAtr === null ? tr : (bAtr * 13 + tr) / 14; }
+    if (d !== cur) {
+      if (days.length >= 2) { const x = days[days.length - 1], p = days[days.length - 2], tr = Math.max(x.hi - x.lo, Math.abs(x.hi - p.close), Math.abs(x.lo - p.close)); atr = atr === null ? tr : (atr * 13 + tr) / 14; nDays++; if (nDays >= 14) known = atr; }
+      days.push({ hi: b.high, lo: b.low, close: b.close }); cur = d;
+    } else { const x = days[days.length - 1]; x.hi = Math.max(x.hi, b.high); x.lo = Math.min(x.lo, b.low); x.close = b.close; }
+    out[i] = known ?? (i >= 15 && bAtr !== null ? bAtr * scale : null);
+  }
+  return out;
+}
+
 /** Backtest the chart-autopilot signal rule on completed bars: enter at the pattern bar's close, stop just beyond the
  *  pattern's extreme, target 2R, out after `holdBars`. The last 30% of the bars are the out-of-sample part. */
-export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdBars?: number; only?: string[]; trendGate?: boolean; costBps?: number } = {}) {
+export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdBars?: number; only?: string[]; trendGate?: boolean; costBps?: number; stopAtr?: number; minRR?: number } = {}) {
   const C = Candles(); const minS = opts.minStrength ?? 2, hold = opts.holdBars ?? 24;
+  // The same floor the live rule applies: the stop is at least `stopAtr` daily ATRs away (0 = the old pattern-only stop).
+  const stopAtr = opts.stopAtr ?? DEFAULT_EXIT.day_stop_atr, minRR = opts.minRR ?? (stopAtr > 0 ? DEFAULT_EXIT.day_min_rr : 2), dAtr = stopAtr > 0 ? dailyAtrOfBars(bars) : null;
   const costBps = opts.costBps ?? 4; // round-trip slippage + spread + fees, in basis points of the price, charged on every trade
   const hits = C.detect(bars, { only: opts.only, trendGate: opts.trendGate !== false }).filter((h) => h.strength >= minS);
   const oosFrom = Math.floor(bars.length * 0.7);
@@ -275,9 +333,9 @@ export function backtestSignals(bars: Bar[], opts: { minStrength?: number; holdB
     if (h.index <= busyUntil || h.index + 1 >= bars.length) continue;
     const patt = bars.slice(h.index - h.bars + 1, h.index + 1), long = h.dir === "bullish", entry = bars[h.index].close;
     const lo = Math.min(...patt.map((b) => b.low)), hi = Math.max(...patt.map((b) => b.high)), pad = (hi - lo) * 0.1;
-    const stop = long ? lo - pad : hi + pad, risk = Math.abs(entry - stop);
-    if (!(risk > 0) || risk / entry > 0.05) continue;
-    const target = long ? entry + 2 * risk : entry - 2 * risk;
+    const risk = Math.max(Math.abs(entry - (long ? lo - pad : hi + pad)), dAtr && dAtr[h.index] ? stopAtr * dAtr[h.index]! : 0), stop = long ? entry - risk : entry + risk;
+    if (!(risk > 0) || risk / entry > 0.08) continue;
+    const target = long ? entry + minRR * risk : entry - minRR * risk;
     let exit = entry, reason: SignalTrade["reason"] = "time", exitT = bars[h.index].time, j = h.index + 1;
     for (; j < Math.min(bars.length, h.index + 1 + hold); j++) {
       const b = bars[j];
@@ -343,6 +401,7 @@ export async function learnTick(db: D1Database) {
     const pb = await getSetting<Playbook | null>(db, "learn_playbook", null);
     if (!pb || nowS() - pb.at > 12 * 3600) {
       await buildPlaybook(db);
+      try { await calibrateExits(db); } catch { /* not enough settled plans yet */ }
       // Night review: a proposal from today's failure report waits for approval; nothing is applied by itself.
       try { const { proposeFromStats } = await import("./strategy"); const open = await db.prepare("SELECT 1 FROM strategy_versions WHERE status IN ('proposed','thinking') LIMIT 1").first(); if (!open) await proposeFromStats(db); } catch { /* not enough data yet */ }
     }

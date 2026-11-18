@@ -23,6 +23,7 @@ import { summary as paperSummary, setKillSwitch } from "./paper";
 import { kellyRead, marketRegime, recentRiskLog, regimeAccuracy, portfolioRisk } from "./risk";
 import { masterApply, masterView } from "./master";
 import { pairDetail, scanPairs } from "./pairs";
+import { calibrateExits, exitsView, sanitizeExit } from "./exits";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
@@ -181,6 +182,15 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // Exit engine: the stop / target policy in force, what was learned from the desk's own plans, and the edge guard.
+  if (path === "/exits" && m === "GET") return json(await exitsView(env.DB));
+  if (path === "/exits" && m === "PUT") {
+    if (who.role !== "admin") return bad("Only the admin changes the exit policy.", 403);
+    const b = await body<{ policy?: unknown; reset?: unknown }>(req);
+    await setSetting(env.DB, "exit_policy_user", b.reset === true ? null : sanitizeExit(b.policy, sanitizeExit((await getSetting<Record<string, unknown> | null>(env.DB, "exit_policy_user", null)) || {})));
+    return json(await exitsView(env.DB));
+  }
+  if (path === "/exits/calibrate" && m === "POST") { if (who.role !== "admin") return bad("Admin only.", 403); await calibrateExits(env.DB); return json(await exitsView(env.DB)); }
   // Self-improving loop: failure analyzer, proposals (stats or Claude), validation, versions with approve / reject.
   const agentReady = !!(env.AGENT_ID && env.ENVIRONMENT_ID && env.ANTHROPIC_API_KEY);
   if (path === "/strategy" && m === "GET") {

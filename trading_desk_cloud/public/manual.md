@@ -357,6 +357,33 @@ Approved rules are enforced: scans read them, and automatic trading skips plans 
 
 ---
 
+### Exit engine: why trades are no longer stopped out by noise
+
+At the bottom of the self-improving loop there is a panel called **Exit engine**. It answers one problem: automatic trades were being stopped out too often.
+
+**What was wrong.** Two things, both measured on real prices:
+
+- *The stops were too close.* A stock moves a certain amount on a normal day (its **ATR**, the average daily range). A stop placed closer than a third of that range is hit by ordinary wobble more than half the time, whether the idea was right or not. On 12,000 real signals the tight stop was hit 57% of the time; the same trades with a stop at 0.35 × ATR were hit 18% of the time and lost a quarter as much.
+- *The stop was measured from the planned entry, not the real one.* If the plan said "buy at 131.25, stop 129.90" and the market was at 130.00, the trade filled at 130.00 and sat 10 cents from its stop.
+
+**What the desk does now.** For every automatic entry (from scans or from the chart autopilot):
+
+1. The stop is at least **0.35 × daily ATR** away for a day trade and **2 × ATR** for a swing trade, measured from the real starting price. If the plan's stop is further, it is kept.
+2. The position is made **smaller** when the stop is widened, so the dollars at risk do not change.
+3. The target is at least **1.5 times the risk** (day) or **3 times** (swing).
+4. A swing trade that hits neither level is closed after **20 sessions**.
+5. Swing **shorts** from scans are not auto-traded (over six years of daily data shorts lost in every test).
+
+The note on each order says what was changed, for example *stop widened from 99.8 to 98.6 (0.35 × daily ATR 4)*.
+
+**The guard.** Two lines at the top of the panel say whether day-trade and swing entries are trading normally or **paused**. A type is paused when at least 30 of its plans settled in the last 60 days, they lost on average by more than chance can explain, and the last 20 are still negative. Plans keep being scored while paused, and entries resume by themselves when results recover. You can switch the guard off.
+
+**It learns.** Each settled plan is replayed with every stop distance, and the two tables show the result side by side (how often stopped, win rate, average R, and the same for the most recent plans). After each close the desk changes its own distance only when another one was clearly better on old **and** recent plans. Untick "Let the desk re-fit…" to keep your own numbers. **Re-fit now** runs it immediately; **Back to defaults** restores the measured values.
+
+**Not used on purpose:** moving the stop to break-even and trailing stops. Both made results slightly worse in every test.
+
+**Honest limit.** A wider stop stops noise and costs from deciding the trade. It cannot turn a bad idea into a good one. If the picks themselves have no edge, the guard is what stops the losses, and the tables are where you will see it.
+
 ## 15. Journal
 
 Your own notes on real or paper trades, with statistics. Writing why you took a trade and what happened is the cheapest improvement tool there is. Use it for anything the automatic record cannot know: your mood, a rule you broke, news you reacted to.

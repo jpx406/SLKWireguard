@@ -17,6 +17,7 @@ import { mlContext, mlSchedule } from "./ml/engine";
 import { runTvAuto } from "./tvauto";
 import { finalizeConvert } from "./pineconv";
 import { finalizeStrategy, rulesPrompt } from "./strategy";
+import { exitPrompt } from "./exits";
 
 export async function getScanFilters(db: D1Database): Promise<ScanFilters> {
   return sanitizeFilters(await getSetting<unknown>(db, "scan_filters", DEFAULT_FILTERS));
@@ -42,14 +43,14 @@ End your answer with ONE fenced \`\`\`json block (nothing after it) with this ex
   "setup":"gap-and-go above premarket high", "score":0-100, "confidence":"high|medium|low",
   "last":131.2, "premarket_change_pct":4.1, "rvol":3.2, "catalyst":"earnings beat",
   "market_cap":3.2e12, "avg_volume":2.5e8, "float_shares":2.4e10, "atr_pct":3.1, "exchange":"NASDAQ", "is_etf":false, "earnings_today":false,
-  "entry":131.25, "stop":129.9, "targets":[133.0,134.8], "rr":2.6, "size_shares":55,
-  "exit_plan":"scale 1/2 at T1, stop to breakeven, trail rest under 9 EMA; flat by 15:55",
+  "entry":131.25, "stop":129.8, "targets":[133.45,135.6], "rr":1.5, "size_shares":55,
+  "exit_plan":"stop 0.35 x daily ATR under entry, beyond the premarket low; half off at T1, rest to T2 on the original stop; flat by 15:55",
   "invalidation":"loses VWAP on volume", "skills":["trader-scan","trader-risk"], "reason":"one line"
  }],
  "avoid": [{"symbol":"XYZ","reason":"low float halt risk"}],
  "skills_run": [{"skill":"trader-scan","status":"ok|failed|skipped","note":""}]
 }
-Picks may carry "horizon": "day" (default, flat by the close) or "swing" (held 2-10 sessions; the paper desk then holds it until the stop or target).
+Picks may carry "horizon": "day" (default, flat by the close) or "swing" (held 2-20 sessions; the paper desk then holds it until the stop or target).
 Every pick must also carry "edge" (one sentence: why this should work and who is on the other side) and "bear_case" (one sentence: the strongest reason it fails); a pick you cannot write both for does not belong on the list.
 A pick may carry "sources": [{"type":"insider|congress|fund|social|copytrader","who":"name","action":"buy|sell","date":"YYYY-MM-DD","size":"$1.2M","note":"3 insiders in 10 days"}] when it comes from following other traders.
 Rank picks best first (max 10), one entry per symbol, sizes within /workspace/trader/config.json.`;
@@ -227,7 +228,7 @@ export async function startBrief(env: Env, slotId: SlotId, ny = nyNow(), filters
     // The full scan runs every skill, so it gets twice the normal per-session budget.
     const sid = await createSession(env, slot.id === "fullscan" ? s.session_budget_usd * 2 : s.session_budget_usd, engine as never);
     await env.DB.prepare("UPDATE briefs SET engine = ? WHERE id = ?").bind(engine, id).run();
-    const handoff = (await rulesPrompt(env.DB)) + (await playbookPrompt(env.DB)) + (await kronosContext(env.DB, s.watchlist)) + (await thesisContext(env.DB)) + (await flowContext(env.DB, s.watchlist)) + (await mlContext(env.DB, s.watchlist)) + (s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "");
+    const handoff = (await rulesPrompt(env.DB)) + "\n\n" + (await exitPrompt(env.DB)) + "\n\n" + (await playbookPrompt(env.DB)) + (await kronosContext(env.DB, s.watchlist)) + (await thesisContext(env.DB)) + (await flowContext(env.DB, s.watchlist)) + (await mlContext(env.DB, s.watchlist)) + (s.reuse_research && REFRESH_SLOTS.has(slot.id) ? await priorPlan(env.DB, ny.date) : "");
     const filters = slot.id === "fullscan" ? filtersOverride ?? (await getScanFilters(env.DB)) : null;
     if (filters) await env.DB.prepare("UPDATE briefs SET params = ? WHERE id = ?").bind(JSON.stringify(filters), id).run();
     const text = `${configContext(s.trader_config)}[Autopilot — ${slot.label}, ${ny.date}, New York ${String(Math.floor(ny.minutes / 60)).padStart(2, "0")}:${String(ny.minutes % 60).padStart(2, "0")}] My watchlist: ${watchlist}.\n\n${handoff}${slot.prompt}\n${filters ? filtersPrompt(filters) : ""}\n${RESULT_FORMAT}`;

@@ -3,7 +3,8 @@
 import { candles, isCrypto, latestPrice } from "./market";
 import { activeRules, ruleBlocks } from "./strategy";
 import { kellyRead, marketRegime, riskLog, type RegimeRead } from "./risk";
-import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes } from "./briefs";
+import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes, nextTradingDate } from "./briefs";
+import { applyExit, dailyAtr, edgeStatus, exitPolicy, type ExitPolicy, type Horizon } from "./exits";
 
 export type Side = "long" | "short";
 /** "stop" only exists on rows from older versions; it is now handled exactly like a limit. */
@@ -286,7 +287,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
   const orders = (await db.prepare(`SELECT * FROM paper_orders WHERE status = 'open'${where}`).bind(...bind).all<Order>()).results;
   const positions = (await db.prepare(`SELECT * FROM paper_positions WHERE status = 'open'${where}`).bind(...bind).all<Position>()).results;
   if (!orders.length && !positions.length) return;
-  const ny = nyNow(), t = nowS();
+  const ny = nyNow(), t = nowS(); let holdDays: number | undefined;
   const symbols = [...new Set([...orders.map((o) => o.symbol), ...positions.map((p) => p.symbol)])];
   const bars = new Map<string, Bar[]>();
   await Promise.all(symbols.map(async (s) => { try { bars.set(s, await barsFor(s)); } catch { /* data hiccup: retry next run */ } }));
@@ -352,6 +353,16 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     if (mode === "eod" && (p.day_opened < ny.date || (p.day_opened === ny.date && ny.minutes >= cut))) {
       const last = bars.get(p.symbol)?.at(-1)?.close;
       if (last) { await closePos(db, p, last, "end of day"); continue; }
+    }
+    // An automatic swing trade that has hit neither level after the time limit is closed: money tied up in a trade
+    // that is going nowhere is the cost a wide stop would otherwise hide.
+    if (p.exit_mode === "hold" && p.source === "auto") {
+      holdDays ??= (await exitPolicy(db)).swing_hold_days;
+      let over = false;
+      if (isCrypto(p.symbol)) over = t - p.opened_at >= holdDays * 86400;
+      else if (isTradingDay(ny) && ny.minutes >= sessionTimes(ny.date).close - 5) { let d = p.day_opened, n = 0; while (d < ny.date && n < holdDays) { d = nextTradingDate(d); n++; } over = n >= holdDays; }
+      const last = bars.get(p.symbol)?.at(-1)?.close;
+      if (over && last) { await closePos(db, p, last, `time limit (${holdDays} sessions)`); continue; }
     }
     if (bs.length) await db.prepare("UPDATE paper_positions SET last_checked = ? WHERE id = ? AND status = 'open'").bind(bs.at(-1)!.time + 60, p.id).run();
   }
@@ -425,6 +436,8 @@ export async function autoTradeNewBriefs(db: D1Database) {
   const accounts = (await db.prepare("SELECT * FROM paper_accounts").all<Account>()).results
     .map((a) => ({ ...a, s: sanitizePaperSettings(JSON.parse(a.settings || "{}")) })).filter((a) => a.s.auto_trade);
   const active = await activeRules(db);
+  // Exit engine: minimum stop distance, long-only swings, and the guard that pauses a horizon which keeps losing.
+  const pol = await exitPolicy(db), edge = pol.edge_guard ? await edgeStatus(db) : null;
   for (const b of briefs) {
     let picks: Pick[] = [], regime: string | null = null;
     try { const d = JSON.parse(b.data || "{}"); picks = (d?.picks ?? []) as Pick[]; regime = typeof d?.market?.regime === "string" ? d.market.regime.toLowerCase() : null; } catch { continue; }
@@ -432,17 +445,21 @@ export async function autoTradeNewBriefs(db: D1Database) {
     // The active strategy version (Performance › self-improving loop) filters what auto-trade may take.
     if (active) picks = picks.filter((p) => !ruleBlocks(active.rules, { score: num(p.score), setup: p.setup ?? null, slot: b.slot, symbol: p.symbol ?? null, regime, created_at: nowS(),
       sources: Array.isArray((p as Pick & { sources?: { type?: string }[] }).sources) ? ((p as Pick & { sources?: { type?: string }[] }).sources || []).map((x) => String(x.type || "")) : null }));
+    const hz = (p: Pick): Horizon => (p.horizon === "swing" ? "swing" : "day");
+    const paused = edge ? (["day", "swing"] as Horizon[]).filter((h) => edge[h].paused && picks.some((p) => hz(p) === h)) : [];
+    if (paused.length) { for (const a of accounts) for (const h of paused) await riskLog(db, a.user, "*", "edge-guard", edge![h].text); picks = picks.filter((p) => !paused.includes(hz(p))); }
+    if (pol.swing_long_only) picks = picks.filter((p) => !(hz(p) === "swing" && /short/i.test(p.bias || "") && !isCrypto(String(p.symbol || ""))));
     if (!picks.length) continue;
     for (const a of accounts) {
       // Each account's own triggers: which scans, which time window (swing picks ignore the intraday window).
       if (a.s.auto_slots.length && !a.s.auto_slots.includes(b.slot)) continue;
       if (b.slot !== "swing" && (ny.minutes < toMin(a.s.auto_start) || ny.minutes >= toMin(a.s.auto_end))) continue;
-      await autoTradeAccount(db, a, picks, b);
+      await autoTradeAccount(db, a, picks, b, pol);
     }
   }
 }
 
-async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string }) {
+async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string }, pol: ExitPolicy) {
   const s = a.s, today = nyNow().date;
   const cap = (await activeRules(db))?.rules.max_trades_day;
   let tradesLeft = Math.min(s.auto_max_trades_day, cap ?? Infinity) - ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source = 'auto' AND day = ? AND status IN ('open', 'filled')")
@@ -458,28 +475,39 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
   const eq = await equityOf(db, a.user);
   for (const p of [...picks].sort((x, y) => (num(y.score) ?? 0) - (num(x.score) ?? 0))) {
     if (slots <= 0 || tradesLeft <= 0) break;
-    const symbol = String(p.symbol || "").toUpperCase(), entry = num(p.entry), stop = num(p.stop);
-    if (!symbol || busy.has(symbol) || blocked.has(symbol) || entry === null || stop === null || (num(p.score) ?? 0) < s.auto_min_score) continue;
+    const symbol = String(p.symbol || "").toUpperCase(), entry = num(p.entry), planStop = num(p.stop);
+    if (!symbol || busy.has(symbol) || blocked.has(symbol) || entry === null || planStop === null || entry === planStop || (num(p.score) ?? 0) < s.auto_min_score) continue;
     const side: Side = /short/i.test(p.bias || "") ? "short" : "long";
     if (s.auto_side !== "both" && s.auto_side !== side) continue;
     if (entry < s.auto_min_price) continue;
     const targets = (p.targets || []).map(num).filter((x): x is number => x !== null);
-    const target = (s.target === "t2" ? targets[1] : undefined) ?? targets[0] ?? null;
-    if (s.auto_min_rr > 0 && (target === null || Math.abs(target - entry) / Math.max(Math.abs(entry - stop), 1e-9) < s.auto_min_rr)) continue;
-    const perShareRisk = Math.abs(entry - stop);
+    const planTarget = (s.target === "t2" ? targets[1] : undefined) ?? targets[0] ?? null;
+    // Your reward:risk filter judges the plan as it was recommended.
+    if (s.auto_min_rr > 0 && (planTarget === null || Math.abs(planTarget - entry) / Math.max(Math.abs(entry - planStop), 1e-9) < s.auto_min_rr)) continue;
+    let last: number;
+    try { last = await lastPrice(symbol); } catch { continue; }
+    // Entry = most to pay: fills now if the market is at or below it (long), else waits for a pullback to it. So the
+    // price the trade will really start from is the better of the two, and the stop distance is measured from there:
+    // a plan "buy 131.25, stop 129.90" filled at 130.00 would otherwise sit 10 cents from its stop.
+    const ref = side === "long" ? Math.min(entry, last) : Math.max(entry, last);
+    // Skip the pick when the price is already through the stop-loss or past the take-profit.
+    if (side === "long" ? last <= planStop || (planTarget !== null && last >= planTarget) : last >= planStop || (planTarget !== null && last <= planTarget)) continue;
+    // The plan says where; the exit engine says how far at least: a stop inside the stock's normal noise is widened
+    // (and the size below shrinks with it, so the dollars at risk stay the same).
+    const adj = applyExit({ side, entry: ref, stop: planStop, target: planTarget, horizon: p.horizon === "swing" ? "swing" : "day" }, await dailyAtr(symbol, today), pol);
+    const stop = adj.stop, target = adj.target, perShareRisk = adj.risk;
     // Hard gate before every order: kill switch, drawdown guard, stale data, regime (size multiplier).
     const gate = await riskGate(db, a.user, symbol);
     if (!gate.ok) continue;
     const riskPct = s.sizing === "kelly" ? (kelly ??= (await kellyRead(db)).risk_pct ?? s.risk_pct) : s.risk_pct;
     let qty = s.sizing === "rec" ? num(p.size_shares) ?? 0 : s.sizing === "fixed" ? s.fixed_usd / entry : perShareRisk > 0 ? (eq * riskPct / 100) / perShareRisk : 0;
-    qty = Math.floor(Math.min(qty, (eq * s.max_position_pct / 100) / entry) * gate.size_mult);
-    if (qty < 1) continue;
-    let last: number;
-    try { last = await lastPrice(symbol); } catch { continue; }
-    // Entry = most to pay: fills now if the market is at or below it (long), else waits for a pullback to it.
-    // Skip the pick when the price is already through the stop-loss or past the take-profit.
-    if (side === "long" ? last <= stop || (target !== null && last >= target) : last >= stop || (target !== null && last <= target)) continue;
-    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}`.slice(0, 300),
+    // A recommended size assumed the recommended stop: when the stop was widened, the size shrinks in proportion.
+    if (s.sizing === "rec" && adj.widened) qty *= Math.abs(ref - planStop) / adj.risk;
+    qty = Math.min(qty, (eq * s.max_position_pct / 100) / entry) * gate.size_mult;
+    // Stocks trade in whole shares; crypto in fractions (a whole coin would be far more than the risk allows).
+    qty = isCrypto(symbol) ? Math.floor(qty * 1e6) / 1e6 : Math.floor(qty);
+    if (isCrypto(symbol) ? qty * entry < 10 : qty < 1) continue;
+    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}${adj.note ? ` · ${adj.note}` : ""}`.slice(0, 300),
       exit_mode: p.horizon === "swing" ? "hold" : null }); // a swing pick is held through the stop or target, whatever the account default
     if (!r.error) { busy.add(symbol); slots--; tradesLeft--; }
   }

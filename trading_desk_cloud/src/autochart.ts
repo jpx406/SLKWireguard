@@ -11,6 +11,7 @@ import { closePosition, ensurePaper, getAccount, placeOrder, riskGate, type Side
 import { patternAllowed } from "./learn";
 import { gradeSignal } from "./ml/engine";
 import { activeRules, ruleBlocks } from "./strategy";
+import { applyExit, dailyAtr, exitPolicy } from "./exits";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -228,6 +229,13 @@ export async function runChartAuto(db: D1Database) {
       }
       if (!placed) continue;
       // Your own levels (Auto Trader) replace the plan's when they sit on the right side of the entry.
+      // Exit engine: the stop is never closer than the policy's share of the daily ATR. Your own stop / target below still win.
+      if (placed.stop !== null) {
+        let ref = placed.price; try { const lp = await latestPrice(r.symbol); ref = placed.side === "long" ? Math.min(ref, lp) : Math.max(ref, lp); } catch { /* the plan's entry stands */ }
+        // Measured from where the trade will really start (a limit fills at the market when the market is already better).
+        const adj = applyExit({ side: placed.side, entry: ref, stop: placed.stop, target: placed.target, horizon: placed.exit_mode === "hold" ? "swing" : "day" }, await dailyAtr(r.symbol, nyNow().date), await exitPolicy(db));
+        placed.stop = adj.stop; placed.target = adj.target; if (adj.note) placed.note = `${placed.note} · ${adj.note}`.slice(0, 300);
+      }
       const so = r.stop_override ?? null, to = r.target_override ?? null, lng = placed.side === "long";
       if (so !== null && (lng ? so < placed.price : so > placed.price)) placed.stop = so;
       if (to !== null && (lng ? to > placed.price : to < placed.price)) placed.target = to;

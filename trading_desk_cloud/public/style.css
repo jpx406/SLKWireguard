@@ -993,3 +993,7 @@ tr.st-on td { background: color-mix(in srgb, var(--accent) 12%, transparent); } 
 .q-note.amber { color: #f5b82e; }
 @media (max-width: 900px) { .q-grid.q-pairs { grid-template-columns: minmax(0, 1fr); } .q-in { width: 88px; } }
 .q-ptbl th, .q-ptbl td { background: transparent; } .q-pairs .q-note, .q-scan .q-note { text-transform: none; font-size: 11px; line-height: 1.45; color: #8b97a8; }
+
+/* Exit engine form */
+.exit-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 14px; margin: 8px 0 10px; align-items: end; }
+.exit-form .field { display: flex; flex-direction: column; gap: 2px; } .exit-form .field input { max-width: 120px; } .exit-form .check, .exit-form .row { grid-column: 1 / -1; } .exit-form .row { display: flex; gap: 8px; flex-wrap: wrap; }

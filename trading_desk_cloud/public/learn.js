@@ -41,7 +41,7 @@ function rCurve(points) {
 
 function renderLearn() {
   const host = $("#learn"), d = state.learn.data; host.innerHTML = "";
-  host.append(el("p", "dim small", "Every recommendation is replayed on the 5-minute bars that came after it (walk-forward, no look-ahead): did the entry trigger, then target or stop (stop first when one bar touches both), or a time exit at the session close (day) or after 10 sessions (swing). Results are in R (1R = the distance from entry to stop). Groups need enough settled trades before they count, and the win rate's 95% lower bound says what the sample can promise."));
+  host.append(el("p", "dim small", "Every recommendation is replayed on the 5-minute bars that came after it (walk-forward, no look-ahead): did the entry trigger, then target or stop (stop first when one bar touches both), or a time exit at the session close (day) or after the swing time limit (20 sessions unless you change it below). Results are in R (1R = the distance from entry to stop). Groups need enough settled trades before they count, and the win rate's 95% lower bound says what the sample can promise."));
   const a = d.all || {};
   const cards = el("div", "bd-indices");
   cards.append(stat("Plans", String(d.picks), "", `${d.settled} settled · ${d.open} open · ${d.pending} pending`),
@@ -54,6 +54,8 @@ function renderLearn() {
 
   // Self-improving loop (filled by loadStrategy)
   const sbox = el("div"); sbox.id = "strategyBox"; const ssec = section("Self-improving loop", el("span", "dim small", "  observe → analyze failures → reason → validate → update, with approval and versions")); ssec.append(sbox); host.append(ssec); loadStrategy();
+  // Exit engine (filled by loadExits)
+  const xbox = el("div"); xbox.id = "exitBox"; const xsec = section("Exit engine: stops, targets and the losing-streak guard", el("span", "dim small", "  code sets the minimum stop distance; it re-fits it from the desk's own results")); xsec.append(xbox); host.append(xsec); loadExits();
   // Playbook
   const pb = section("Playbook (what the scans read before recommending)", el("span", "dim small", d.playbook ? `  rebuilt ${ago(d.playbook.at)}` : ""));
   const pre = el("pre", "playbook small"); pre.textContent = d.playbook?.text || "No playbook yet: it is built from settled trades (after the close, or with Evaluate Now).";
@@ -183,3 +185,30 @@ function renderStrategy() {
   host.append(vs);
 }
 const rulesEmptyUi = (r) => !r || Object.values(r).every((v) => v === null || v === false || (Array.isArray(v) && !v.length));
+
+/* ---------------------------------------------------------------- exit engine (stop distance, targets, time limit, edge guard) */
+async function loadExits() { try { state.exits = await api("/api/exits"); } catch (e) { const h = $("#exitBox"); if (h) { h.innerHTML = ""; h.append(el("div", "msg err", e.message)); } return; } renderExits(); }
+function renderExits() {
+  const host = $("#exitBox"); if (!host) return; host.innerHTML = "";
+  const d = state.exits, p = d.policy, admin = state.me?.role === "admin";
+  host.append(el("p", "small", "Why this exists: on 12,000 real 5-minute signals, a stop just beyond the pattern was hit 57% of the time; the same entries with the stop at 0.35 of the daily ATR were hit 18% of the time and lost a quarter as much. A stop inside the stock's normal noise does not protect a trade, it ends it. So every automatic entry gets a stop no closer than the distance below, and the position is made smaller so the dollars at risk stay the same."));
+  for (const h of ["day", "swing"]) { const e = d.edge[h], row = el("div", `msg ${e.paused ? "err" : "ok"} small`); row.append(el("b", null, e.paused ? "PAUSED · " : "Guard · "), e.text); host.append(row); }
+  const f = el("form", "exit-form"); f.setAttribute("aria-label", "Exit policy");
+  const num = (name, label, val, step, hint) => { const l = el("label", "field small"); l.append(el("span", null, label)); const i = el("input"); i.type = "number"; i.name = name; i.step = step; i.value = val; i.min = d.bounds[name][0]; i.max = d.bounds[name][1]; i.disabled = !admin; i.inputMode = "decimal"; l.append(i, el("span", "dim", hint)); return l; };
+  const chk = (name, label, val) => { const l = el("label", "check small"); const i = el("input"); i.type = "checkbox"; i.name = name; i.checked = val; i.disabled = !admin; l.append(i, el("span", null, ` ${label}`)); return l; };
+  f.append(num("day_stop_atr", "Day trade: stop at least", p.day_stop_atr, "0.05", `× daily ATR · ${p.source.day}`), num("day_min_rr", "Day trade: target at least", p.day_min_rr, "0.25", "× the risk"),
+    num("swing_stop_atr", "Swing: stop at least", p.swing_stop_atr, "0.25", `× daily ATR · ${p.source.swing}`), num("swing_min_rr", "Swing: target at least", p.swing_min_rr, "0.25", "× the risk"), num("swing_hold_days", "Swing: close after", p.swing_hold_days, "1", "sessions"),
+    chk("swing_long_only", "Swing entries on the long side only (shorts lost money over 6 years of daily data)", p.swing_long_only), chk("edge_guard", "Pause automatic entries of a type that is losing beyond chance", p.edge_guard), chk("auto_learn", "Let the desk re-fit the two stop distances from its own settled plans", p.auto_learn));
+  if (admin) { const save = el("button", "primary small", "Save"); save.type = "submit"; const reset = el("button", "ghost small", "Back to defaults"); reset.type = "button"; const cal = el("button", "ghost small", "Re-fit now"); cal.type = "button";
+    reset.onclick = async () => { try { state.exits = await api("/api/exits", { method: "PUT", body: JSON.stringify({ reset: true }) }); renderExits(); } catch (e) { showBanner(e.message); } };
+    cal.onclick = async () => { cal.disabled = true; try { state.exits = await api("/api/exits/calibrate", { method: "POST", body: "{}" }); renderExits(); } catch (e) { showBanner(e.message); cal.disabled = false; } };
+    const bar = el("div", "row"); bar.append(save, reset, cal); f.append(bar);
+    f.onsubmit = async (ev) => { ev.preventDefault(); const q = (n) => f.querySelector(`input[name="${n}"]`), pol = {}; for (const k of ["day_stop_atr", "day_min_rr", "swing_stop_atr", "swing_min_rr", "swing_hold_days"]) pol[k] = Number(q(k).value); for (const k of ["swing_long_only", "edge_guard", "auto_learn"]) pol[k] = q(k).checked;
+      try { state.exits = await api("/api/exits", { method: "PUT", body: JSON.stringify({ policy: pol }) }); renderExits(); } catch (e) { showBanner(e.message); } }; }
+  host.append(f);
+  for (const [h, title] of [["day", "Day trades"], ["swing", "Swing trades"]]) { const fit = d.learned?.[h]; const box = el("div"); box.append(el("div", "small", `${title}: the same plans replayed with each stop distance`));
+    if (!fit || !fit.table?.some((r) => r.n)) box.append(el("div", "dim small", "No settled plans replayed yet. Each plan is replayed with every distance when it settles; the table fills in as plans finish."));
+    else { box.append(table(["Stop", "Plans", "Stopped out", "Win %", "Avg R", "Avg R, recent 30%"], fit.table.map((r) => { const tr = el("tr"); const cur = r.mult === (h === "day" ? p.day_stop_atr : p.swing_stop_atr); tr.append(td(r.mult === 0 ? "as recommended" : `${r.mult} × ATR${cur ? " (in force)" : ""}`, cur ? "up" : ""), td(r.n, "num"), td(`${r.stopped_pct}%`, "num"), td(`${r.win_pct}%`, "num"), td(fmtR(r.avg_r), `num ${r.avg_r > 0 ? "up" : r.avg_r < 0 ? "down" : ""}`), td(r.avg_r_recent == null ? "—" : fmtR(r.avg_r_recent), "num")); return tr; })), el("div", "dim small", fit.reason)); }
+    host.append(box); }
+  host.append(el("div", "dim small", "Not used: moving the stop to break-even and trailing stops. Both reduced results in every test. A wider stop does not make a losing idea win; it stops noise and costs from deciding the outcome."));
+}

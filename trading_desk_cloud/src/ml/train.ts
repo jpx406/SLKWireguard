@@ -13,7 +13,8 @@ import { K, fitTemperature, gbdtLogits, gbdtPredict, mlpLogits, mlpPredict, trai
 
 export type Profile = { id: "swing" | "intraday"; interval: "1d" | "60m"; days: number; label: LabelSpec; title: string };
 export const PROFILES: Record<string, Profile> = {
-  swing: { id: "swing", interval: "1d", days: 1500, label: { horizon: 5, atr_mult: 1, min_pct: 0.01 }, title: "Swing (daily bars, next 5 days)" },
+  // The swing label mirrors the swing trade the desk actually places (exits.ts): 2 ATR either way within 20 sessions.
+  swing: { id: "swing", interval: "1d", days: 1500, label: { horizon: 20, atr_mult: 2, min_pct: 0.02 }, title: "Swing (daily bars, 2 ATR within 20 days)" },
   intraday: { id: "intraday", interval: "60m", days: 700, label: { horizon: 5, atr_mult: 1.5, min_pct: 0.005 }, title: "Intraday (1-hour bars, next 5 hours)" },
 };
 export const COST = 0.0008; // round-trip cost assumed per trade (8 basis points), for the "made money after costs" test
