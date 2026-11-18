@@ -25,6 +25,8 @@ import { masterApply, masterView } from "./master";
 import { pairDetail, scanPairs } from "./pairs";
 import { calibrateExits, exitsView, sanitizeExit } from "./exits";
 import { QuoteHub, streamRoute } from "./stream";
+import { saveDeskConfig } from "./deskcfg";
+import { configView, sourceStats, tradeLog } from "./sources";
 import { councilFor } from "./agents";
 import { configContext, createSession, listAgentSkills, runTurn, syncConfigFile, CONFIG_MOUNT } from "./agent";
 import { DEFAULT_FILTERS, EXCHANGES, SECTORS, describeFilters, sanitizeFilters } from "./filters";
@@ -183,6 +185,25 @@ async function api(req: Request, env: Env, url: URL, who: Identity): Promise<Res
   }
   const am = path.match(/^\/paper\/auto\/([A-Za-z0-9.\-]{1,15})$/);
   if (am && m === "DELETE") { await removeAuto(env.DB, who.user, am[1]); return json({ ok: true, rows: await listAuto(env.DB, who.user) }); }
+  // The one desk config: limits, switches and order-engine parameters every automatic path reads, plus the
+  // thresholds in force for this account, so every page shows the same numbers.
+  if (path === "/config" && m === "GET") return json(await configView(env.DB, who.user));
+  if (path === "/config" && m === "PUT") {
+    if (who.role !== "admin") return bad("Only the admin changes the desk config.", 403);
+    const b = await body<{ config?: unknown; reset?: unknown }>(req); await saveDeskConfig(env.DB, b.config, b.reset === true);
+    return json(await configView(env.DB, who.user));
+  }
+  // Results per part of the desk (the table next to the per-source kill switches) and the automatic trade log.
+  if (path === "/sources" && m === "GET") return json(await sourceStats(env.DB, who.user, Math.max(7, Math.min(365, Number(url.searchParams.get("days")) || 90))));
+  if (path === "/tradelog" && m === "GET") return json(await tradeLog(env.DB, who.user));
+  if (path === "/tradelog/note" && m === "PUT") {
+    const b = await body<{ id?: unknown; note?: unknown }>(req), id = String(b.id || "");
+    if (!/^[a-z0-9]{6,40}$/i.test(id)) return bad("Bad trade id");
+    const own = await env.DB.prepare("SELECT 1 FROM paper_positions WHERE id = ? AND user = ?").bind(id, who.user).first(); if (!own) return bad("Trade not found", 404);
+    const notes = (await getSetting<Record<string, string>>(env.DB, `trade_notes:${who.user}`, {})) || {}; const text = String(b.note || "").slice(0, 600);
+    if (text) notes[id] = text; else delete notes[id];
+    await setSetting(env.DB, `trade_notes:${who.user}`, notes); return json({ ok: true });
+  }
   // Live price stream (websocket) for signed-in users; a plain GET says whether it is available.
   if (path === "/stream" && m === "GET") return streamRoute(req, env, marketInfo().active);
   // Exit engine: the stop / target policy in force, what was learned from the desk's own plans, and the edge guard.

@@ -8,6 +8,7 @@ import "../public/candles.js";
 import { candles, isCrypto } from "./market";
 import { clockNow, nyNow, nextTradingDate, sessionTimes, isTradingDay } from "./briefs";
 import { getSetting, getSettings, setSetting } from "./db";
+import { DEFAULT_DESK, entryTypeOf } from "./deskcfg";
 import { VARIANTS, applyExit, atrAsOf, calibrateExits, ensureExits, exitPolicy, DEFAULT_EXIT, type ExitPolicy } from "./exits";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
@@ -19,7 +20,7 @@ export type Outcome = {
   setup: string | null; score: number | null; sources: string | null; entry: number; stop: number; target: number | null;
   created_at: number; status: "pending" | "open" | "no_trigger" | "win" | "loss" | "timed" | "expired";
   fill: number | null; triggered_at: number | null; exit_at: number | null; exit_price: number | null; r_result: number | null;
-  mfe_r: number | null; mae_r: number | null; next_check: number; updated_at: number; regime?: string | null;
+  mfe_r: number | null; mae_r: number | null; next_check: number; updated_at: number; regime?: string | null; entry_type?: string | null;
 };
 
 const nowS = () => Math.floor(clockNow().getTime() / 1000);
@@ -35,6 +36,18 @@ export async function ensureLearn(db: D1Database) {
     status TEXT NOT NULL, fill REAL, triggered_at INTEGER, exit_at INTEGER, exit_price REAL, r_result REAL, mfe_r REAL, mae_r REAL, next_check INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run();
   await db.prepare("CREATE INDEX IF NOT EXISTS pick_outcomes_status ON pick_outcomes (status, next_check)").run();
   try { await db.prepare("ALTER TABLE pick_outcomes ADD COLUMN regime TEXT").run(); } catch { /* exists */ }
+  try { await db.prepare("ALTER TABLE pick_outcomes ADD COLUMN entry_type TEXT").run(); } catch { /* exists */ }
+  // One-time: plans from the last 50 days are replayed again with the corrected rules (breakouts wait for their
+  // trigger, copy-desk plans are swing trades, stops slip). Older ones have no 5-minute bars left to replay.
+  try {
+    if (!(await getSetting<boolean>(db, "replay_v2", false))) {
+      const since = Math.floor(Date.now() / 1000) - 50 * 86400;
+      await db.prepare("UPDATE pick_outcomes SET horizon = 'swing' WHERE (slot = 'winners' OR sources LIKE '%insider%' OR sources LIKE '%fund%' OR sources LIKE '%13f%' OR sources LIKE '%congress%') AND created_at >= ?").bind(since).run();
+      await db.prepare("UPDATE pick_outcomes SET status = 'pending', next_check = 0, fill = NULL, triggered_at = NULL, exit_at = NULL, exit_price = NULL, r_result = NULL, mfe_r = NULL, mae_r = NULL WHERE symbol != '-' AND created_at >= ?").bind(since).run();
+      try { await db.prepare("DELETE FROM pick_exits WHERE created_at >= ?").bind(since).run(); } catch { /* table not there yet */ }
+      await setSetting(db, "replay_v2", true);
+    }
+  } catch { /* next start */ }
   await db.prepare(`CREATE TABLE IF NOT EXISTS pattern_stats (symbol TEXT NOT NULL, interval TEXT NOT NULL, pattern TEXT NOT NULL, dir TEXT NOT NULL,
     n INTEGER NOT NULL, wins INTEGER NOT NULL, sum_r REAL NOT NULL, n_oos INTEGER NOT NULL, wins_oos INTEGER NOT NULL, sum_r_oos REAL NOT NULL, updated_at INTEGER NOT NULL,
     PRIMARY KEY (symbol, interval, pattern))`).run();
@@ -43,7 +56,7 @@ export async function ensureLearn(db: D1Database) {
 
 // ------------------------------------------------------------------------------------------- replay
 /** Replay one plan on the bars after it was made. Returns the fields to store. */
-export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string; symbol?: string; hold_days?: number; risk?: number }, bars: Bar[], now = nowS()) {
+export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; entry: number; stop: number; target: number | null; created_at: number; day: string; symbol?: string; hold_days?: number; risk?: number; entry_type?: string | null }, bars: Bar[], now = nowS()) {
   const long = o.side === "long", risk = o.risk ?? Math.abs(o.entry - o.stop);
   if (!(risk > 0)) return { status: "expired" as const };
   // Entry window: a day plan until that session's close; a swing plan for three sessions. Trade window: the
@@ -58,10 +71,16 @@ export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; en
   const after = bars.filter((b) => b.time >= o.created_at && b.time + 300 <= now);
   if (!after.length) return { status: (now > entryEnd ? "no_trigger" : "pending") as "no_trigger" | "pending" };
   let fill: number | null = null, triggered_at: number | null = null, i = 0;
+  // The same three entries the order engine has. Undecided ("auto") is settled by geometry on the first bar:
+  // a long whose trigger is above the market can only be a breakout.
+  const et = resolveEntry(o, after[0]), chase = risk * DEFAULT_DESK.max_chase_atr * 2;
   for (; i < after.length; i++) {
     const b = after[i];
     if (b.time > entryEnd) return { status: "no_trigger" as const };
-    if (long ? b.low <= o.entry : b.high >= o.entry) { fill = long ? Math.min(o.entry, b.open) : Math.max(o.entry, b.open); triggered_at = b.time; break; }
+    if (et === "limit") { if (long ? b.low <= o.entry : b.high >= o.entry) { fill = long ? Math.min(o.entry, b.open) : Math.max(o.entry, b.open); triggered_at = b.time; break; } }
+    else if (et === "stop") { if (long ? b.high >= o.entry : b.low <= o.entry) { fill = long ? Math.max(o.entry, b.open) : Math.min(o.entry, b.open); if (Math.abs(fill - o.entry) > chase) return { status: "no_trigger" as const }; triggered_at = b.time; break; } }
+    // stop_on_close: this 5-minute bar must close beyond the trigger, not too far past it, and not through the stop.
+    else if ((long ? b.close > o.entry : b.close < o.entry) && Math.abs(b.close - o.entry) <= chase && (long ? b.close > o.stop : b.close < o.stop)) { fill = b.close; triggered_at = b.time; i++; break; }
   }
   if (fill === null) return { status: (now > entryEnd ? "no_trigger" : "pending") as "no_trigger" | "pending" };
   const R = (px: number) => ((px - fill!) * (long ? 1 : -1)) / risk;
@@ -71,13 +90,19 @@ export function replay(o: { side: "long" | "short"; horizon: "day" | "swing"; en
     if (b.time > tradeEnd) break;
     mfe = Math.max(mfe, R(long ? b.high : b.low)); mae = Math.min(mae, R(long ? b.low : b.high));
     // Conservative: when one bar touches both the stop and the target, the stop counts.
-    if (long ? b.low <= o.stop : b.high >= o.stop) { const px = long ? Math.min(o.stop, b.open) : Math.max(o.stop, b.open); return { status: "loss" as const, fill, triggered_at, exit_at: b.time, exit_price: px, r_result: r2(R(px)), mfe_r: r2(mfe), mae_r: r2(mae) }; }
+    if (long ? b.low <= o.stop : b.high >= o.stop) { const raw = long ? Math.min(o.stop, b.open) : Math.max(o.stop, b.open), px = raw * (1 + (long ? -1 : 1) * DEFAULT_DESK.stop_slippage_pct / 100); return { status: "loss" as const, fill, triggered_at, exit_at: b.time, exit_price: px, r_result: r2(R(px)), mfe_r: r2(mfe), mae_r: r2(mae) }; }
     if (o.target !== null && (long ? b.high >= o.target : b.low <= o.target)) { const px = long ? Math.max(o.target, b.open) : Math.min(o.target, b.open); return { status: "win" as const, fill, triggered_at, exit_at: b.time, exit_price: px, r_result: r2(R(px)), mfe_r: r2(mfe), mae_r: r2(mae) }; }
     // Time exit at the window's last bar (the session close for a day plan).
     if (b.time + 300 >= tradeEnd) return { status: "timed" as const, fill, triggered_at, exit_at: b.time, exit_price: b.close, r_result: r2(R(b.close)), mfe_r: r2(mfe), mae_r: r2(mae) };
   }
   if (now > tradeEnd && last) return { status: "timed" as const, fill, triggered_at, exit_at: last.time, exit_price: last.close, r_result: r2(R(last.close)), mfe_r: r2(mfe), mae_r: r2(mae) };
   return { status: "open" as const, fill, triggered_at, exit_at: null, exit_price: null, r_result: last ? r2(R(last.close)) : null, mfe_r: r2(mfe), mae_r: r2(mae) };
+}
+/** limit | stop | stop_on_close for a plan; "auto" (or nothing) is decided by where the first bar opens. */
+export function resolveEntry(o: { side: "long" | "short"; entry: number; entry_type?: string | null }, first?: Bar): "limit" | "stop" | "stop_on_close" {
+  if (o.entry_type === "limit" || o.entry_type === "stop" || o.entry_type === "stop_on_close") return o.entry_type;
+  if (!first) return "limit";
+  return (o.side === "long" ? o.entry > first.open * 1.0005 : o.entry < first.open * 0.9995) ? "stop_on_close" : "limit";
 }
 /** Seconds to add to a New York civil time to get UTC (EST 5h, EDT 4h). */
 function nyOffset(date: string) {
@@ -107,10 +132,15 @@ export async function evaluatePicks(db: D1Database, limit = 12) {
       if (!symbol || entry === null || stop === null || entry === stop) continue;
       const targets = (Array.isArray(p.targets) ? p.targets : []).map(num).filter((x): x is number => x !== null);
       const id = `${b.id}-${symbol}`.slice(0, 40);
-      await db.prepare(`INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, setup, score, sources, entry, stop, target, created_at, status, next_check, updated_at, regime)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
-        .bind(id, b.id, b.slot, b.day, symbol, /short/i.test(String(p.bias || "")) ? "short" : "long", p.horizon === "swing" ? "swing" : "day", String(p.setup || "").slice(0, 120) || null,
-          num(p.score), Array.isArray(p.sources) ? JSON.stringify((p.sources as { type?: string }[]).map((s) => s.type).filter(Boolean)) : null, entry, stop, targets[0] ?? null, at, t, t, regime).run();
+      const side = /short/i.test(String(p.bias || "")) ? "short" : "long", srcs = Array.isArray(p.sources) ? (p.sources as { type?: string }[]).map((s) => s.type).filter(Boolean) : null;
+      // Insider / fund / politician buying is a weeks-long edge: scored as a swing trade whatever the scan called it.
+      const copy = b.slot === "winners" || !!srcs?.some((x) => /insider|fund|13f|congress|politic|senat/i.test(String(x)));
+      const explicit = String(p.entry_type || "").toLowerCase(), words = entryTypeOf({ entry_type: p.entry_type, setup: String(p.setup || ""), slot: b.slot, side, entry, last: null });
+      const etype = ["limit", "stop", "stop_on_close"].includes(explicit) ? explicit : words !== "limit" || /pullback|retest|dip|support|reversal|bounce|fade/i.test(String(p.setup || "")) ? words : "auto";
+      await db.prepare(`INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, setup, score, sources, entry, stop, target, created_at, status, next_check, updated_at, regime, entry_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`)
+        .bind(id, b.id, b.slot, b.day, symbol, side, p.horizon === "swing" || copy ? "swing" : "day", String(p.setup || "").slice(0, 120) || null,
+          num(p.score), srcs ? JSON.stringify(srcs) : null, entry, stop, targets[0] ?? null, at, t, t, regime, etype).run();
       n++;
     }
     if (!n) await db.prepare("INSERT OR IGNORE INTO pick_outcomes (id, brief_id, slot, day, symbol, side, horizon, entry, stop, created_at, status, next_check, updated_at) VALUES (?, ?, ?, ?, '-', 'long', 'day', 0, 0, ?, 'expired', ?, ?)").bind(`${b.id}-none`, b.id, b.slot, b.day, at, t, t).run();
@@ -160,7 +190,8 @@ export async function replayVariants(db: D1Database, o: Outcome, bars: Bar[], po
   let d = dailyCache.get(o.symbol);
   if (!d || Date.now() - d.at > 3600_000) { d = { at: Date.now(), bars: (await candles(o.symbol, "1d", Math.ceil((now - o.created_at) / 86400) + 60)) as Bar[] }; dailyCache.set(o.symbol, d); }
   const atr = atrAsOf(d.bars, o.day);
-  const first = bars.find((b) => b.time >= o.created_at), ref = !first ? o.entry : o.side === "long" ? Math.min(o.entry, first.open) : Math.max(o.entry, first.open);
+  const first = bars.find((b) => b.time >= o.created_at), et = resolveEntry(o as { side: "long" | "short"; entry: number; entry_type?: string | null }, first);
+  const ref = !first || et !== "limit" ? o.entry : o.side === "long" ? Math.min(o.entry, first.open) : Math.max(o.entry, first.open);
   for (const mult of VARIANTS[o.horizon]) {
     let status = "na", r: number | null = null;
     if (atr || mult === 0) {

@@ -131,7 +131,7 @@ export async function directionNow(db: D1Database, market: Market, symbols: stri
 }
 
 /** Grade one candle signal on the bars it formed on. `useful` says whether the filter earned the right to veto. */
-export async function gradeSignal(db: D1Database, symbol: string, b: Bar[], hit: { time: number; dir: string; strength: number; pattern: string }): Promise<{ grade: "skip" | "C" | "B" | "A"; score: number; useful: boolean; enforce: boolean } | null> {
+export async function gradeSignal(db: D1Database, symbol: string, b: Bar[], hit: { time: number; dir: string; strength: number; pattern: string }): Promise<{ grade: "skip" | "C" | "B" | "A"; score: number; useful: boolean; enforce: boolean; tradable?: boolean } | null> {
   const market: Market = isCrypto(symbol) ? "crypto" : "stocks", row = await activeRow(db, "filter", market); if (!row) return null;
   const m = JSON.parse(row.model) as FilterModel, rep = JSON.parse(row.report) as FilterReport, f = FILTER_IV[market];
   let mk: Bar[] | null = null; if (symbol !== bench(market)) { try { mk = await bars(bench(market), f.interval, market === "crypto" ? 30 : 10); } catch { mk = null; } }

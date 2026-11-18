@@ -12,6 +12,8 @@ import { patternAllowed } from "./learn";
 import { gradeSignal } from "./ml/engine";
 import { activeRules, ruleBlocks } from "./strategy";
 import { applyExit, dailyAtr, exitPolicy } from "./exits";
+import { deskConfig, entryTypeOf, inBlackout, type EntryType } from "./deskcfg";
+import { deepDecision } from "./deepmap";
 
 type Bar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type Hit = { index: number; time: number; pattern: string; label: string; dir: "bullish" | "bearish"; bars: number; trend: string; volume: boolean; strength: number; strong: boolean };
@@ -23,7 +25,7 @@ export type AutoRow = { user: string; symbol: string; amount_usd: number; rule: 
 export type Plan = {
   source: "position" | "order" | "brief" | "deep"; side: Side; entry: number; stop: number | null; targets: number[];
   time: number | null; setup: string; score?: number | null; rating?: string | null; label?: string; id?: string | null;
-  entered?: boolean; qty?: number | null;
+  entered?: boolean; qty?: number | null; slot?: string | null; entry_type?: string | null; copy?: boolean; size_mult?: number; why?: string; flatten_longs?: boolean;
 };
 
 const nowS = () => Math.floor(clockNow().getTime() / 1000);
@@ -55,8 +57,8 @@ export async function planFor(db: D1Database, user: string, symbol: string): Pro
     .first<{ id: string; side: Side; price: number | null; stop: number | null; target: number | null; created_at: number; note: string | null; qty: number }>();
   if (ord && ord.price !== null) return { source: "order", side: ord.side, entry: ord.price, stop: ord.stop, targets: ord.target === null ? [] : [ord.target], time: ord.created_at, setup: ord.note || "working order", id: ord.id, entered: false, qty: ord.qty };
   const ny = nyNow();
-  let briefs: { id: string; label: string; data: string | null; finished_at: string | null }[] = [];
-  try { briefs = (await db.prepare("SELECT id, label, data, finished_at FROM briefs WHERE status = 'done' AND day = ? ORDER BY finished_at DESC, created_at DESC LIMIT 12").bind(ny.date).all<{ id: string; label: string; data: string | null; finished_at: string | null }>()).results; }
+  let briefs: { id: string; label: string; slot?: string; data: string | null; finished_at: string | null }[] = [];
+  try { briefs = (await db.prepare("SELECT id, label, slot, data, finished_at FROM briefs WHERE status = 'done' AND day = ? ORDER BY finished_at DESC, created_at DESC LIMIT 12").bind(ny.date).all<{ id: string; label: string; data: string | null; finished_at: string | null }>()).results; }
   catch { briefs = []; }
   for (const b of briefs) {
     let picks: Record<string, unknown>[] = [];
@@ -66,7 +68,8 @@ export async function planFor(db: D1Database, user: string, symbol: string): Pro
     const entry = num(p.entry); if (entry === null) continue;
     const targets = (Array.isArray(p.targets) ? p.targets : []).map(num).filter((x): x is number => x !== null);
     const t = b.finished_at ? Math.floor(Date.parse(b.finished_at.replace(" ", "T") + "Z") / 1000) : null;
-    return { source: "brief", side: /short/i.test(String(p.bias || "")) ? "short" : "long", entry, stop: num(p.stop), targets, time: t, setup: String(p.setup || ""), score: num(p.score), label: b.label, id: b.id };
+    return { source: "brief", side: /short/i.test(String(p.bias || "")) ? "short" : "long", entry, stop: num(p.stop), targets, time: t, setup: String(p.setup || ""), score: num(p.score), label: b.label, id: b.id, slot: b.slot ?? null, entry_type: typeof p.entry_type === "string" ? p.entry_type : null,
+      copy: b.slot === "winners" || (Array.isArray(p.sources) && (p.sources as { type?: string }[]).some((x) => /insider|fund|13f|congress|politic|senat/i.test(String(x?.type || "")))) };
   }
   try {
     const d = await db.prepare("SELECT id, rating, data, finished_at FROM deep_runs WHERE symbol = ? AND status = 'done' AND day >= date('now', '-5 days') ORDER BY created_at DESC LIMIT 1").bind(symbol)
@@ -74,10 +77,14 @@ export async function planFor(db: D1Database, user: string, symbol: string): Pro
     if (d) {
       const x = JSON.parse(d.data || "{}") as Record<string, unknown>;
       const entry = num(x.entry), stop = num(x.stop);
-      if (entry !== null && stop !== null && d.rating && d.rating !== "Hold") {
-        const side: Side = /Sell|Underweight/.test(d.rating) ? "short" : "long";
+      // The rating mapper decides: Sell / Underweight closes longs and blocks new ones, and is a short only when the
+      // trader says Short and the manager does not say cash; a long needs manager and trader to agree.
+      const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
+      if (dec.action === "none" && dec.flatten_longs) return { source: "deep", side: "long", entry: entry ?? 0, stop: null, targets: [], time: null, setup: dec.why, rating: d.rating, id: d.id, flatten_longs: true, why: dec.why };
+      if (entry !== null && stop !== null && d.rating && dec.action !== "none") {
+        const side: Side = dec.action;
         const targets = (Array.isArray(x.targets) ? (x.targets as unknown[]) : []).map(num).filter((v): v is number => v !== null);
-        return { source: "deep", side, entry, stop, targets, time: d.finished_at ? Math.floor(Date.parse(d.finished_at.replace(" ", "T") + "Z") / 1000) : null, setup: String(x.summary || "").slice(0, 160), rating: d.rating, id: d.id };
+        return { source: "deep", side, entry, stop, targets, time: d.finished_at ? Math.floor(Date.parse(d.finished_at.replace(" ", "T") + "Z") / 1000) : null, setup: String(x.summary || "").slice(0, 160), rating: d.rating, id: d.id, size_mult: dec.size_mult, why: dec.why, flatten_longs: dec.flatten_longs };
       }
     }
   } catch { /* no deep table yet */ }
@@ -152,7 +159,8 @@ export async function runChartAuto(db: D1Database) {
   const ny = nyNow();
   const stocksOpen = isTradingDay(ny) && inSession(nowS());
   const active = await activeRules(db);
-  const gate = !!(await getSettings(db) as { kronos_gate?: boolean }).kronos_gate || !!active?.rules.require_kronos;
+  const cfg = await deskConfig(db), pol = await exitPolicy(db);
+  const gate = cfg.kronos_gate || !!active?.rules.require_kronos;
   const rows = (await db.prepare("SELECT * FROM paper_auto WHERE enabled = 1").all<AutoRow>()).results.filter((r) => stocksOpen || isCrypto(r.symbol));
   const barsCache = new Map<string, Bar[]>();
   const barsOf = async (s: string) => { if (!barsCache.has(s)) barsCache.set(s, await completedBars(s)); return barsCache.get(s)!; };
@@ -161,6 +169,11 @@ export async function runChartAuto(db: D1Database) {
       const acct = await getAccount(db, r.user);
       const pos = await db.prepare("SELECT * FROM paper_positions WHERE user = ? AND symbol = ? AND status = 'open' LIMIT 1").bind(r.user, r.symbol)
         .first<{ id: string; side: Side; source: string; opened_at: number; exit_mode: string | null }>();
+      if (pos && pos.side === "long" && pos.source !== "manual" && r.rule !== "signal") {
+        // A fresh Deep Analysis that says Sell / Underweight closes an automatic long (it does not open a short).
+        const dp = await deepFlatten(db, r.symbol);
+        if (dp) { const res = await closePosition(db, r.user, pos.id); if (!res.error) await note(db, r, `Closed the long: Deep Analysis ${dp}`); continue; }
+      }
       if (pos) {
         // In a trade: the paper engine handles the stop / target. Here: a strong reversal signal against the trade
         // on the last completed bar closes it (automatic exit detection). Multi-day trades (hold) keep to their levels.
@@ -187,24 +200,34 @@ export async function runChartAuto(db: D1Database) {
       const budget = Math.min(r.amount_usd, acct.cash) * gate.size_mult;
       if (budget < 50) { await note(db, r, "Paused: not enough paper cash."); continue; }
 
-      let placed: { symbol: string; side: Side; type: "limit"; price: number; qty: number; stop: number | null; target: number | null; note: string; exit_mode: "hold" | null } | null = null;
+      let placed: { symbol: string; side: Side; type: "limit"; price: number; qty: number; stop: number | null; target: number | null; note: string; exit_mode: "hold" | null;
+        entry_type?: EntryType; src?: string; client_id?: string; trail?: number | null; hold_days?: number | null; atr?: number | null; size_mult?: number } | null = null;
       const plan = r.rule === "signal" ? null : await planFor(db, r.user, r.symbol);
-      if (plan && (plan.source === "brief" || plan.source === "deep")) {
+      if (plan && plan.flatten_longs && !plan.stop) { await note(db, r, `No entry: ${plan.why}`); if (r.rule === "plan") continue; }
+      if (plan && (plan.source === "brief" || plan.source === "deep") && plan.stop !== null) {
         const blocked = active ? ruleBlocks(active.rules, { score: plan.score ?? null, setup: plan.setup, slot: plan.source === "brief" ? undefined : null, symbol: r.symbol, created_at: nowS() }) : null;
         if (blocked) { await note(db, r, `Plan skipped by strategy v${active!.version}: ${blocked}`); continue; }
         let last: number; try { last = await latestPrice(r.symbol); } catch { continue; }
         const t1 = plan.targets[0] ?? null, stop = plan.stop;
         // Skip once the price is already through the stop or past the first target (the setup is gone).
-        const gone = plan.side === "long" ? (stop !== null && last <= stop) || (t1 !== null && last >= t1) : (stop !== null && last >= stop) || (t1 !== null && last <= t1);
+        const pet = plan.source === "deep" ? "limit" : entryTypeOf({ entry_type: plan.entry_type, setup: plan.setup, slot: plan.slot, side: plan.side, entry: plan.entry, last });
+        // A breakout that has not triggered yet normally trades under its own stop; only a pullback entry is gone there.
+        const gone = (t1 !== null && (plan.side === "long" ? last >= t1 : last <= t1)) || (pet === "limit" && stop !== null && (plan.side === "long" ? last <= stop : last >= stop));
         if (!gone && stop !== null) {
           const qty = isCrypto(r.symbol) ? Math.round((budget / plan.entry) * 1e6) / 1e6 : Math.floor(budget / plan.entry);
-          if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side: plan.side, type: "limit", price: plan.entry, qty, stop, target: t1, exit_mode: plan.source === "deep" ? "hold" : null,
+          if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side: plan.side, type: "limit", price: plan.entry, qty, stop, target: t1, exit_mode: plan.source === "deep" || plan.copy ? "hold" : null,
+            entry_type: plan.source === "deep" ? "limit" : entryTypeOf({ entry_type: plan.entry_type, setup: plan.setup, slot: plan.slot, side: plan.side, entry: plan.entry, last }),
+            src: plan.source === "deep" ? "deep" : plan.copy ? "copy" : "chart_plan", client_id: `${r.symbol}:plan:${plan.id}:${plan.side}`, hold_days: plan.copy ? cfg.copy_hold_days : null, size_mult: plan.size_mult ?? 1,
             note: `Chart auto (${plan.source === "deep" ? `Deep Analysis ${plan.rating}` : plan.label || "recommendation"}): ${plan.setup}`.slice(0, 300) };
         }
       }
       if (!placed && r.rule !== "plan") {
         const bars = await barsOf(r.symbol);
-        const hits = lastBarSignals(bars, 2).filter((h) => h.strong && (acct.s.auto_side === "both" || (acct.s.auto_side === "long") === (h.dir === "bullish")));
+        let hits = lastBarSignals(bars, 2).filter((h) => h.strong && (acct.s.auto_side === "both" || (acct.s.auto_side === "long") === (h.dir === "bullish")));
+        // Desk switches (one config): which hours and which patterns may trade at all. Each skip says which filter did it.
+        if (hits.length && !isCrypto(r.symbol) && inBlackout(cfg.signal_blackout_ny, ny.minutes)) { await note(db, r, `Skipped ${hits[0].label}: no candle-signal entries ${cfg.signal_blackout_ny.join(", ")} New York (filter: opening blackout)`); hits = []; }
+        const banned = hits.filter((h) => cfg.candle_patterns_blocked.includes(h.pattern));
+        if (banned.length) { await note(db, r, `Skipped ${banned[0].label}: this pattern is switched off (filter: blocked patterns)`); hits = hits.filter((h) => !cfg.candle_patterns_blocked.includes(h.pattern)); }
         // Patterns this symbol has proven unreliable (pattern_stats, walk-forward) are skipped.
         const allowed: Hit[] = [];
         for (const h of hits) { const a = await patternAllowed(db, r.symbol, h.pattern, "5m"); if (a.ok) allowed.push(h); else await note(db, r, `Skipped ${h.label}: ${a.row?.win_rate}% wins over ${a.row?.n} past signals on this chart`); }
@@ -214,16 +237,24 @@ export async function runChartAuto(db: D1Database) {
           const side: Side = h.dir === "bullish" ? "long" : "short";
           // Optional: the ML filter, once it has proven useful, vetoes signals it grades "skip".
           let mlNote = "";
-          try { const g = await gradeSignal(db, r.symbol, bars, h); if (g) { if (g.enforce && g.grade === "skip") { await note(db, r, `Skipped ${h.label}: the ML filter grades it "skip" (signals like this lost money before)`); continue; } mlNote = ` · ML grade ${g.grade}`; } } catch { /* the filter never blocks on its own failure */ }
+          let grade: string | null = null;
+          try { const g = await gradeSignal(db, r.symbol, bars, h); if (g) { grade = g.tradable === false ? null : g.grade; if (g.enforce && g.grade === "skip") { await note(db, r, `Skipped ${h.label}: the ML filter grades it "skip" (signals like this lost money before)`); continue; } mlNote = ` · ML grade ${g.grade}`; } } catch { /* the filter never blocks on its own failure */ }
+          // Only the grades the desk allows trade; a pattern on the research list may trade without a grade.
+          const research = cfg.candle_patterns_research.includes(h.pattern);
+          if (!(grade && cfg.candle_grades_allowed.includes(grade)) && !research) { await note(db, r, `Skipped ${h.label}: ${grade ? `ML grade ${grade} is not allowed (only ${cfg.candle_grades_allowed.join(", ") || "none"})` : "no proven ML grade for it"} (filter: grades)`); continue; }
+          if (research && !(grade && cfg.candle_grades_allowed.includes(grade))) mlNote += " · research bucket";
           // Optional: a fresh Kronos forecast that disagrees with the direction vetoes the entry.
           if (gate && (await kronosAgrees(db, r.symbol, side)) === false) { await note(db, r, `Skipped ${h.label}: the Kronos forecast disagrees with a ${side}`); continue; }
           const entry = last.close;
           const lo = Math.min(...patt.map((b) => b.low)), hi = Math.max(...patt.map((b) => b.high)), pad = (hi - lo) * 0.1;
           const stop = r2(side === "long" ? lo - pad : hi + pad), risk = Math.abs(entry - stop);
+          // A pattern whose own stop is inside the noise of this chart is not a setup: reject it instead of trading it.
+          const a14 = barAtr(bars), minStop = Math.max(cfg.signal_min_stop_atr * (a14 ?? 0), entry * cfg.signal_min_stop_pct / 100);
+          if (risk < minStop) { await note(db, r, `Skipped ${h.label}: its stop is ${r2((risk / entry) * 100)}% away, tighter than the minimum ${r2((minStop / entry) * 100)}% (filter: stop too tight)`); continue; }
           if (risk > 0 && risk / entry <= 0.05) {
             const target = r2(side === "long" ? entry + 2 * risk : entry - 2 * risk);
             const qty = isCrypto(r.symbol) ? Math.round((budget / entry) * 1e6) / 1e6 : Math.floor(budget / entry);
-            if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}${mlNote}` };
+            if (qty > 0 && (isCrypto(r.symbol) || qty >= 1)) placed = { symbol: r.symbol, side, type: "limit", price: r2(entry), qty, stop, target, exit_mode: null, entry_type: "limit", src: "chart_signal", client_id: `${r.symbol}:${h.time}:${h.pattern}:${side}`, trail: a14, atr: a14, note: `Chart auto (signal): ${h.label}${h.volume ? " on volume" : ""} after a ${h.trend} · stop ${stop} · target 2R ${target}${mlNote}` };
           }
         }
       }
@@ -233,14 +264,42 @@ export async function runChartAuto(db: D1Database) {
       if (placed.stop !== null) {
         let ref = placed.price; try { const lp = await latestPrice(r.symbol); ref = placed.side === "long" ? Math.min(ref, lp) : Math.max(ref, lp); } catch { /* the plan's entry stands */ }
         // Measured from where the trade will really start (a limit fills at the market when the market is already better).
-        const adj = applyExit({ side: placed.side, entry: ref, stop: placed.stop, target: placed.target, horizon: placed.exit_mode === "hold" ? "swing" : "day" }, await dailyAtr(r.symbol, nyNow().date), await exitPolicy(db));
+        if (placed.entry_type && placed.entry_type !== "limit") ref = placed.price; // a breakout starts at its trigger
+        const dA = await dailyAtr(r.symbol, nyNow().date), copy = placed.src === "copy";
+        const adj = applyExit({ side: placed.side, entry: ref, stop: placed.stop, target: placed.target, horizon: placed.exit_mode === "hold" ? "swing" : "day" }, dA, copy ? { ...pol, swing_stop_atr: cfg.copy_stop_atr, swing_min_rr: cfg.copy_min_rr } : pol);
         placed.stop = adj.stop; placed.target = adj.target; if (adj.note) placed.note = `${placed.note} · ${adj.note}`.slice(0, 300);
+        placed.trail ??= dA ? Math.round((dA / 11) * 1e4) / 1e4 : null; placed.atr = dA; // max chase in daily ATRs, the trail in the chart's own ATR
+        // Size by risk: shares = risk% of equity / (entry - stop), capped by this chart's amount and by the desk's
+        // share of equity. A trade that would risk less than the minimum is skipped: it cannot pay for its costs.
+        const eq = await equityNow(db, r.user), crypto = isCrypto(r.symbol), riskUsd = eq * acct.s.risk_pct / 100 * gate.size_mult * (placed.size_mult ?? 1);
+        let q = adj.risk > 0 ? riskUsd / adj.risk : 0; const capUsd = Math.min(budget, eq * cfg.max_notional_pct / 100);
+        q = Math.min(q, capUsd / ref); q = crypto ? Math.floor(q * 1e6) / 1e6 : Math.floor(q);
+        if (!(q > 0) || q * adj.risk < eq * cfg.risk_min_pct / 100) { await note(db, r, `Skipped: with $${Math.round(capUsd)} on this chart the trade would risk $${r2(Math.max(q, 0) * adj.risk)}, under the minimum ${cfg.risk_min_pct}% of equity ($${r2(eq * cfg.risk_min_pct / 100)}). Raise this chart's amount to trade it (filter: risk too small)`); continue; }
+        placed.qty = q;
       }
       const so = r.stop_override ?? null, to = r.target_override ?? null, lng = placed.side === "long";
       if (so !== null && (lng ? so < placed.price : so > placed.price)) placed.stop = so;
       if (to !== null && (lng ? to > placed.price : to < placed.price)) placed.target = to;
-      const res = await placeOrder(db, r.user, { ...placed, source: "chart" });
+      const { size_mult: _sm, ...order } = placed; void _sm;
+      const res = await placeOrder(db, r.user, { ...order, source: "chart" });
       await note(db, r, res.error ? `Could not enter: ${res.error}` : `${res.position ? "Entered" : "Entry order placed"}: ${placed.side} ${placed.qty} @ ${placed.price} (${placed.note.slice(0, 80)})`);
     } catch (e) { console.error("chart auto", r.symbol, e); }
   }
+}
+
+/** Wilder ATR(14) of the chart's own bars (the signal timeframe). */
+export function barAtr(bars: Bar[]): number | null {
+  if (bars.length < 16) return null; let a: number | null = null;
+  for (let i = 1; i < bars.length; i++) { const tr = Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - bars[i - 1].close), Math.abs(bars[i].low - bars[i - 1].close)); a = a === null ? tr : (a * 13 + tr) / 14; }
+  return a;
+}
+async function equityNow(db: D1Database, user: string): Promise<number> { const { summary } = await import("./paper"); return (await summary(db, user)).account.equity; }
+/** A Deep Analysis from the last 5 days that says to get out of longs: returns why, else null. */
+async function deepFlatten(db: D1Database, symbol: string): Promise<string | null> {
+  try {
+    const d = await db.prepare("SELECT rating, data FROM deep_runs WHERE symbol = ? AND status = 'done' AND day >= date('now', '-5 days') ORDER BY created_at DESC LIMIT 1").bind(symbol).first<{ rating: string | null; data: string | null }>();
+    if (!d) return null; const x = JSON.parse(d.data || "{}") as Record<string, unknown>;
+    const dec = deepDecision({ rating: d.rating, trader_action: String(x.trader_action || ""), text: `${x.summary || ""} ${x.trader_note || ""} ${x.pm_note || ""}` });
+    return dec.flatten_longs ? `rated it ${d.rating}` : null;
+  } catch { return null; }
 }

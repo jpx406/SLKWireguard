@@ -90,7 +90,7 @@ export async function runTvAuto(db: D1Database): Promise<number> {
       if (!gate.ok) { await riskLog(db, r.user, r.symbol, "blocked", `Strategy auto: ${gate.reason}`); await note(r, `${name} turned ${target}, blocked by the risk gate: ${gate.reason}`, `${seen}, last_target = '${target}'`); continue; }
       const acct = await getAccount(db, r.user), budget = Math.min(r.amount_usd, acct.cash) * gate.size_mult;
       if (budget < 50) { await note(r, `${name} turned ${target}, but there is not enough paper cash.`, `${seen}, last_target = '${target}'`); continue; }
-      const res = await placeOrder(db, r.user, { symbol: r.symbol, side: target as "long" | "short", type: "market", amount_usd: budget, exit_mode: "hold", source: "tv", note: `Strategy auto: ${name} on ${r.interval === "60m" ? "1h" : r.interval} bars` });
+      const res = await placeOrder(db, r.user, { symbol: r.symbol, side: target as "long" | "short", type: "market", amount_usd: budget, src: "strategy", exit_mode: "hold", source: "tv", note: `Strategy auto: ${name} on ${r.interval === "60m" ? "1h" : r.interval} bars` });
       await note(r, res.error ? `${name} turned ${target}; order refused: ${res.error}` : `${name} turned ${target}: paper ${target === "long" ? "buy" : "short"} placed for about $${Math.round(budget)}.`, `${seen}, last_target = '${target}'`);
       acted++;
     } catch (e) { console.error("tv auto", r.symbol, e); }

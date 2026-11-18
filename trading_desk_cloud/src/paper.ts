@@ -5,6 +5,7 @@ import { activeRules, ruleBlocks } from "./strategy";
 import { kellyRead, marketRegime, riskLog, type RegimeRead } from "./risk";
 import { clockNow, nyNow, isTradingDay, inSession, marketPhase, orderDay, sessionTimes, nextTradingDate } from "./briefs";
 import { applyExit, dailyAtr, edgeStatus, exitPolicy, type ExitPolicy, type Horizon } from "./exits";
+import { deskConfig, entryTypeOf, sourceOf, SOURCE_LABEL, type DeskConfig, type EntryType } from "./deskcfg";
 
 export type Side = "long" | "short";
 /** "stop" only exists on rows from older versions; it is now handled exactly like a limit. */
@@ -55,13 +56,14 @@ type Order = {
   id: string; user: string; symbol: string; side: Side; type: OrderType; price: number | null; qty: number;
   stop: number | null; target: number | null; status: string; source: string; brief_id: string | null; note: string | null;
   day: string; created_at: number; last_checked: number; filled_at: number | null; fill_price: number | null; reason: string | null;
-  exit_mode: ExitMode | null;
+  exit_mode: ExitMode | null; entry_type?: EntryType | null; client_id?: string | null; src?: string | null; trail?: number | null; hold_days?: number | null; chase?: number | null;
 };
 type Position = {
   id: string; user: string; symbol: string; side: Side; qty: number; entry: number; stop: number | null; target: number | null;
   status: string; source: string; note: string | null; opened_at: number; last_checked: number; closed_at: number | null;
   exit: number | null; exit_reason: string | null; pnl: number | null; fees: number; day_opened: string; day_closed: string | null; order_id: string | null;
   exit_mode: ExitMode | null; close_req?: number | null;
+  src?: string | null; init_stop?: number | null; qty0?: number | null; scaled?: number | null; best?: number | null; realized?: number | null; trail?: number | null; hold_days?: number | null;
 };
 type Bar = { time: number; open: number; high: number; low: number; close: number };
 
@@ -94,6 +96,11 @@ export async function ensurePaper(db: D1Database) {
   // Added later: a sell requested while the market is closed executes at the next session's first trade.
   try { await db.prepare("ALTER TABLE paper_positions ADD COLUMN close_req INTEGER").run(); } catch { /* exists */ }
   try { await db.prepare("ALTER TABLE paper_accounts ADD COLUMN peak_equity REAL").run(); } catch { /* exists */ }
+  // Added with the order-engine rework: how the entry is reached, an id that makes an order unrepeatable, which part
+  // of the desk placed it, and what the scale-out exit needs to remember.
+  for (const c of ["entry_type TEXT", "client_id TEXT", "src TEXT", "trail REAL", "hold_days INTEGER", "chase REAL"]) { try { await db.prepare(`ALTER TABLE paper_orders ADD COLUMN ${c}`).run(); } catch { /* exists */ } }
+  for (const c of ["src TEXT", "init_stop REAL", "qty0 REAL", "scaled INTEGER", "best REAL", "realized REAL", "trail REAL", "hold_days INTEGER"]) { try { await db.prepare(`ALTER TABLE paper_positions ADD COLUMN ${c}`).run(); } catch { /* exists */ } }
+  try { await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS paper_orders_client ON paper_orders (user, client_id) WHERE client_id IS NOT NULL").run(); } catch { /* older duplicates: the lookup in placeOrder still guards */ }
   ready = true;
 }
 
@@ -152,6 +159,12 @@ export type OrderInput = {
   symbol: string; side: Side; type: OrderType; price?: number | null; qty?: number | null; amount_usd?: number | null;
   stop?: number | null; target?: number | null; note?: string | null; source?: "manual" | "auto" | "chart" | "tv"; brief_id?: string | null;
   exit_mode?: ExitMode | null;
+  entry_type?: EntryType | null;   // automatic paths only: limit (most to pay), stop (trade through the trigger), stop_on_close (a bar must close beyond it)
+  client_id?: string | null;       // the same id is accepted once per account: a repeated signal cannot fill twice
+  src?: string | null;             // routine | copy | chart_signal | chart_plan | deep | strategy
+  trail?: number | null;           // scale-out exit: distance of the trailing stop once half is off
+  hold_days?: number | null;       // sessions before a held trade is closed at the market
+  atr?: number | null;             // ATR used for the "max chase" check
 };
 
 export async function placeOrder(db: D1Database, user: string, inp: OrderInput): Promise<{ order?: Order; position?: Position; error?: string }> {
@@ -162,13 +175,23 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   // The entry price is the most you pay on a buy (the least you accept on a short). If the market is already
   // at or better than it, the order fills now at the market price; otherwise it waits for the price to come to it.
   const type: OrderType = inp.type === "limit" || inp.type === "stop" ? "limit" : "market";
+  const source = inp.source ?? "manual", auto = source !== "manual", cfg = await deskConfig(db);
+  const src = inp.src || sourceOf({ source, note: inp.note });
+  // Breakout entries exist for the automatic paths only; an order you place by hand keeps "entry = the most to pay".
+  const etype: EntryType = auto && type !== "market" && (inp.entry_type === "stop" || inp.entry_type === "stop_on_close") ? inp.entry_type : "limit";
   const stop = num(inp.stop), target = num(inp.target);
   let price = num(inp.price);
   let last: number;
   try { last = await lastPrice(symbol); } catch (e) { return { error: (e as Error).message } }
   if (type !== "market" && !(price && price > 0)) return { error: "Limit orders need an entry price." };
-  const marketable = type === "market" || (side === "long" ? last <= price! : last >= price!);
+  const beyond = type !== "market" && (side === "long" ? last >= price! : last <= price!); // already through a breakout trigger
+  if (etype === "stop" && beyond && inp.atr && Math.abs(last - price!) > cfg.max_chase_atr * inp.atr) return { error: `Price (${r2(last)}) is already more than ${cfg.max_chase_atr} × ATR past the trigger (${r2(price!)}): not chasing.` };
+  const marketable = type === "market" || (etype === "limit" ? (side === "long" ? last <= price! : last >= price!) : etype === "stop" && beyond);
   const ref = marketable ? last : price!;
+  // Automatic entries pass the one risk gate and may not repeat the same signal.
+  const clientId = inp.client_id ? String(inp.client_id).slice(0, 120) : auto ? `${symbol}:${Math.floor(nowS() / 60)}:${src}:${side}` : null;
+  if (clientId) { const dup = await db.prepare("SELECT id FROM paper_orders WHERE user = ? AND client_id = ? LIMIT 1").bind(user, clientId).first(); if (dup) { await riskLog(db, user, symbol, "duplicate", `duplicate order rejected (${clientId})`); return { error: "Duplicate order: this signal already placed one." }; } }
+  if (auto) { const g = await entryLimits(db, user, symbol, src, cfg, inp.exit_mode === "hold"); if (!g.ok) return { error: `Risk gate: ${g.reason}` }; }
   let qty = num(inp.qty);
   // Crypto trades in fractions (6 decimals, at least $1 of notional); stocks in whole shares.
   const crypto = isCrypto(symbol);
@@ -178,7 +201,7 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   const at = marketable ? `the market price (${r2(ref)}), where this order fills now` : `the entry price (${r2(ref)})`;
   if (stop !== null && (side === "long" ? stop >= ref : stop <= ref)) return { error: `Stop-loss must be ${side === "long" ? "below" : "above"} ${at}.` };
   if (target !== null && (side === "long" ? target <= ref : target >= ref)) return { error: `Take-profit must be ${side === "long" ? "above" : "below"} ${at}.` };
-  const need = qty * ref + acct.s.commission;
+  const need = qty * ref + acct.s.commission + cfg.commission_per_share * qty;
   if (need > acct.cash + 1e-6) return { error: `Not enough paper cash: need $${r2(need)}, have $${r2(acct.cash)}.` };
 
   const exitMode: ExitMode = inp.exit_mode === "eod" || inp.exit_mode === "hold" ? inp.exit_mode : acct.s.auto_flat ? "eod" : "hold";
@@ -188,13 +211,18 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
   const closed = marketPhase(ny) === "closed";
   const order: Order = {
     id: uid(), user, symbol, side, type, price: type === "market" ? null : price, qty, stop, target, status: "open",
-    source: inp.source ?? "manual", brief_id: inp.brief_id ?? null, note: (inp.note ?? "").slice(0, 300) || null, day: orderDay(ny),
+    source, brief_id: inp.brief_id ?? null, note: (inp.note ?? "").slice(0, 300) || null, day: orderDay(ny),
     created_at: t, last_checked: Math.floor(t / 60) * 60 + 60, filled_at: null, fill_price: null, reason: null, exit_mode: exitMode,
+    entry_type: etype, client_id: clientId, src, trail: num(inp.trail), hold_days: num(inp.hold_days), chase: inp.atr ? cfg.max_chase_atr * inp.atr : null,
   };
-  await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked,exit_mode)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
-    order.source, order.brief_id, order.note, order.day, t, order.last_checked, exitMode).run();
-  if (marketable && !closed) {
+  try {
+    await db.prepare(`INSERT INTO paper_orders (id,user,symbol,side,type,price,qty,stop,target,status,source,brief_id,note,day,created_at,last_checked,exit_mode,entry_type,client_id,src,trail,hold_days,chase)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(order.id, user, symbol, side, type, order.price, qty, stop, target, "open",
+      order.source, order.brief_id, order.note, order.day, t, order.last_checked, exitMode, etype, clientId, src, order.trail ?? null, order.hold_days ?? null, order.chase ?? null).run();
+  } catch (e) { if (/UNIQUE/i.test(String((e as Error).message))) return { error: "Duplicate order: this signal already placed one." }; throw e; }
+  // An automatic order fills at once only against a price that is actually trading: on a stale quote it rests and the
+  // engine fills it from real bars. (This is what produced round trips at identical prices in thin after-hours.)
+  if (marketable && !closed && (!auto || (await freshness(symbol, cfg.max_bar_age_min)).fresh)) {
     const position = await fill(db, order, last, t);
     return position ? { order: { ...order, status: "filled", fill_price: last }, position } : { error: "Fill rejected (cash changed)." };
   }
@@ -203,8 +231,8 @@ export async function placeOrder(db: D1Database, user: string, inp: OrderInput):
 
 /** Turn a working order into a position. Guarded so an order can only fill once. */
 async function fill(db: D1Database, o: Order, price: number, at: number): Promise<Position | null> {
-  const acct = await getAccount(db, o.user);
-  const cost = o.qty * price + acct.s.commission;
+  const acct = await getAccount(db, o.user), perShare = (await deskConfig(db)).commission_per_share * o.qty;
+  const cost = o.qty * price + acct.s.commission + perShare;
   const upd = await db.prepare("UPDATE paper_orders SET status = 'filled', filled_at = ?, fill_price = ? WHERE id = ? AND status = 'open'").bind(at, price, o.id).run();
   if (!upd.meta.changes) return null;
   const cash = await db.prepare("UPDATE paper_accounts SET cash = cash - ? WHERE user = ? AND cash >= ?").bind(cost, o.user, cost).run();
@@ -215,26 +243,37 @@ async function fill(db: D1Database, o: Order, price: number, at: number): Promis
   const p: Position = {
     id: uid(), user: o.user, symbol: o.symbol, side: o.side, qty: o.qty, entry: price, stop: o.stop, target: o.target, status: "open",
     source: o.source, note: o.note, opened_at: at, last_checked: Math.floor(at / 60) * 60 + 60, closed_at: null, exit: null, exit_reason: null,
-    pnl: null, fees: acct.s.commission, day_opened: nyNow(new Date(at * 1000)).date, day_closed: null, order_id: o.id,
+    pnl: null, fees: acct.s.commission + perShare, day_opened: nyNow(new Date(at * 1000)).date, day_closed: null, order_id: o.id,
     exit_mode: o.exit_mode ?? (acct.s.auto_flat ? "eod" : "hold"),
+    src: o.src ?? sourceOf(o), init_stop: o.stop, qty0: o.qty, scaled: 0, best: price, realized: 0, trail: o.trail ?? null, hold_days: o.hold_days ?? null,
   };
-  await db.prepare(`INSERT INTO paper_positions (id,user,symbol,side,qty,entry,stop,target,status,source,note,opened_at,last_checked,fees,day_opened,order_id,exit_mode)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id, p.user, p.symbol, p.side, p.qty, p.entry, p.stop, p.target, "open", p.source, p.note,
-    p.opened_at, p.last_checked, p.fees, p.day_opened, p.order_id, p.exit_mode).run();
+  await db.prepare(`INSERT INTO paper_positions (id,user,symbol,side,qty,entry,stop,target,status,source,note,opened_at,last_checked,fees,day_opened,order_id,exit_mode,src,init_stop,qty0,scaled,best,realized,trail,hold_days)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id, p.user, p.symbol, p.side, p.qty, p.entry, p.stop, p.target, "open", p.source, p.note,
+    p.opened_at, p.last_checked, p.fees, p.day_opened, p.order_id, p.exit_mode, p.src, p.init_stop, p.qty0, 0, price, 0, p.trail ?? null, p.hold_days ?? null).run();
   return p;
 }
 
 /** Close a position (manual, stop, target or end of day). Guarded so it can only close once. */
 async function closePos(db: D1Database, p: Position, price: number, reason: string, at = nowS()) {
-  const acct = await getAccount(db, p.user);
-  const fees = p.fees + acct.s.commission;
+  const acct = await getAccount(db, p.user), out = acct.s.commission + (await deskConfig(db)).commission_per_share * p.qty;
+  const fees = p.fees + out;
   const gross = (price - p.entry) * p.qty * sign(p.side);
-  const pnl = r2(gross - fees);
+  const pnl = r2(gross - fees + (p.realized ?? 0)); // what the half sold earlier made is part of this trade's result
   const upd = await db.prepare(`UPDATE paper_positions SET status = 'closed', closed_at = ?, exit = ?, exit_reason = ?, pnl = ?, fees = ?, day_closed = ?
     WHERE id = ? AND status = 'open'`).bind(at, price, reason, pnl, fees, nyNow(new Date(at * 1000)).date, p.id).run();
   if (!upd.meta.changes) return false;
-  await db.prepare("UPDATE paper_accounts SET cash = cash + ? WHERE user = ?").bind(p.qty * p.entry + gross - acct.s.commission, p.user).run();
+  await db.prepare("UPDATE paper_accounts SET cash = cash + ? WHERE user = ?").bind(p.qty * p.entry + gross - out, p.user).run();
   return true;
+}
+/** Scale-out: sell half at +1R, move the stop to the entry price. The trade stays open with the other half. */
+async function scaleOut(db: D1Database, p: Position, price: number, cfg: DeskConfig) {
+  const crypto = isCrypto(p.symbol), half = crypto ? Math.floor((p.qty / 2) * 1e6) / 1e6 : Math.floor(p.qty / 2);
+  const fee = half > 0 ? cfg.commission_per_share * half : 0, gain = half > 0 ? (price - p.entry) * half * sign(p.side) - fee : 0, rest = crypto ? Math.round((p.qty - half) * 1e6) / 1e6 : p.qty - half;
+  const upd = await db.prepare("UPDATE paper_positions SET scaled = 1, qty = ?, stop = ?, realized = COALESCE(realized, 0) + ?, note = substr(COALESCE(note, '') || ?, 1, 300) WHERE id = ? AND status = 'open' AND COALESCE(scaled, 0) = 0")
+    .bind(rest, p.entry, gain, half > 0 ? ` · half off at +1R (${r2(price)}), stop to break-even` : " · +1R reached: stop to break-even", p.id).run();
+  if (!upd.meta.changes) return;
+  if (half > 0) await db.prepare("UPDATE paper_accounts SET cash = cash + ? WHERE user = ?").bind(half * p.entry + gain, p.user).run();
+  p.scaled = 1; p.qty = rest; p.stop = p.entry; p.realized = (p.realized ?? 0) + gain;
 }
 
 export async function cancelOrder(db: D1Database, user: string, id: string) {
@@ -278,6 +317,49 @@ export async function resetAccount(db: D1Database, user: string, startingCash: n
   try { await db.prepare("DELETE FROM paper_auto WHERE user = ?").bind(user).run(); } catch { /* no chart autopilots yet */ }
 }
 
+/** Is the newest completed 1-minute bar recent? Age is measured from the END of that bar. */
+export async function freshness(symbol: string, maxMin?: number): Promise<{ fresh: boolean; age_min: number | null; phase: string }> {
+  const phase = isCrypto(symbol) ? "open" : marketPhase();
+  try { const bars = await candles(symbol, "1m"), lastT = bars.length ? bars[bars.length - 1].time : 0, age = lastT ? (nowS() - lastT - 60) / 60 : null;
+    return { fresh: age !== null && age <= (maxMin ?? 2) + 1, age_min: age === null ? null : Math.max(0, Math.round(age)), phase }; } catch { return { fresh: false, age_min: null, phase }; }
+}
+/** THE risk gate for automatic entries: every path (scan routines, copy desk, chart autopilot, Deep Analysis,
+ *  strategy auto-trader) reaches placeOrder, and placeOrder asks here. Limits come from the one desk config.
+ *  A halt stops NEW entries only: open positions keep their stops and targets. Manual orders are not gated. */
+export async function entryLimits(db: D1Database, user: string, symbol: string, src: string, cfg: DeskConfig, hold = false): Promise<{ ok: boolean; reason?: string }> {
+  const block = async (reason: string) => { await riskLog(db, user, symbol, "limit", reason); return { ok: false, reason }; };
+  try {
+    const ny = nyNow(), t = nowS(), crypto = isCrypto(symbol), a = await getAccount(db, user);
+    if (cfg.sources_off.includes(src)) return block(`${SOURCE_LABEL[src] || src} is switched off`);
+    if (crypto && !cfg.crypto_autotrade) return block("crypto auto-trading is off until a positive sample exists");
+    if (a.s.kill_switch) return block(`kill switch on (${a.s.kill_reason || "manual"})`);
+    if (!crypto && marketPhase(ny) === "closed" && !hold) return block("market closed: no day-trade entries");
+    if (!crypto && !hold && isTradingDay(ny) && ny.minutes >= sessionTimes(ny.date).close - 15) return block("too close to the end-of-day flatten for a day trade");
+    const day = orderDay(ny);
+    const n = (await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source != 'manual' AND day = ? AND status IN ('open','filled')").bind(user, day).first<{ n: number }>())?.n ?? 0;
+    if (n >= cfg.max_trades_per_day) return block(`${n} automatic entries today (limit ${cfg.max_trades_per_day})`);
+    const open = ((await db.prepare("SELECT COUNT(*) AS n FROM paper_positions WHERE user = ? AND status = 'open'").bind(user).first<{ n: number }>())?.n ?? 0)
+      + ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND status = 'open'").bind(user).first<{ n: number }>())?.n ?? 0);
+    if (open >= cfg.max_concurrent) return block(`${open} positions and working orders open (limit ${cfg.max_concurrent})`);
+    const ns = (await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND symbol = ? AND source != 'manual' AND day = ? AND status IN ('open','filled')").bind(user, symbol, day).first<{ n: number }>())?.n ?? 0;
+    if (ns >= cfg.max_entries_per_symbol_per_day) return block(`${symbol} already entered ${ns} times today (limit ${cfg.max_entries_per_symbol_per_day})`);
+    if (cfg.cooldown_after_stop_min > 0) {
+      const st = await db.prepare("SELECT closed_at FROM paper_positions WHERE user = ? AND symbol = ? AND status = 'closed' AND exit_reason LIKE 'stop%' ORDER BY closed_at DESC LIMIT 1").bind(user, symbol).first<{ closed_at: number }>();
+      if (st && t - st.closed_at < cfg.cooldown_after_stop_min * 60) return block(`${symbol} was stopped out ${Math.round((t - st.closed_at) / 60)} min ago (cooldown ${cfg.cooldown_after_stop_min} min)`);
+    }
+    if (cfg.daily_loss_halt_pct > 0 || cfg.weekly_loss_halt_pct > 0) {
+      const eq = await equityOf(db, user), dayPnl = await todayPnl(db, user, ny.date);
+      if (cfg.daily_loss_halt_pct > 0 && dayPnl <= -eq * cfg.daily_loss_halt_pct / 100) return block(`daily loss halt: today is ${r2(dayPnl)} (limit -${cfg.daily_loss_halt_pct}% of equity). New entries resume tomorrow; open positions are kept`);
+      if (cfg.weekly_loss_halt_pct > 0) {
+        const d = new Date(`${ny.date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); const monday = d.toISOString().slice(0, 10);
+        const before = (await db.prepare("SELECT COALESCE(SUM(pnl), 0) AS p FROM paper_positions WHERE user = ? AND status = 'closed' AND day_closed >= ? AND day_closed < ?").bind(user, monday, ny.date).first<{ p: number }>())?.p ?? 0;
+        if (before + dayPnl <= -eq * cfg.weekly_loss_halt_pct / 100) return block(`weekly loss halt: this week is ${r2(before + dayPnl)} (limit -${cfg.weekly_loss_halt_pct}% of equity). New entries resume on Monday`);
+      }
+    }
+    return { ok: true };
+  } catch (e) { return block(`limit check failed (${String((e as Error).message || e).slice(0, 80)}): no trade`); }
+}
+
 // --------------------------------------------------------------------------------------- engine
 /** Check every working order and open position against 1-minute bars. Runs every minute (cron) and on page loads. */
 export async function runEngine(db: D1Database, onlyUser?: string) {
@@ -287,7 +369,7 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
   const orders = (await db.prepare(`SELECT * FROM paper_orders WHERE status = 'open'${where}`).bind(...bind).all<Order>()).results;
   const positions = (await db.prepare(`SELECT * FROM paper_positions WHERE status = 'open'${where}`).bind(...bind).all<Position>()).results;
   if (!orders.length && !positions.length) return;
-  const ny = nyNow(), t = nowS(); let holdDays: number | undefined;
+  const ny = nyNow(), t = nowS(), cfg = await deskConfig(db); let holdDays: number | undefined;
   const symbols = [...new Set([...orders.map((o) => o.symbol), ...positions.map((p) => p.symbol)])];
   const bars = new Map<string, Bar[]>();
   await Promise.all(symbols.map(async (s) => { try { bars.set(s, await barsFor(s)); } catch { /* data hiccup: retry next run */ } }));
@@ -305,10 +387,32 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     }
     const bs = (bars.get(o.symbol) || []).filter((b) => b.time >= o.last_checked);
     let filled: Position | null = null;
+    const et = o.type === "market" ? "limit" : o.entry_type || "limit", long = o.side === "long";
+    if (et === "stop_on_close") {
+      // A breakout that needs confirmation: a whole N-minute bar must CLOSE beyond the trigger. The fill is that close.
+      // A close that is already too far past the trigger is not chased; the order keeps waiting for a better one.
+      const step = cfg.confirm_minutes * 60, all = (bars.get(o.symbol) || []).filter((b) => b.time + 60 > o.created_at), newest = all.at(-1)?.time ?? 0, chase = o.chase ?? Math.abs(o.price! - (o.stop ?? o.price!)) * cfg.max_chase_atr * 2;
+      const buckets = new Map<number, Bar[]>(); for (const b of all) { const k = Math.floor(b.time / step) * step; buckets.set(k, [...(buckets.get(k) || []), b]); }
+      for (const [k, bb] of [...buckets.entries()].sort((x, y) => x[0] - y[0])) {
+        if (k + step > newest + 60 || k + step <= o.last_checked - 60) continue; // still forming, or judged on an earlier run
+        const close = bb[bb.length - 1].close;
+        if (long ? close <= o.price! : close >= o.price!) continue;
+        if (o.stop !== null && (long ? close <= o.stop : close >= o.stop)) continue;
+        if (chase > 0 && Math.abs(close - o.price!) > chase) { await db.prepare("UPDATE paper_orders SET reason = ? WHERE id = ? AND status = 'open'").bind(`closed ${r2(close)}, too far past the trigger ${r2(o.price!)}: not chased`, o.id).run(); continue; }
+        filled = await fill(db, o, r2(close), k + step - 1); if (filled) positions.push(filled); break;
+      }
+      if (!filled && bs.length) await db.prepare("UPDATE paper_orders SET last_checked = ? WHERE id = ? AND status = 'open'").bind(bs.at(-1)!.time + 60, o.id).run();
+      continue;
+    }
     for (const b of bs) {
       let px: number | null = null;
       if (o.type === "market") px = b.open; // queued while closed: first trade of the session
-      else {
+      else if (et === "stop") {
+        // A breakout: fills when the price trades up through the trigger (down, for a short), at the trigger or at the open if it gapped.
+        if (long && b.high >= o.price!) px = Math.max(o.price!, b.open);
+        if (!long && b.low <= o.price!) px = Math.min(o.price!, b.open);
+        if (px !== null && o.chase && Math.abs(px - o.price!) > o.chase) { await db.prepare("UPDATE paper_orders SET status = 'cancelled', reason = 'gapped past the trigger by more than the max chase' WHERE id = ? AND status = 'open'").bind(o.id).run(); break; }
+      } else {
         // Buy at or below the entry (short at or above), at the bar's open if it is already better.
         if (o.side === "long" && b.low <= o.price!) px = Math.min(o.price!, b.open);
         if (o.side === "short" && b.high >= o.price!) px = Math.max(o.price!, b.open);
@@ -336,8 +440,18 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
       if (p.close_req && b.time >= p.close_req) { done = await closePos(db, p, r2(b.open), "manual (next open)", b.time + 59); break; }
       // Conservative: if one bar touches both stop and target, assume the stop came first.
       if (p.stop !== null && (p.side === "long" ? b.low <= p.stop : b.high >= p.stop)) {
-        const px = p.side === "long" ? Math.min(p.stop, b.open) : Math.max(p.stop, b.open);
-        done = await closePos(db, p, r2(px), "stop", b.time + 59); break;
+        // A stop is a market order once touched: it fills a little worse than its price (slippage), or at the open after a gap.
+        const raw = p.side === "long" ? Math.min(p.stop, b.open) : Math.max(p.stop, b.open), slip = p.source === "manual" ? 0 : raw * cfg.stop_slippage_pct / 100; // trades placed by hand keep their old fills
+        const px = p.side === "long" ? raw - slip : raw + slip;
+        done = await closePos(db, p, r2(px), p.scaled ? (p.stop === p.entry ? "stop (break-even)" : "stop (trailing)") : "stop", b.time + 59); break;
+      }
+      // Scale-out exit (day trades placed by the desk): half off at +1R, stop to break-even, then trail the rest.
+      const R = p.init_stop != null ? Math.abs(p.entry - p.init_stop) : 0, managed = cfg.exit_model === "scale" && p.source !== "manual" && p.exit_mode !== "hold" && !isCrypto(p.symbol) && R > 0;
+      if (managed && !p.scaled && (p.side === "long" ? b.high >= p.entry + R : b.low <= p.entry - R) && (p.target === null || (p.side === "long" ? p.target > p.entry + R : p.target < p.entry - R))) await scaleOut(db, p, r2(p.side === "long" ? p.entry + R : p.entry - R), cfg);
+      if (managed && p.scaled) {
+        const best = p.side === "long" ? Math.max(p.best ?? p.entry, b.high) : Math.min(p.best ?? p.entry, b.low), dist = p.trail && p.trail > 0 ? p.trail : R;
+        const ts = p.side === "long" ? best - dist : best + dist, ns = p.side === "long" ? Math.max(p.stop ?? p.entry, ts) : Math.min(p.stop ?? p.entry, ts);
+        if (best !== p.best || ns !== p.stop) { p.best = best; p.stop = r2(ns); await db.prepare("UPDATE paper_positions SET best = ?, stop = ? WHERE id = ? AND status = 'open'").bind(best, p.stop, p.id).run(); }
       }
       if (p.target !== null && (p.side === "long" ? b.high >= p.target : b.low <= p.target)) {
         const px = p.side === "long" ? Math.max(p.target, b.open) : Math.min(p.target, b.open);
@@ -358,11 +472,12 @@ export async function runEngine(db: D1Database, onlyUser?: string) {
     // that is going nowhere is the cost a wide stop would otherwise hide.
     if (p.exit_mode === "hold" && p.source === "auto") {
       holdDays ??= (await exitPolicy(db)).swing_hold_days;
+      const limitDays = p.hold_days && p.hold_days > 0 ? p.hold_days : holdDays;
       let over = false;
-      if (isCrypto(p.symbol)) over = t - p.opened_at >= holdDays * 86400;
-      else if (isTradingDay(ny) && ny.minutes >= sessionTimes(ny.date).close - 5) { let d = p.day_opened, n = 0; while (d < ny.date && n < holdDays) { d = nextTradingDate(d); n++; } over = n >= holdDays; }
+      if (isCrypto(p.symbol)) over = t - p.opened_at >= limitDays * 86400;
+      else if (isTradingDay(ny) && ny.minutes >= sessionTimes(ny.date).close - 5) { let d = p.day_opened, n = 0; while (d < ny.date && n < limitDays) { d = nextTradingDate(d); n++; } over = n >= limitDays; }
       const last = bars.get(p.symbol)?.at(-1)?.close;
-      if (over && last) { await closePos(db, p, last, `time limit (${holdDays} sessions)`); continue; }
+      if (over && last) { await closePos(db, p, last, `time limit (${limitDays} sessions)`); continue; }
     }
     if (bs.length) await db.prepare("UPDATE paper_positions SET last_checked = ? WHERE id = ? AND status = 'open'").bind(bs.at(-1)!.time + 60, p.id).run();
   }
@@ -408,7 +523,9 @@ export async function riskGate(db: D1Database, user: string, symbol: string): Pr
     if (crypto || marketPhase() !== "closed") {
       const bars = await candles(symbol, "1m");
       const lastT = bars.length ? bars[bars.length - 1].time : 0;
-      if (!lastT || nowS() - lastT > 20 * 60) return block(`stale data: last ${symbol} bar is ${lastT ? Math.round((nowS() - lastT) / 60) : "?"} minutes old`);
+      const ageMin = lastT ? Math.round((nowS() - lastT) / 60) : null, ph = crypto ? "regular" : marketPhase();
+      // Thin extended-hours trading is not a data fault: say which one it is.
+      if (!lastT || nowS() - lastT > 20 * 60) return block(ph === "regular" ? `stale data: the last ${symbol} bar is ${ageMin ?? "?"} minutes old while the market is open` : `no recent ${symbol} trade in ${ph === "pre" ? "pre-market" : "after-hours"} (last bar ${ageMin ?? "?"} min ago): waiting for the regular session`);
     }
     if (!a.s.regime_sizing) return { ok: true, size_mult: 1 };
     const regime = await marketRegime(db, crypto);
@@ -418,7 +535,9 @@ export async function riskGate(db: D1Database, user: string, symbol: string): Pr
 }
 
 // --------------------------------------------------------------------------------------- auto-trading
-type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; stop?: number; targets?: number[]; size_shares?: number; setup?: string; horizon?: string };
+type Pick = { symbol?: string; bias?: string; score?: number; entry?: number; stop?: number; targets?: number[]; size_shares?: number; setup?: string; horizon?: string; entry_type?: string; sources?: { type?: string }[] };
+/** Insider, fund (13F) and politician buying is a weeks-long edge: such plans are swing trades whatever the scan called them. */
+export const isCopyPick = (slot: string, p: { sources?: { type?: string }[] | null }) => slot === "winners" || (Array.isArray(p.sources) && p.sources.some((x) => /insider|fund|13f|congress|politic|senat/i.test(String(x?.type || ""))));
 
 /** Place paper orders from finished briefs for every account with auto-trade on (once per brief). */
 export async function autoTradeNewBriefs(db: D1Database) {
@@ -441,6 +560,7 @@ export async function autoTradeNewBriefs(db: D1Database) {
   for (const b of briefs) {
     let picks: Pick[] = [], regime: string | null = null;
     try { const d = JSON.parse(b.data || "{}"); picks = (d?.picks ?? []) as Pick[]; regime = typeof d?.market?.regime === "string" ? d.market.regime.toLowerCase() : null; } catch { continue; }
+    picks = picks.map((p) => (isCopyPick(b.slot, p) ? { ...p, horizon: "swing" } : p));
     if (lateForDay) picks = picks.filter((p) => p.horizon === "swing");
     // The active strategy version (Performance › self-improving loop) filters what auto-trade may take.
     if (active) picks = picks.filter((p) => !ruleBlocks(active.rules, { score: num(p.score), setup: p.setup ?? null, slot: b.slot, symbol: p.symbol ?? null, regime, created_at: nowS(),
@@ -459,7 +579,8 @@ export async function autoTradeNewBriefs(db: D1Database) {
   }
 }
 
-async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string }, pol: ExitPolicy) {
+async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings }, picks: Pick[], b: { id: string; label: string; slot: string }, pol: ExitPolicy) {
+  const cfg = await deskConfig(db);
   const s = a.s, today = nyNow().date;
   const cap = (await activeRules(db))?.rules.max_trades_day;
   let tradesLeft = Math.min(s.auto_max_trades_day, cap ?? Infinity) - ((await db.prepare("SELECT COUNT(*) AS n FROM paper_orders WHERE user = ? AND source = 'auto' AND day = ? AND status IN ('open', 'filled')")
@@ -489,12 +610,22 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     // Entry = most to pay: fills now if the market is at or below it (long), else waits for a pullback to it. So the
     // price the trade will really start from is the better of the two, and the stop distance is measured from there:
     // a plan "buy 131.25, stop 129.90" filled at 130.00 would otherwise sit 10 cents from its stop.
-    const ref = side === "long" ? Math.min(entry, last) : Math.max(entry, last);
+    const copy = isCopyPick(b.slot, p), src = copy ? "copy" : "routine";
+    // How the entry is meant to be reached: a breakout waits for the price to get there (and, by default, for a bar to
+    // CLOSE beyond the trigger); only a pullback or reversal plan is "the most to pay". Buying a breakout before it
+    // breaks out was the largest single fault in the old fills.
+    const etype = entryTypeOf({ entry_type: p.entry_type, setup: p.setup, slot: b.slot, side, entry, last });
+    // The setup is gone when the price is past the target, or (for a pullback entry) already through the stop. A breakout
+    // that has not triggered yet normally trades under its own stop: that is not a reason to drop it.
+    if (planTarget !== null && (side === "long" ? last >= planTarget : last <= planTarget)) continue;
+    if (etype === "limit" && (side === "long" ? last <= planStop : last >= planStop)) continue;
+    const ref = etype !== "limit" ? entry : side === "long" ? Math.min(entry, last) : Math.max(entry, last);
     // Skip the pick when the price is already through the stop-loss or past the take-profit.
-    if (side === "long" ? last <= planStop || (planTarget !== null && last >= planTarget) : last >= planStop || (planTarget !== null && last <= planTarget)) continue;
+
     // The plan says where; the exit engine says how far at least: a stop inside the stock's normal noise is widened
     // (and the size below shrinks with it, so the dollars at risk stay the same).
-    const adj = applyExit({ side, entry: ref, stop: planStop, target: planTarget, horizon: p.horizon === "swing" ? "swing" : "day" }, await dailyAtr(symbol, today), pol);
+    const dAtr = await dailyAtr(symbol, today);
+    const adj = applyExit({ side, entry: ref, stop: planStop, target: planTarget, horizon: p.horizon === "swing" ? "swing" : "day" }, dAtr, copy ? { ...pol, swing_stop_atr: cfg.copy_stop_atr, swing_min_rr: cfg.copy_min_rr } : pol);
     const stop = adj.stop, target = adj.target, perShareRisk = adj.risk;
     // Hard gate before every order: kill switch, drawdown guard, stale data, regime (size multiplier).
     const gate = await riskGate(db, a.user, symbol);
@@ -503,12 +634,14 @@ async function autoTradeAccount(db: D1Database, a: Account & { s: PaperSettings 
     let qty = s.sizing === "rec" ? num(p.size_shares) ?? 0 : s.sizing === "fixed" ? s.fixed_usd / entry : perShareRisk > 0 ? (eq * riskPct / 100) / perShareRisk : 0;
     // A recommended size assumed the recommended stop: when the stop was widened, the size shrinks in proportion.
     if (s.sizing === "rec" && adj.widened) qty *= Math.abs(ref - planStop) / adj.risk;
-    qty = Math.min(qty, (eq * s.max_position_pct / 100) / entry) * gate.size_mult;
+    qty = Math.min(qty, (eq * Math.min(s.max_position_pct, cfg.max_notional_pct) / 100) / entry) * gate.size_mult;
     // Stocks trade in whole shares; crypto in fractions (a whole coin would be far more than the risk allows).
     qty = isCrypto(symbol) ? Math.floor(qty * 1e6) / 1e6 : Math.floor(qty);
     if (isCrypto(symbol) ? qty * entry < 10 : qty < 1) continue;
-    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}${adj.note ? ` · ${adj.note}` : ""}`.slice(0, 300),
-      exit_mode: p.horizon === "swing" ? "hold" : null }); // a swing pick is held through the stop or target, whatever the account default
+    // A trade that risks almost nothing cannot pay for its own costs: skip it rather than collect small losses.
+    if (cfg.risk_min_pct > 0 && qty * perShareRisk < eq * cfg.risk_min_pct / 100) { await riskLog(db, a.user, symbol, "skip", `risk $${r2(qty * perShareRisk)} is under ${cfg.risk_min_pct}% of equity after the ${Math.min(s.max_position_pct, cfg.max_notional_pct)}% position cap: skipped`); continue; }
+    const r = await placeOrder(db, a.user, { symbol, side, type: "limit", price: entry, qty, stop, target, source: "auto", brief_id: b.id, note: `${b.label}: ${p.setup ?? ""}${etype === "limit" ? "" : ` · waits for ${etype === "stop" ? "a trade through" : `a ${cfg.confirm_minutes}-min close beyond`} ${entry}`}${adj.note ? ` · ${adj.note}` : ""}`.slice(0, 300),
+      exit_mode: p.horizon === "swing" ? "hold" : null, entry_type: etype, src, client_id: `${symbol}:brief:${b.id}:${side}`, atr: dAtr, trail: dAtr ? Math.round((dAtr / 11) * 1e4) / 1e4 : null, hold_days: copy ? cfg.copy_hold_days : null }); // a swing pick is held through the stop or target, whatever the account default
     if (!r.error) { busy.add(symbol); slots--; tradesLeft--; }
   }
 }
